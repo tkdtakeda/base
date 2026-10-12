@@ -13,7 +13,7 @@ from datetime import datetime
 
 from . import cache_copier
 from .cache_validator import open_readonly, validate_cache_file
-from .errors import AppError
+from .errors import USER_MESSAGES, AppError
 
 
 def to_iso(timestamp):
@@ -48,10 +48,16 @@ class CacheService:
         os.replace(temp, self.state_path)
 
     def cache_available(self):
-        return os.path.isfile(self.cache_path)
+        # 設定が未完了のときは、仮の値のパスに触れない
+        return not self.config.incomplete and os.path.isfile(self.cache_path)
+
+    def _require_complete(self):
+        if self.config.incomplete:
+            raise AppError("CONFIG_INCOMPLETE", f"placeholders: {', '.join(self.config.incomplete_settings)}")
 
     # ── 更新 ──
     def refresh(self):
+        self._require_complete()
         with self.lock:
             self.logger.info("cache refresh started")
             state = self._read_state()
@@ -105,6 +111,27 @@ class CacheService:
 
     # ── 状態 ──
     def status(self):
+        config_info = {
+            "configSource": self.config.config_source,
+            "configFile": os.path.basename(self.config.config_path),
+            "configIncomplete": self.config.incomplete,
+            "incompleteSettings": list(self.config.incomplete_settings),
+        }
+        if self.config.incomplete:
+            return dict(config_info, **{
+                "available": False,
+                "lastRefreshSucceeded": False,
+                "sourceModifiedAt": None,
+                "cacheUpdatedAt": None,
+                "usingPreviousCache": False,
+                "message": USER_MESSAGES["CONFIG_INCOMPLETE"],
+                "rowCount": None,
+                "sourceReachable": None,
+                "sourceHasUpdate": False,
+                "lastRefreshAt": None,
+                "errorCode": "CONFIG_INCOMPLETE",
+                "errorMessage": USER_MESSAGES["CONFIG_INCOMPLETE"],
+            })
         state = self._read_state()
         available = self.cache_available()
         current_source = cache_copier.source_modified_at(self.config.source_path)
@@ -121,7 +148,7 @@ class CacheService:
         else:
             message = "最新のキャッシュを参照しています。"
 
-        return {
+        return dict(config_info, **{
             "available": available,
             "lastRefreshSucceeded": bool(succeeded),
             "sourceModifiedAt": state.get("sourceModifiedAt"),
@@ -134,11 +161,12 @@ class CacheService:
             "lastRefreshAt": state.get("lastRefreshAt"),
             "errorCode": None if succeeded else state.get("errorCode"),
             "errorMessage": None if succeeded else state.get("errorMessage"),
-        }
+        })
 
     # ── 読み取り ──
     @contextmanager
     def read_connection(self):
+        self._require_complete()
         with self.lock:
             if not self.cache_available():
                 raise AppError("CACHE_UNAVAILABLE", "cache file not found")

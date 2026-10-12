@@ -32,10 +32,12 @@
       const refreshButton = el('button', { type: 'button', className: 'btn btn--secondary btn--block' });
       const progress = el('p', { className: 'pane-note', 'aria-live': 'polite' });
       const sourceNote = el('p', { className: 'pane-note' });
+      const configBox = el('div', { className: 'config-help', hidden: true });
       refreshButton.addEventListener('click', () => ctx.cache.refresh());
 
       container.append(
         summary,
+        configBox,
         section('根拠', [facts]),
         section('共有データから更新', [
           el('p', { className: 'pane-note', text: '共有データを手元にコピーし、検証してから入れ替えます。失敗したときは前回のデータをそのまま使います。' }),
@@ -93,6 +95,25 @@
           tick(state);
           if (refreshing) timer = window.setInterval(() => tick(ctx.store.get()), 1000);
           sourceNote.textContent = state.mode.description;
+
+          // 設定が未完了のときは、どのファイルを読み、どこを直せばよいかを出す
+          configBox.hidden = !status.configIncomplete;
+          refreshButton.disabled = refreshing || Boolean(status.configIncomplete);
+          if (status.configIncomplete) {
+            configBox.replaceChildren(
+              section('設定の直し方', [
+                el('p', { className: 'pane-note', text: `読み込んだ設定ファイル：config/${status.configFile}` + (status.configSource === 'sample' ? '（config.local.json がないため）' : '') }),
+                el('p', { className: 'pane-note', text: '次の項目が仮の値（<...>）のままです：' }),
+                el('ul', { className: 'config-help__list mono' }, (status.incompleteSettings || []).map((path) => el('li', { text: path }))),
+                el('ol', { className: 'config-help__steps' }, [
+                  el('li', { text: 'config.sample.json をコピーし、同じフォルダに config.local.json という名前で置く' }),
+                  el('li', { text: '上の項目の値を実際の値に書き換える（キーの名前と並びは変えない）' }),
+                  el('li', { text: 'start.bat を起動し直す' }),
+                ]),
+                el('p', { className: 'pane-note', text: '実データなしで試すときは start-dummy.bat を使ってください。' }),
+              ]),
+            );
+          }
         },
       };
     },

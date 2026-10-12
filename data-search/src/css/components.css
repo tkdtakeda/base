@@ -499,3 +499,7 @@
 .manual-table td { padding: var(--sp-1) var(--sp-3); border: var(--bw) solid var(--color-border); text-align: left; }
 .manual-table th { background: var(--color-surface-alt); }
 .manual-icon { font-family: var(--font-mono); color: var(--color-primary); }
+
+/* ── 設定の直し方（データのパネル） ── */
+.config-help__list { padding-left: var(--sp-5); list-style: disc; font-size: var(--fs-sm); color: var(--color-danger); }
+.config-help__steps { margin: 0; padding-left: var(--sp-5); font-size: var(--fs-sm); line-height: var(--lh-base); }

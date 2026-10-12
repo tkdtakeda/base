@@ -21,6 +21,9 @@
     function readiness() {
       const state = store.get();
       const cacheStatus = state.cache.status;
+      if (cacheStatus && cacheStatus.configIncomplete) {
+        return { ok: false, reason: '設定が未完了のため、データを表示できません（左の「データ」に直し方）' };
+      }
       if (cacheStatus && !cacheStatus.available) {
         if (state.mode.capabilities.sampleData) {
           return { ok: false, reason: 'サンプルデータを読み込むと一覧が出ます', action: 'open-samples', actionLabel: 'サンプルを読み込む' };

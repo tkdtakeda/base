@@ -29,13 +29,43 @@
 前提：Python 3.12（標準ライブラリだけで動きます。pip での追加は不要）。
 
 1. `config/config.sample.json` をコピーして `config/config.local.json` を作る。
-2. `<...>` のプレースホルダーを実際の値に書き換える（共有 SQLite のパス・表名・列名）。
+2. `<...>` の仮の値を実際の値に書き換える（共有 SQLite のパス・表名・列名）。**キーの名前と構造は変えない。**
 3. `start.bat` をダブルクリック。黒いウィンドウが開き、Edge で画面が開きます。
    - 初回はキャッシュを自動で作成します。以後は画面左の「データ」→「データを更新する」で更新します。
    - 終了は黒いウィンドウを閉じます。
 4. 実データなしで流れを確かめるときは `start-dummy.bat`（ダミーの共有 SQLite と `config/config.dummy.json` を自動で作ります）。
 
-設定に誤りがあるときは、黒いウィンドウに理由（例：`dataSource.tableName がプレースホルダーのままです`）が出ます。
+---
+
+## 設定ファイルの決まり
+
+| # | 決まり |
+|---|---|
+| 1 | `config/config.sample.json` がシステムの**正式な設定スキーマ**（キーの構造と値の型の定義） |
+| 2 | アプリは `config.sample.json` のスキーマを基準に動く（読み込んだ設定は必ずスキーマと照合する） |
+| 3 | `config.local.json` は同じスキーマで、**値だけ**を実環境のものにする（社内情報を含むため外部に出さない・Git 管理外） |
+| 4 | sample と local の**キー構造の違いは許さない**。足りないキー・余分なキー・型の違い（文字列／整数／true・false／{ }）があれば起動を止め、違う箇所をすべて表示する |
+| 5 | 読み込む順は `config.local.json` → なければ `config.sample.json`（`--config` で明示したときはそのファイル） |
+| 6 | 設定項目を足すときは **sample と local の両方**に足す（sample だけに足すと、local は「キーがありません」で起動しない） |
+
+`config.sample.json` で起動したとき（`config.local.json` がないとき）は、データの場所と表・列の名前が仮の値のままなので
+**「設定が未完了」の状態で起動**します。共有データにもキャッシュにも触れず、黒いウィンドウと画面（上部バー右の札・左の「データ」）に、
+読み込んだファイル・仮の値のままの項目・直し方を表示します。
+
+| 状態 | 起動 | 表示 |
+|---|---|---|
+| local がスキーマどおりで値も入っている | する | 通常どおり |
+| local がない（sample で起動） | する | 設定が未完了（直し方を表示） |
+| local に仮の値が残っている（データの場所・表名・列名） | する | 設定が未完了（残っている項目を表示） |
+| local のキー構造・型がスキーマと違う | しない | 違う箇所をすべて表示 |
+| 値の範囲がおかしい（例：pageSize が maxPageSize より大きい） | しない | 理由を表示 |
+
+### 設定項目を足すときの手順
+
+1. `config.sample.json` に、仮の値（または既定値）でキーを足す
+2. 各環境の `config.local.json` に、同じキーを実際の値で足す
+3. `python/data_search/config_loader.py` の `AppConfig` と `load_config()` で値を受け取る（値の範囲の確認もここ）
+4. `config.dummy.json` は `make_dummy_db.py` が sample から作るので、作り直すだけでよい
 
 ---
 
@@ -151,7 +181,8 @@ Tauri 版の画面側は `js/api/remote-adapters.js` の `tauri` アダプター
 | `get_lot_detail` | 入力を `{ lotNo, castingNo }` に変更。戻り値は `{ success, item, duplicated }` | ロット番号＋鋳造番号で 1 件に決まるため |
 | `get_cache_status` | `rowCount`・`sourceReachable`・`sourceHasUpdate`・`lastRefreshAt`・`errorCode`・`errorMessage` を追加 | 「データ」パネルで状態の根拠を示すため |
 | `refresh_cache` | 戻り値に `rowCount` を追加 | 更新の結果を件数で示すため |
-| 設定 | `devServer`（host / port / openBrowser）を追加 | Python 版のみで使用。Tauri 版では無視してよい |
+| 設定 | `devServer`（host / port / openBrowser）を追加 | Python 版のみで使用。Tauri 版では無視してよい（キーは残す。スキーマを sample と一致させるため） |
+| `get_cache_status` | `configSource`・`configFile`・`configIncomplete`・`incompleteSettings` を追加 | 設定が未完了のとき、画面で読み込んだファイルと直す項目を示すため |
 
 検索の決まり：検索値は前後の空白を除き、全角英数・記号を半角にそろえ（NFKC）、大文字小文字を区別しません。
 部分一致の `%` `_` は文字として扱います。SQL はすべてパラメーター化しています。

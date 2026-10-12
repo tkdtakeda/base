@@ -157,7 +157,11 @@
       const cacheStatus = state.cache.status;
       let card = null;
 
-      if (cacheStatus && !cacheStatus.available) {
+      if (cacheStatus && cacheStatus.configIncomplete) {
+        card = emptyCard('fa-gear', '設定が未完了です',
+          `${cacheStatus.configFile} を読み込みましたが、データの場所や表・列の名前が仮の値（<...>）のままです。`,
+          [actionButton('直し方を見る', 'fa-circle-info', () => openPanel('data'), false)]);
+      } else if (cacheStatus && !cacheStatus.available) {
         card = state.mode.capabilities.sampleData
           ? emptyCard('fa-flask', 'まずはサンプルデータを読み込みます', '左の「サンプル」から目的に合うデータを選ぶと、そのまま検索を試せます。',
             [actionButton('サンプルを選ぶ', 'fa-flask', () => openPanel('samples'), false)])

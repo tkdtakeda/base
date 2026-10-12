@@ -17,7 +17,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data_search.cache_service import CacheService  # noqa: E402
-from data_search.config_loader import load_config  # noqa: E402
+from data_search.config_loader import load_config, resolve_config_path  # noqa: E402
 from data_search.errors import AppError  # noqa: E402
 from data_search.http_server import AppContext, create_server  # noqa: E402
 from data_search.lot_service import LotService  # noqa: E402
@@ -35,6 +35,7 @@ ROWS = [
     ("LOT-DUP", "INS-005", "CST-005", "ORD-4", "A3003", "H24", "t1×1000×2000", "例示精工", "2026-10-05", "検査", "QC-02", "検査待ち"),
     ("LOT-DUP", "INS-006", "CST-006", "ORD-4", "A3003", "H24", "t1×1000×2000", "例示精工", "2026-10-05", "検査", "QC-02", "出荷済み"),
 ]
+SAMPLE_CONFIG = os.path.join(os.path.dirname(__file__), "..", "..", "config", "config.sample.json")
 SILENT = logging.getLogger("test-silent")
 SILENT.addHandler(logging.NullHandler())
 SILENT.propagate = False
@@ -66,6 +67,8 @@ class BackendTestCase(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp()
         os.makedirs(os.path.join(self.root, "config"))
+        # 正式なスキーマ（config.sample.json）をテスト用のフォルダへ置く
+        shutil.copyfile(SAMPLE_CONFIG, os.path.join(self.root, "config", "config.sample.json"))
         self.source = os.path.join(self.root, "shared", "source.sqlite3")
         make_db(self.source)
         self.config_path = self.write_config()
@@ -76,25 +79,23 @@ class BackendTestCase(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
 
-    def write_config(self, **overrides):
-        config = {
-            "application": {"id": "data-search", "name": "Data Search", "version": "0.1.0"},
-            "dataSource": {
-                "id": "target-data", "enabled": True, "sourcePath": "./shared/source.sqlite3",
-                "cachePath": "./data/cache/cache.sqlite3", "tableName": "t_lot", "readOnly": True,
-            },
-            "fieldMappings": dict(COLUMNS),
-            "cache": {"temporaryExtension": ".tmp", "keepPreviousOnFailure": True},
-            "search": {"defaultMatchMode": "partial", "pageSize": 100, "maxPageSize": 500},
-            "logging": {"directory": "./logs", "level": "info"},
-        }
+    def write_config(self, name="config.local.json", **overrides):
+        """config.sample.json と同じ形で、値だけを差し替えた設定を書く。"""
+        with open(SAMPLE_CONFIG, encoding="utf-8") as fp:
+            config = json.load(fp)
+        config["dataSource"].update({
+            "sourcePath": "./shared/source.sqlite3",
+            "cachePath": "./data/cache/cache.sqlite3",
+            "tableName": "t_lot",
+        })
+        config["fieldMappings"] = dict(COLUMNS)
         for path, value in overrides.items():
             node = config
             keys = path.split(".")
             for key in keys[:-1]:
                 node = node[key]
             node[keys[-1]] = value
-        path = os.path.join(self.root, "config", "config.test.json")
+        path = os.path.join(self.root, "config", name)
         with open(path, "w", encoding="utf-8") as fp:
             json.dump(config, fp, ensure_ascii=False)
         return path
@@ -107,21 +108,65 @@ class ConfigTest(BackendTestCase):
     def test_relative_paths_resolve_from_app_root(self):
         self.assertEqual(self.config.source_path, os.path.normpath(self.source))
 
-    def test_placeholder_is_rejected(self):
+    def test_local_is_preferred_then_sample(self):
+        config_dir = os.path.join(self.root, "config")
+        self.assertTrue(resolve_config_path(config_dir).endswith("config.local.json"))
+        self.assertEqual(self.config.config_source, "local")
+        self.assertFalse(self.config.incomplete)
+        os.remove(self.config_path)
+        self.assertTrue(resolve_config_path(config_dir).endswith("config.sample.json"))
+
+    def test_sample_fallback_starts_as_incomplete(self):
+        os.remove(self.config_path)
+        config = load_config(resolve_config_path(os.path.join(self.root, "config")))
+        self.assertEqual(config.config_source, "sample")
+        self.assertIn("dataSource.sourcePath", config.incomplete_settings)
+        self.assertIn("fieldMappings.lotNo", config.incomplete_settings)
+        cache = CacheService(config, SILENT)
+        status = cache.status()
+        self.assertTrue(status["configIncomplete"])
+        self.assertFalse(status["available"])
+        with self.assertRaises(AppError) as ctx:
+            cache.refresh()
+        self.assertEqual(ctx.exception.code, "CONFIG_INCOMPLETE")
+        with self.assertRaises(AppError) as ctx:
+            LotService(config, cache, SILENT).list({})
+        self.assertEqual(ctx.exception.code, "CONFIG_INCOMPLETE")
+
+    def test_placeholder_left_in_local_is_incomplete(self):
         path = self.write_config(**{"dataSource.tableName": "<TARGET_TABLE_NAME>"})
+        config = load_config(path)
+        self.assertEqual(config.incomplete_settings, ("dataSource.tableName",))
+
+    def assert_structure_error(self, mutate, expected):
+        with open(self.config_path, encoding="utf-8") as fp:
+            data = json.load(fp)
+        mutate(data)
+        with open(self.config_path, "w", encoding="utf-8") as fp:
+            json.dump(data, fp, ensure_ascii=False)
         with self.assertRaises(AppError) as ctx:
-            load_config(path)
+            load_config(self.config_path)
         self.assertEqual(ctx.exception.code, "CONFIG_INVALID")
-        self.assertIn("プレースホルダー", ctx.exception.detail)
+        self.assertIn(expected, ctx.exception.detail)
 
-    def test_sample_config_is_rejected_as_is(self):
-        sample = os.path.join(os.path.dirname(__file__), "..", "..", "config", "config.sample.json")
-        with self.assertRaises(AppError):
-            load_config(sample)
+    def test_missing_key_is_rejected(self):
+        self.assert_structure_error(lambda d: d["dataSource"].pop("tableName"), "dataSource.tableName がありません")
 
-    def test_missing_config(self):
+    def test_extra_key_is_rejected(self):
+        self.assert_structure_error(lambda d: d["dataSource"].update({"table": "x"}), "dataSource.table は config.sample.json にないキーです")
+
+    def test_old_structure_is_rejected(self):
+        def to_old(d):
+            d["dataSources"] = [d.pop("dataSource")]
+        self.assert_structure_error(to_old, "dataSource がありません")
+
+    def test_type_mismatch_is_rejected(self):
+        self.assert_structure_error(lambda d: d["search"].update({"pageSize": "100"}), "search.pageSize は 整数 にしてください")
+        self.assert_structure_error(lambda d: d["dataSource"].update({"readOnly": 1}), "dataSource.readOnly は true/false にしてください")
+
+    def test_missing_explicit_config(self):
         with self.assertRaises(AppError) as ctx:
-            load_config(os.path.join(self.root, "nothing.json"))
+            load_config(os.path.join(self.root, "config", "nothing.json"))
         self.assertEqual(ctx.exception.code, "CONFIG_NOT_FOUND")
 
 
