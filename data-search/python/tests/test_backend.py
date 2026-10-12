@@ -23,16 +23,20 @@ from data_search.errors import AppError  # noqa: E402
 from data_search.http_server import AppContext, create_server  # noqa: E402
 from data_search.lot_service import LotService  # noqa: E402
 from data_search.source_service import SourceService  # noqa: E402
+from data_search.record_service import RecordService  # noqa: E402
 from data_search import commands  # noqa: E402
-from data_search.column_catalog import build_catalog  # noqa: E402
+from data_search.column_catalog import DbColumn  # noqa: E402
+from data_search.column_model import build_model  # noqa: E402
+from data_search.settings import model_settings_of  # noqa: E402
 
 APP_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SAMPLE_DIR = os.path.join(APP_ROOT, "config", "sample")
 
 with open(os.path.join(SAMPLE_DIR, "schema.sample.json"), encoding="utf-8") as _fp:
     ROLE_FIELDS = list(json.load(_fp)["columns"])
-# 役割のある列の DB の列名：論理名と違う名前にする（1 列は日本語。引用符の処理の確認用）
+# 別名（論理名）の DB の列名：論理名と違う名前にする（1 列は日本語。引用符の処理の確認用）
 COLUMNS = {name: ("取引先_名称" if name == "customerName" else "C_" + name.upper()) for name in ROLE_FIELDS}
+P = COLUMNS  # 論理名 → DB の列名（画面・API で使う列の id は DB の列名）
 # 役割のない列（設定には書かない。DB から自動で表示される）。DB の列の順は「予定設備」が先頭、ほかは後ろ
 EXTRA_FIRST, EXTRA_LAST = ["予定設備"], ["注文板厚", "UPDATED_AT"]
 TABLE_COLUMNS = EXTRA_FIRST + [COLUMNS[name] for name in ROLE_FIELDS] + EXTRA_LAST
@@ -68,7 +72,7 @@ def make_db(path, variant="normal", rows=ROWS):
         with open(path, "wb") as fp:
             fp.write(b"broken" * 200)
         return
-    keep = [i for i, name in enumerate(TABLE_COLUMNS) if not (variant == "missing-column" and name == COLUMNS["cfStatus"])]
+    keep = [i for i, name in enumerate(TABLE_COLUMNS) if not (variant == "missing-key" and name == COLUMNS["boxNo"])]
     columns = [TABLE_COLUMNS[i] for i in keep]
     table = "other" if variant == "missing-table" else "t_lot"
     conn = sqlite3.connect(path)
@@ -117,8 +121,19 @@ class BackendTestCase(unittest.TestCase):
     def remove_local(self, kind):
         os.remove(os.path.join(self.local_dir, f"{kind}.local.json"))
 
-    def search(self, keyword, search_type="lotNo", match_mode="partial", **extra):
-        return self.service.search({"searchType": search_type, "keyword": keyword, "matchMode": match_mode, **extra})
+    def reload(self):
+        """ローカルの設定を書き換えたあと、設定と各部品を作り直す。"""
+        self.config = load_settings(self.root)
+        self.cache = CacheService(self.config, SILENT)
+        self.service = LotService(self.config, self.cache, SILENT)
+        return self.config
+
+    def search(self, keyword, match_mode="partial", **extra):
+        return self.service.search({"keyword": keyword, "matchMode": match_mode, **extra})
+
+    @staticmethod
+    def lots_of(result):
+        return [item[P["lotNo"]] for item in result["items"]]
 
 
 class ConfigTest(BackendTestCase):
@@ -142,9 +157,9 @@ class ConfigTest(BackendTestCase):
         self.assertEqual(self.config.source_path, os.path.normpath(self.source))
         self.assertEqual(self.config.cache_path, os.path.join(self.root, "data", "cache", "target-data.sqlite3"))
         self.assertEqual(self.config.model.record_key, ("lotNo", "boxNo"))
-        self.assertEqual(self.config.model.searchable, ("lotNo", "boxNo", "inspectionNo", "castingNo", "orderNo", "customerName"))
-        self.assertEqual(self.config.model.filters["cfStatus"], "values")
+        self.assertIsNone(self.config.model.search_column)       # null なら 1 件を決める列の 1 つ目で探す
         self.assertEqual(self.config.model.default_sort, ("factoryDeliveryDate", "asc"))
+        self.assertEqual(self.config.model.aliases["lotNo"], "C_LOTNO")
         self.assertEqual(other_warnings(self.config), [])
         self.assertEqual([s[2] is not None for s in self.config.sources], [True, True, False])  # view.local はない
 
@@ -158,17 +173,19 @@ class ConfigTest(BackendTestCase):
         self.assertEqual(base["list"], [1, 2, 3])  # サンプル側は変わらない
 
     def test_view_array_is_replaced_whole(self):
-        self.write_local("view", {"searchFields": ["lotNo"]})
+        self.write_local("view", {"hiddenColumns": ["UPDATED_AT"]})
         config = load_settings(self.root)
-        self.assertEqual(config.model.searchable, ("lotNo",))
-        self.assertEqual(len(config.view["filters"]), 8)  # 上書きしていない配列はサンプルのまま
+        self.assertEqual(config.model.hidden, ("UPDATED_AT",))
+        self.assertEqual(config.model.default_sort, ("factoryDeliveryDate", "asc"))  # 書いていない項目はサンプルのまま
 
-    def test_types_and_view_can_use_db_column_names(self):
-        # 役割のない列（DB の列名）も、日付の型・隠す列・表示の補助に書ける
-        self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS), "types": {"注文板厚": "text", "factoryDeliveryDate": "date"}})
+    def test_settings_can_use_db_column_names(self):
+        # 1 件を決める列・探す列・種類・隠す列・表示の補助は、DB の列名のままでも書ける（別名は不要）
+        self.write_local("schema", {"tableName": "t_lot", "recordKey": ["C_LOTNO", "C_BOXNO"], "searchColumn": "C_INSPECTIONNO",
+                                    "types": {"注文板厚": "text"}})
         self.write_local("view", {"hiddenColumns": ["UPDATED_AT"], "fields": {"予定設備": {"mono": True}}})
         config = load_settings(self.root)
-        self.assertEqual(config.public_view()["hiddenColumns"], ["UPDATED_AT"])
+        self.assertEqual(config.model.record_key, ("C_LOTNO", "C_BOXNO"))
+        self.assertEqual(config.model.search_column, "C_INSPECTIONNO")
         self.assertEqual(other_warnings(config), [])
 
     def test_unknown_keys_are_warned_with_file_and_path(self):
@@ -185,7 +202,7 @@ class ConfigTest(BackendTestCase):
         places = {(i.file, i.path) for i in issues}
         self.assertIn(("config/local/config.local.json", "dataSource.sourcePath"), places)
         self.assertIn(("config/local/schema.local.json", "tableName"), places)
-        self.assertIn(("config/local/schema.local.json", "columns.lotNo"), places)
+        self.assertFalse(any(i.path.startswith("columns.") for i in issues))  # 別名は任意（仮の値は使わないだけ）
         self.assertFalse(any(i.path == "(ファイル)" for i in issues))  # ローカルがないこと自体は誤りにしない
 
     def test_table_and_columns_are_not_required_in_config_local(self):
@@ -209,7 +226,7 @@ class ConfigTest(BackendTestCase):
         self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS), "types": {"factoryDeliveryDate": "date"}})
         config = load_settings(self.root)
         self.assertEqual((config.server_port, config.temporary_extension), (9000, ".part"))
-        self.assertEqual(config.model.date_fields, ("factoryDeliveryDate",))
+        self.assertEqual(config.model.types, {"factoryDeliveryDate": "date"})
         self.assertEqual(other_warnings(config), [])
 
     def test_dev_server_port(self):
@@ -225,64 +242,125 @@ class ConfigTest(BackendTestCase):
 
     # ── 検証：schema ──
     def test_schema_rules(self):
-        self.write_local("schema", {"tableName": " ", "columns": dict(COLUMNS, cfStatus="")})
+        self.write_local("schema", {"tableName": " ", "recordKey": ["A", "A"], "searchColumn": ""})
         self.assert_error("config/local/schema.local.json", "tableName", "空")
-        self.assert_error("config/local/schema.local.json", "columns.cfStatus", "空")
+        self.assert_error("config/local/schema.local.json", "recordKey", "重複")
+        self.assert_error("config/local/schema.local.json", "searchColumn", "空")
+        self.write_local("schema", {"tableName": "t_lot", "recordKey": []})
+        self.assert_error("config/local/schema.local.json", "recordKey", "ありません")
+        self.write_local("schema", {"tableName": "t_lot", "recordKey": ["A", "B", "C", "D"]})
+        self.assert_error("config/local/schema.local.json", "recordKey", "4 個")
+
+    def test_placeholder_aliases_are_not_used(self):
+        # 別名の値が仮の値のままなら、その別名は使わない（誤りにもしない）
+        self.write_local("schema", {"tableName": "t_lot", "columns": {"lotNo": "C_LOTNO"}})
+        config = load_settings(self.root)
+        self.assertEqual(config.model.aliases, {"lotNo": "C_LOTNO"})
 
     def test_data_source_id_must_match(self):
         self.write_local("schema", {"dataSourceId": "other", "tableName": "t_lot", "columns": dict(COLUMNS)})
         self.assert_error("config/local/schema.local.json", "dataSourceId", "一致しません")
 
     # ── 検証：view ──
-    def test_view_field_must_exist_in_schema(self):
-        self.write_local("view", {"searchFields": ["lotNo", "lotNo", "productNo"], "hiddenColumns": [""]})
-        self.assert_error("config/local/view.local.json", "searchFields[2]", "schema.columns に定義されていません")
-        self.assert_error("config/local/view.local.json", "searchFields[1]", "重複")
+    def test_view_rules(self):
+        self.write_local("view", {"hiddenColumns": [""], "defaultSort": {"field": "x", "order": "up"}})
         self.assert_error("config/local/view.local.json", "hiddenColumns[0]", "空")
-        self.write_local("view", {"searchFields": []})
-        self.assert_error("config/local/view.local.json", "searchFields", "1 つもありません")
-
-    def test_date_filter_needs_date_type(self):
-        self.write_local("view", {"filters": [{"field": "cfStatus", "type": "date"}]})
-        self.assert_error("config/local/view.local.json", "filters[0].type", "date になっていません")
+        self.assert_error("config/local/view.local.json", "defaultSort.order", "使えません")
 
     def test_old_style_settings_are_warned_not_errors(self):
-        # 以前の形（全項目の columns・listColumns・detailFields・表示名）は止めずに「使っていない」と知らせる
+        # 以前の形（全項目の columns・listColumns・detailFields・表示名・searchFields・filters）は止めずに「使っていない」と知らせる
         old_columns = dict(COLUMNS, plannedEquipmentName="PLANNED", orderThickness="THICK")
         self.write_local("schema", {"tableName": "t_lot", "columns": old_columns})
         self.write_local("view", {"listColumns": [{"field": "lotNo"}], "detailFields": ["lotNo"], "detailGroups": [],
+                                  "searchFields": ["lotNo"], "filters": [{"field": "cfStatus", "type": "values"}],
                                   "fields": {"lotNo": {"label": "ロット"}, "cfStatus": {"label": "状態", "group": "x"}}})
         config = load_settings(self.root)
         paths = {w.path: w for w in config.warnings}
-        self.assertEqual(set(paths), {"columns.<役割のない項目>", "listColumns", "detailFields", "detailGroups", "fields.<列>.label"})
+        self.assertEqual(set(paths), {"columns.<役割のない項目>", "listColumns", "detailFields", "detailGroups",
+                                      "searchFields", "filters", "fields.<列>.label"})
         self.assertIn("2 項目", paths["columns.<役割のない項目>"].reason)
         self.assertNotIn("PLANNED", paths["columns.<役割のない項目>"].reason)  # DB の列名は出さない（論理名だけ）
-        self.assertNotIn("plannedEquipmentName", config.field_mappings)
+        self.assertNotIn("plannedEquipmentName", config.model.aliases)
 
     def test_error_format(self):
-        self.write_local("view", {"defaultSort": {"field": "productNo", "order": "asc"}})
+        self.write_local("view", {"defaultSort": {"field": "productNo", "order": "up"}})
         text = self.errors_of()[0].format()
         self.assertEqual(text.splitlines()[0], "[設定エラー]")
         self.assertIn("対象: config/local/view.local.json", text)
-        self.assertIn("項目: defaultSort.field", text)
+        self.assertIn("項目: defaultSort.order", text)
         self.assertIn("理由: ", text)
         self.assertIn("対応: ", text)
 
-    def test_public_view_has_no_table_name_or_path(self):
-        text = json.dumps(self.config.public_view(), ensure_ascii=False)
-        for secret in ["t_lot", "source.sqlite3"] + list(COLUMNS.values()):
+    def test_view_config_has_no_table_name_or_path(self):
+        self.cache.refresh()
+        context = AppContext(self.config, self.cache, self.service, SILENT)
+        text = json.dumps(commands.dispatch("get_view_config", context, {}), ensure_ascii=False)
+        for secret in ["t_lot", "source.sqlite3", self.root]:
             self.assertNotIn(secret, text)
 
     def test_mock_view_matches_sample(self):
-        # 画面だけで試すモード（file://）の表示定義が、公開サンプルと同じであること
+        # 画面だけで試すモード（file://）の表示定義が、公開サンプルから本物と同じ決まりで作ったものと同じであること
+        sys.path.insert(0, os.path.join(APP_ROOT, "python", "tools"))
+        from sync_sample_view import build_sample_view
         path = os.path.join(APP_ROOT, "src", "js", "sample", "sample-view.js")
         with open(path, encoding="utf-8") as fp:
             text = fp.read()
         embedded = json.loads(text.split("/*VIEW_JSON_START*/", 1)[1].split("/*VIEW_JSON_END*/", 1)[0])
-        columns = embedded.pop("columns")
-        embedded.pop("columnsVersion")
-        self.assertEqual(embedded, self.config.public_view())
-        self.assertEqual([c["id"] for c in columns][:len(ROLE_FIELDS)], ROLE_FIELDS)  # 役割のある列が先頭
+        self.assertEqual(embedded, build_sample_view())
+        self.assertTrue(embedded["ready"])
+        self.assertEqual(embedded["recordKey"], [c["id"] for c in embedded["columns"]][:2])  # 1 件を決める列が先頭
+
+
+class ColumnModelTest(unittest.TestCase):
+    """設定と DB の列から、列の決まり（column_model）を作る。"""
+
+    def settings(self, **extra):
+        schema = {"columns": {"lotNo": "C_LOT", "due": "C_DUE"}, "recordKey": ["lotNo"], "searchColumn": None, "types": {}}
+        view = {"defaultSort": {"field": "due", "order": "desc"}, "hiddenColumns": [], "fields": {}}
+        for key, value in extra.items():
+            (view if key in view else schema)[key] = value
+        return model_settings_of(schema, view)
+
+    def catalog(self, *names, dates=()):
+        return tuple(DbColumn(name, name in dates) for name in names)
+
+    def test_order_kinds_and_aliases(self):
+        model = build_model(self.settings(), self.catalog("X", "C_DUE", "C_LOT", "Y", dates=("C_DUE", "Y")))
+        self.assertEqual(model.ids, ("C_LOT", "C_DUE", "X", "Y"))           # 1 件を決める列 → 別名のある列 → DB の順
+        self.assertEqual([c.kind for c in model.columns], ["text", "date", "text", "date"])
+        self.assertEqual((model.record_key, model.search_column, model.default_sort), (("C_LOT",), "C_LOT", ("C_DUE", "desc")))
+        self.assertTrue(model.ready)
+        self.assertEqual(model.notices, ())
+
+    def test_db_name_wins_over_alias(self):
+        # DB に「lotNo」という列そのものがあれば、別名より DB の列を使う（画面から DB の列名で保存するため）
+        model = build_model(self.settings(), self.catalog("lotNo", "C_LOT"))
+        self.assertEqual(model.record_key, ("lotNo",))
+
+    def test_missing_key_is_not_ready_and_noticed(self):
+        model = build_model(self.settings(recordKey=["lotNo", "boxNo"], defaultSort={"field": "nothing", "order": "asc"}),
+                            self.catalog("C_LOT", "X"))
+        self.assertFalse(model.ready)
+        self.assertEqual(model.search_column, "C_LOT")  # 1 つ目はあるので番号では探せる
+        self.assertEqual(model.default_sort, ("C_LOT", "asc"))
+        self.assertEqual({n.path for n in model.notices}, {"schema.recordKey", "view.defaultSort.field"})
+        self.assertIn("boxNo", model.notices[0].reason)
+
+    def test_without_data_there_are_no_notices(self):
+        model = build_model(self.settings(), ())
+        self.assertEqual((model.ids, model.notices, model.ready), ((), (), False))
+
+    def test_identifier_columns_are_never_dates_unless_written(self):
+        model = build_model(self.settings(), self.catalog("C_LOT", dates=("C_LOT",)))
+        self.assertEqual(model.kind_of("C_LOT"), "text")
+        model = build_model(self.settings(types={"lotNo": "date"}), self.catalog("C_LOT"))
+        self.assertEqual(model.kind_of("C_LOT"), "date")
+
+    def test_version_changes_with_key(self):
+        catalog = self.catalog("C_LOT", "C_DUE")
+        first = build_model(self.settings(), catalog)
+        second = build_model(self.settings(recordKey=["due"]), catalog)
+        self.assertNotEqual(first.version, second.version)
 
 
 class CacheTest(BackendTestCase):
@@ -323,18 +401,27 @@ class CacheTest(BackendTestCase):
     def test_missing_table_is_rejected(self):
         self.assert_variant_rejected("missing-table", "CACHE_TABLE_MISSING")
 
-    def test_missing_column_is_rejected(self):
-        self.assert_variant_rejected("missing-column", "CACHE_COLUMN_MISSING")
+    def test_missing_key_column_keeps_data_and_asks_to_choose(self):
+        # 1 件を決める列（BOX番号）がない似た DB：止めずに使い、画面で列を選び直してもらう
+        make_db(self.source, "missing-key")
+        self.cache.refresh()
+        model = self.service.model
+        self.assertFalse(model.ready)
+        self.assertEqual([n.path for n in model.notices], ["schema.recordKey"])
+        self.assertEqual(self.search("LOT-DUP")["totalCount"], 2)  # 番号では探せる（1 つ目の列はある）
+        with self.assertRaises(AppError) as ctx:
+            self.service.detail({P["lotNo"]: "LOT-001"})
+        self.assertEqual(ctx.exception.code, "KEY_NOT_READY")
 
     def test_search_without_cache(self):
         with self.assertRaises(AppError) as ctx:
             self.search("LOT")
         self.assertEqual(ctx.exception.code, "CACHE_UNAVAILABLE")
 
-    def test_cache_not_matching_schema_is_not_used(self):
-        # 作ったあとで schema の列名が変わったキャッシュは、誤った値を返さないよう使わない
+    def test_cache_not_matching_table_is_not_used(self):
+        # 作ったあとで schema のテーブル名が変わったキャッシュは、誤った値を返さないよう使わない
         self.cache.refresh()
-        self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS, customerName="RENAMED")})
+        self.write_local("schema", {"tableName": "t_renamed", "columns": dict(COLUMNS)})
         config = load_settings(self.root)
         cache = CacheService(config, SILENT)
         self.assertFalse(cache.verify_existing())
@@ -361,43 +448,42 @@ class SearchTest(BackendTestCase):
         self.assertEqual(self.search("LOT-00", match_mode="exact")["totalCount"], 0)
         self.assertEqual(self.search("lot-001", match_mode="exact")["totalCount"], 1)
 
-    def test_items_have_every_db_column(self):
-        # 役割のある列は論理名、ほかの列は DB の列名。並びは役割のある列が先、残りは DB の順
+    def test_items_have_every_db_column_with_db_names(self):
+        # 列の id は DB の列名。並びは 1 件を決める列 → 別名のある列（schema.columns の順）→ ほかの列（DB の順）
         result = self.search("LOT-001")
         item = result["items"][0]
-        self.assertEqual(list(item), ROLE_FIELDS + EXTRA_FIRST + EXTRA_LAST)
-        self.assertEqual((item["customerName"], item["予定設備"], item["注文板厚"]), ("サンプル工業", "検査", "1.00"))
-        self.assertEqual(self.service.detail({"lotNo": "LOT-001", "boxNo": "01"})["item"], item)
+        self.assertEqual(list(item), [COLUMNS[n] for n in ROLE_FIELDS] + EXTRA_FIRST + EXTRA_LAST)
+        self.assertEqual((item[P["customerName"]], item["予定設備"], item["注文板厚"]), ("サンプル工業", "検査", "1.00"))
+        self.assertEqual(self.service.detail({P["lotNo"]: "LOT-001", P["boxNo"]: "01"})["item"], item)
 
     def test_view_config_lists_columns_with_db_names(self):
-        self.cache.refresh()
         context = AppContext(self.config, self.cache, self.service, SILENT)
         view = commands.dispatch("get_view_config", context, {})
         self.assertEqual([c["label"] for c in view["columns"]], [COLUMNS[n] for n in ROLE_FIELDS] + EXTRA_FIRST + EXTRA_LAST)
-        self.assertEqual(view["columns"][0], {"id": "lotNo", "label": "C_LOTNO", "role": True})
-        self.assertEqual(view["columnsVersion"], self.cache.status()["columnsVersion"])
-        self.assertNotIn("t_lot", json.dumps(view, ensure_ascii=False))
+        self.assertEqual(view["columns"][0], {"id": "C_LOTNO", "label": "C_LOTNO", "kind": "text", "role": True})
+        self.assertEqual((view["recordKey"], view["searchColumn"]), (["C_LOTNO", "C_BOXNO"], "C_LOTNO"))
+        self.assertEqual(view["defaultSort"], {"field": P["factoryDeliveryDate"], "order": "asc"})
+        self.assertEqual(view["aliases"]["lotNo"], "C_LOTNO")
+        status = commands.dispatch("get_cache_status", context, {})
+        self.assertEqual(view["columnsVersion"], status["columnsVersion"])
 
-    def test_sort_by_column_without_role(self):
+    def test_sort_by_any_column(self):
         items = self.search("LOT", sortKey="注文板厚", sortOrder="desc")["items"]
         self.assertEqual([i["注文板厚"] for i in items], ["2.00", "1.00", "1.00", "1.00", "1.00"])
         with self.assertRaises(AppError):
             self.search("LOT", sortKey="NO_SUCH")
+        with self.assertRaises(AppError):
+            self.search("LOT", sortKey="lotNo")  # 別名は列の id ではない
 
     def test_new_db_column_appears_after_refresh(self):
-        before = self.cache.status()["columnsVersion"]
+        before = self.service.model.version
         conn = sqlite3.connect(self.source)
         conn.execute('ALTER TABLE "t_lot" ADD COLUMN "作業日" TEXT')
         conn.commit()
         conn.close()
         self.cache.refresh()
         self.assertIn("作業日", self.search("LOT-001")["items"][0])
-        self.assertNotEqual(self.cache.status()["columnsVersion"], before)
-
-    def test_catalog_names_do_not_collide(self):
-        catalog = build_catalog(["lotNo", "X", "C_LOTNO"], {"lotNo": "C_LOTNO"})
-        self.assertEqual([(c.id, c.physical, c.role) for c in catalog],
-                         [("lotNo", "C_LOTNO", True), ("lotNo#2", "lotNo", False), ("X", "X", False)])
+        self.assertNotEqual(self.service.model.version, before)
 
     def test_zero_results_is_success(self):
         result = self.search("NOTHING")
@@ -420,13 +506,16 @@ class SearchTest(BackendTestCase):
         self.assertEqual(result["totalCount"], 0)
         self.assertEqual(self.search("LOT")["totalCount"], 5)
 
-    def test_other_search_types(self):
-        self.assertEqual(self.search("INS-003", "inspectionNo", "exact")["items"][0]["lotNo"], "LOT_100%-A")
-        self.assertEqual(self.search("CST-004", "castingNo")["totalCount"], 1)
-        self.assertEqual(self.search("ORD-1", "orderNo", "exact")["totalCount"], 2)
+    def test_search_column_setting(self):
+        # 番号で探す列は 1 つ。schema.searchColumn（別名か DB の列名）で変えられる。searchType は使わない
+        self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS), "searchColumn": "inspectionNo"})
+        self.reload()
+        self.cache.refresh()
+        result = self.search("INS-003", "exact", searchType="lotNo")
+        self.assertEqual(self.lots_of(result), ["LOT_100%-A"])
 
     def test_paging_and_sort(self):
-        first = self.search("LOT", pageSize=2, page=1, sortKey="lotNo", sortOrder="desc")
+        first = self.search("LOT", pageSize=2, page=1, sortKey=P["lotNo"], sortOrder="desc")
         self.assertEqual(first["totalCount"], 5)
         self.assertEqual(first["count"], 2)
         second = self.search("LOT", pageSize=2, page=3)
@@ -434,13 +523,12 @@ class SearchTest(BackendTestCase):
 
     def test_invalid_requests(self):
         bad = [
-            {"searchType": "manufacturingMaterial", "keyword": "A"},
-            {"searchType": "lotNo", "keyword": ""},
-            {"searchType": "lotNo", "keyword": "A", "matchMode": "regex"},
-            {"searchType": "lotNo", "keyword": "A", "sortKey": "C_LOTNO"},
-            {"searchType": "lotNo", "keyword": "A", "pageSize": 501},
-            {"searchType": "lotNo", "keyword": "A", "page": 0},
-            {"searchType": "lotNo", "keyword": "x" * 101},
+            {"keyword": ""},
+            {"keyword": "A", "matchMode": "regex"},
+            {"keyword": "A", "sortKey": "lotNo"},
+            {"keyword": "A", "pageSize": 501},
+            {"keyword": "A", "page": 0},
+            {"keyword": "x" * 101},
         ]
         for payload in bad:
             with self.subTest(payload=payload), self.assertRaises(AppError) as ctx:
@@ -448,39 +536,100 @@ class SearchTest(BackendTestCase):
             self.assertEqual(ctx.exception.code, "INVALID_REQUEST")
 
     def test_detail_by_lot_and_box(self):
-        result = self.service.detail({"lotNo": "LOT-DUP", "boxNo": "02"})
-        self.assertEqual(result["item"]["inspectionNo"], "INS-006")
+        result = self.service.detail({P["lotNo"]: "LOT-DUP", P["boxNo"]: "02"})
+        self.assertEqual(result["item"][P["inspectionNo"]], "INS-006")
         with self.assertRaises(AppError) as ctx:
-            self.service.detail({"lotNo": "LOT-DUP", "boxNo": "99"})
+            self.service.detail({P["lotNo"]: "LOT-DUP", P["boxNo"]: "99"})
         self.assertEqual(ctx.exception.code, "NOT_FOUND")
+
+
+class RecordKeyTest(BackendTestCase):
+    """1 件を決める列の確認・変更（check_record_key / update_record_settings）"""
+
+    def setUp(self):
+        super().setUp()
+        self.cache.refresh()
+        self.context = AppContext(self.config, self.cache, self.service, SILENT)
+        self.context.record_service = RecordService(self.context, self.root, None)
+
+    def call(self, name, payload=None):
+        return commands.dispatch(name, self.context, payload or {})
+
+    def test_check_counts_duplicates_and_blanks(self):
+        lot_only = self.call("check_record_key", {"recordKey": [P["lotNo"]]})
+        self.assertFalse(lot_only["unique"])
+        self.assertEqual((lot_only["rowCount"], lot_only["duplicateGroups"], lot_only["duplicateRows"]), (len(ROWS), 1, 2))
+        self.assertEqual(lot_only["example"], {"values": {P["lotNo"]: "LOT-DUP"}, "count": 2})
+        both = self.call("check_record_key", {"recordKey": [P["lotNo"], P["boxNo"]]})
+        self.assertTrue(both["unique"])
+        self.assertIsNone(both["example"])
+        blank = self.call("check_record_key", {"recordKey": ["UPDATED_AT"]})
+        self.assertEqual(blank["blankRows"], len(ROWS))
+
+    def test_update_saves_db_names_and_switches_model(self):
+        result = self.call("update_record_settings", {"recordKey": [P["inspectionNo"]], "searchColumn": P["lotNo"]})
+        self.assertTrue(result["saved"])
+        with open(os.path.join(self.local_dir, "schema.local.json"), encoding="utf-8") as fp:
+            saved = json.load(fp)
+        self.assertEqual(saved, {"tableName": "t_lot", "columns": dict(COLUMNS),
+                                 "recordKey": [P["inspectionNo"]], "searchColumn": P["lotNo"]})
+        model = self.context.lot_service.model
+        self.assertEqual((model.record_key, model.search_column, model.ids[0]), ((P["inspectionNo"],), P["lotNo"], P["inspectionNo"]))
+        self.assertEqual(self.context.lot_service.detail({P["inspectionNo"]: "INS-006"})["item"][P["boxNo"]], "02")
+        self.assertEqual(self.context.lot_service.search({"keyword": "LOT-001"})["totalCount"], 1)
+        # 探す列が 1 つ目と同じなら null で保存する（あとで 1 つ目を変えたときに一緒に変わる）
+        self.call("update_record_settings", {"recordKey": [P["lotNo"], P["boxNo"]], "searchColumn": P["lotNo"]})
+        with open(os.path.join(self.local_dir, "schema.local.json"), encoding="utf-8") as fp:
+            self.assertIsNone(json.load(fp)["searchColumn"])
+
+    def test_update_fixes_missing_key_after_switching_db(self):
+        make_db(self.source, "missing-key")
+        self.cache.refresh()
+        self.assertFalse(self.context.lot_service.model.ready)
+        self.call("update_record_settings", {"recordKey": [P["inspectionNo"]]})
+        self.assertTrue(self.context.lot_service.model.ready)
+
+    def test_invalid_updates(self):
+        bad = [
+            {"recordKey": []},
+            {"recordKey": ["NO_SUCH"]},
+            {"recordKey": [P["lotNo"], P["lotNo"]]},
+            {"recordKey": [P["lotNo"], P["boxNo"], P["orderNo"], P["castingNo"]]},
+            {"recordKey": [P["lotNo"]], "searchColumn": "NO_SUCH"},
+        ]
+        for payload in bad:
+            with self.subTest(payload=payload), self.assertRaises(AppError) as ctx:
+                self.call("update_record_settings", payload)
+            self.assertEqual(ctx.exception.code, "INVALID_REQUEST")
+        self.assertFalse(os.path.isfile(os.path.join(self.local_dir, "schema.local.json.bak")))  # 書き込んでいない
 
 
 class FilterTest(BackendTestCase):
     """絞り込み。今日は 2026-10-03 に固定する。
-    工場納期（factoryDeliveryDate）を日付として絞り込めるよう、local の schema に types、view に日付の絞り込みを足す。"""
+    工場納期（factoryDeliveryDate）は types に書かず、値から日付の列と判定させる（3 種類の書き方が混ざる）。"""
 
     EXTRA = [
         ("LOT-SLASH", "01", "INS-101", "CST-101", "ORD-9", "A5052", "H14", "-", "サンプル工業", "2026/10/10", "検査", "QC-01", "仕掛中"),
         ("LOT-COMPACT", "01", "INS-102", "CST-102", "ORD-9", "A5052", "H14", "-", "サンプル工業", "20261020", "検査", "QC-01", "仕掛中"),
-        ("LOT-BLANK", "01", "INS-103", "CST-103", "ORD-9", "A5052", "H14", "-", "", None, "検査", "QC-01", None),
+        ("LOT-BLANK", "01", "INS-103", "CST-103", "ORD-9", "A5052", "H14", 5, "", None, "検査", "QC-01", None),
     ]
 
     def setUp(self):
         super().setUp()
         make_db(self.source, rows=ROWS + self.EXTRA)
-        self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS), "types": {"factoryDeliveryDate": "date"}})
-        with open(os.path.join(SAMPLE_DIR, "view.sample.json"), encoding="utf-8") as fp:
-            filters = json.load(fp)["filters"]
-        self.write_local("view", {"filters": filters + [{"field": "factoryDeliveryDate", "type": "date"}]})
-        self.config = load_settings(self.root)
-        self.cache = CacheService(self.config, SILENT)
         self.cache.refresh()
         from datetime import date
         self.service = LotService(self.config, self.cache, SILENT, today=lambda: date(2026, 10, 3))
 
     def lots(self, filters, **extra):
         result = self.service.list({"filters": filters, **extra})
-        return [item["lotNo"] for item in result["items"]], result
+        return self.lots_of(result), result
+
+    def test_date_column_is_detected_from_values(self):
+        model = self.service.model
+        self.assertEqual(model.kind_of(P["factoryDeliveryDate"]), "date")
+        self.assertEqual(model.kind_of("注文板厚"), "text")
+        self.assertEqual(model.kind_of(P["lotNo"]), "text")
 
     def test_list_without_keyword_sorted_by_date_blank_last(self):
         lots, result = self.lots({})
@@ -491,47 +640,73 @@ class FilterTest(BackendTestCase):
         self.assertEqual(result["today"], "2026-10-03")
 
     def test_values_filter_with_blank(self):
-        lots, _ = self.lots({"cfStatus": {"type": "values", "values": ["仕掛中", None]}})
+        lots, _ = self.lots({P["cfStatus"]: {"type": "values", "values": ["仕掛中", None]}})
         self.assertEqual(sorted(lots), ["LOT-002", "LOT-BLANK", "LOT-COMPACT", "LOT-SLASH"])
-        lots, _ = self.lots({"customerName": {"type": "values", "values": [None]}})
+        lots, _ = self.lots({P["customerName"]: {"type": "values", "values": [None]}})
+        self.assertEqual(lots, ["LOT-BLANK"])
+
+    def test_any_column_can_be_filtered(self):
+        lots, _ = self.lots({"注文板厚": {"type": "values", "values": ["2.00"]}})
+        self.assertEqual(lots, ["LOT-002"])
+        lots, _ = self.lots({P["lotNo"]: {"type": "values", "values": ["LOT-DUP"]}, "予定設備": {"type": "values", "values": ["検査"]}})
+        self.assertEqual(lots, ["LOT-DUP", "LOT-DUP"])
+        # 数値で入っている値も、一覧に出した文字のまま選べる
+        values = self.service.filter_values({"field": "注文板厚"})["values"]
+        self.assertIn({"value": "5", "count": 1}, values)
+        lots, _ = self.lots({"注文板厚": {"type": "values", "values": ["5"]}})
         self.assertEqual(lots, ["LOT-BLANK"])
 
     def test_relative_date_filter(self):
-        overdue, _ = self.lots({"factoryDeliveryDate": {"type": "date", "mode": "relative", "fromDays": None, "toDays": -1}})
+        due = P["factoryDeliveryDate"]
+        overdue, _ = self.lots({due: {"type": "date", "mode": "relative", "fromDays": None, "toDays": -1}})
         self.assertEqual(overdue, ["LOT-001", "LOT-002"])
-        within, _ = self.lots({"factoryDeliveryDate": {"type": "date", "mode": "relative", "fromDays": 0, "toDays": 7}})
+        within, _ = self.lots({due: {"type": "date", "mode": "relative", "fromDays": 0, "toDays": 7}})
         self.assertEqual(within, ["LOT_100%-A", "試作-α-001", "LOT-DUP", "LOT-DUP", "LOT-SLASH"])
 
     def test_absolute_date_filter_handles_formats(self):
-        lots, _ = self.lots({"factoryDeliveryDate": {"type": "date", "mode": "absolute", "from": "2026-10-10", "to": "2026-10-20"}})
+        lots, _ = self.lots({P["factoryDeliveryDate"]: {"type": "date", "mode": "absolute", "from": "2026-10-10", "to": "2026-10-20"}})
         self.assertEqual(lots, ["LOT-SLASH", "LOT-COMPACT"])
 
+    def test_text_type_overrides_detection(self):
+        self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS), "types": {"factoryDeliveryDate": "text"}})
+        self.reload()
+        self.assertEqual(self.service.model.kind_of(P["factoryDeliveryDate"]), "text")
+        lots, _ = self.lots({P["factoryDeliveryDate"]: {"type": "values", "values": ["20261020"]}})
+        self.assertEqual(lots, ["LOT-COMPACT"])
+
     def test_filters_combine_with_keyword(self):
-        lots, _ = self.lots(
-            {"cfStatus": {"type": "values", "values": ["仕掛中"]}},
-            searchType="lotNo", keyword="LOT-", matchMode="partial",
-        )
+        lots, _ = self.lots({P["cfStatus"]: {"type": "values", "values": ["仕掛中"]}}, keyword="LOT-", matchMode="partial")
         self.assertEqual(lots, ["LOT-002", "LOT-SLASH", "LOT-COMPACT"])
 
     def test_filter_values_are_faceted(self):
         result = self.service.filter_values({
-            "field": "cfStatus",
+            "field": P["cfStatus"],
             "filters": {
-                "cfStatus": {"type": "values", "values": ["保留"]},
-                "customerName": {"type": "values", "values": ["サンプル工業"]},
+                P["cfStatus"]: {"type": "values", "values": ["保留"]},
+                P["customerName"]: {"type": "values", "values": ["サンプル工業"]},
             },
         })
         counts = {row["value"]: row["count"] for row in result["values"]}
         self.assertEqual(counts, {"仕掛中": 2, "検査済み": 1})
 
+    def test_filter_values_match(self):
+        # 値が多い列では、上位に出ない値を文字で探せる（大文字小文字・全角半角を区別しない）
+        result = self.service.filter_values({"field": P["inspectionNo"], "match": "ｉｎｓ－１０"})
+        self.assertEqual([row["value"] for row in result["values"]], ["INS-101", "INS-102", "INS-103"])
+        self.assertEqual(result["match"], "ins-10")
+        with self.assertRaises(AppError):
+            self.service.filter_values({"field": P["factoryDeliveryDate"]})  # 日付の列は範囲で絞り込む
+
     def test_invalid_filters(self):
+        due = P["factoryDeliveryDate"]
         bad = [
-            {"lotNo": {"type": "values", "values": ["x"]}},
-            {"cfStatus": {"type": "date", "mode": "relative", "fromDays": 0}},
-            {"cfStatus": {"type": "values", "values": "仕掛中"}},
-            {"factoryDeliveryDate": {"type": "date", "mode": "absolute", "from": "2026-13-01"}},
-            {"factoryDeliveryDate": {"type": "date", "mode": "absolute", "from": "2026-10-10", "to": "2026-10-01"}},
-            {"factoryDeliveryDate": {"type": "date", "mode": "relative", "fromDays": 99999}},
+            {"lotNo": {"type": "values", "values": ["x"]}},          # 別名は列の id ではない
+            {"NO_SUCH": {"type": "values", "values": ["x"]}},
+            {P["cfStatus"]: {"type": "date", "mode": "relative", "fromDays": 0}},
+            {P["cfStatus"]: {"type": "values", "values": "仕掛中"}},
+            {due: {"type": "date", "mode": "absolute", "from": "2026-13-01"}},
+            {due: {"type": "date", "mode": "absolute", "from": "2026-10-10", "to": "2026-10-01"}},
+            {due: {"type": "date", "mode": "relative", "fromDays": 99999}},
         ]
         for filters in bad:
             with self.subTest(filters=filters), self.assertRaises(AppError) as ctx:
@@ -540,8 +715,8 @@ class FilterTest(BackendTestCase):
 
     def test_empty_conditions_are_ignored(self):
         _, result = self.lots({
-            "cfStatus": {"type": "values", "values": []},
-            "factoryDeliveryDate": {"type": "date", "mode": "relative", "fromDays": None, "toDays": None},
+            P["cfStatus"]: {"type": "values", "values": []},
+            P["factoryDeliveryDate"]: {"type": "date", "mode": "relative", "fromDays": None, "toDays": None},
         })
         self.assertEqual(result["totalCount"], len(ROWS) + len(self.EXTRA))
 
@@ -575,23 +750,22 @@ class HttpTest(BackendTestCase):
             return error.code, json.loads(error.read())
 
     def test_commands(self):
-        status, body = self.post("search_lots", {"searchType": "lotNo", "keyword": "LOT-001"})
+        status, body = self.post("search_lots", {"keyword": "LOT-001"})
         self.assertEqual((status, body["totalCount"]), (200, 1))
         status, body = self.post("get_application_info", {})
         self.assertEqual(body["id"], "data-search")
         status, body = self.post("get_cache_status", {})
         self.assertTrue(body["available"])
-        status, body = self.post("list_lots", {"filters": {"cfStatus": {"type": "values", "values": ["保留"]}}})
+        status, body = self.post("list_lots", {"filters": {P["cfStatus"]: {"type": "values", "values": ["保留"]}}})
         self.assertEqual(body["totalCount"], 1)
-        status, body = self.post("get_filter_values", {"field": "cfStatus"})
+        status, body = self.post("get_filter_values", {"field": P["cfStatus"]})
         self.assertEqual(len(body["values"]), 6)
 
     def test_error_shape_hides_internal_detail(self):
-        status, body = self.post("search_lots", {"searchType": "C_LOTNO", "keyword": "x"})
+        status, body = self.post("list_lots", {"filters": {"NO_SUCH_COLUMN": {"type": "values", "values": ["x"]}}})
         self.assertFalse(body["success"])
         self.assertEqual(set(body["error"]), {"code", "userMessage", "detailId"})
-        self.assertNotIn("C_LOTNO", json.dumps(body, ensure_ascii=False))
-
+        self.assertNotIn("NO_SUCH_COLUMN", json.dumps(body, ensure_ascii=False))
     def test_unknown_command_and_foreign_origin(self):
         self.assertEqual(self.post("drop_table", {})[0], 404)
         self.assertEqual(self.post("search_lots", {}, {"Origin": "http://evil.example"})[0], 403)
@@ -645,14 +819,26 @@ class SourceTest(BackendTestCase):
         with open(text, "w", encoding="utf-8") as fp:
             fp.write("not sqlite")
         self.assertEqual(self.first_ng(text)["id"], "sqlite")
-        for variant in ("missing-table", "missing-column"):
-            other = os.path.join(self.root, "shared", f"{variant}.sqlite3")
-            make_db(other, variant)
-            step = self.first_ng(other)
-            self.assertEqual(step["id"], "table")
-            self.assertTrue(step["action"])
+        other = os.path.join(self.root, "shared", "missing-table.sqlite3")
+        make_db(other, "missing-table")
+        step = self.first_ng(other)
+        self.assertEqual(step["id"], "table")
+        self.assertTrue(step["action"])
         result = self.call("test_data_source", {"sourcePath": ""})
         self.assertEqual(self.statuses(result)["rows"], "skip")       # × の後は確かめない
+
+    def test_missing_key_column_is_warned_but_can_be_saved(self):
+        # 1 件を決める列がない似た DB は △：保存してから画面で列を選び直せる
+        other = os.path.join(self.root, "shared", "missing-key.sqlite3")
+        make_db(other, "missing-key")
+        result = self.call("test_data_source", {"sourcePath": other})
+        self.assertTrue(result["ok"])
+        self.assertEqual(self.statuses(result)["table"], "warn")
+        table = next(step for step in result["steps"] if step["id"] == "table")
+        self.assertIn("boxNo", table["message"])
+        self.assertTrue(table["action"])
+        self.assertTrue(self.call("update_data_source", {"sourcePath": other})["saved"])
+        self.assertFalse(self.context.lot_service.model.ready)
 
     def test_relative_path_is_from_app_root(self):
         self.assertTrue(self.call("test_data_source", {"sourcePath": "./shared/source.sqlite3"})["ok"])
@@ -678,7 +864,7 @@ class SourceTest(BackendTestCase):
         self.assertEqual(saved, {"application": {"name": "残す名前"}, "dataSource": {"sourcePath": other}})
         self.assertTrue(os.path.isfile(os.path.join(self.local_dir, "config.local.json.bak")))
         self.assertEqual(self.context.config.source_path, os.path.normpath(other))
-        self.assertEqual(self.search("LOT")["totalCount"], 2)                # 新しい読み込み先のデータ
+        self.assertEqual(self.context.lot_service.search({"keyword": "LOT"})["totalCount"], 2)  # 新しい読み込み先のデータ
         self.assertEqual(self.call("get_data_source")["sourcePath"], os.path.normpath(other))
 
     def test_cache_from_previous_source_is_not_used(self):

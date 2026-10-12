@@ -2,7 +2,8 @@
    「データ」パネルの「読み込み先」：今のパスの表示・接続テスト・変更
 
    ふだんは今のパスと 2 つのボタン（接続を確かめる／変更）だけ。
-   変更では、貼り付け → Enter で確かめる → すべて ○ なら「保存して更新」へ移る（Enter で押せる）。
+   変更では、貼り付け → Enter で確かめる → × がなければ「保存して更新」へ移る（Enter で押せる）。
+   △（1 件を決める列がないなど）は、保存してから「1 件を決める列」で直せる。
    入力を変えたら、前の結果は使えない（もう一度確かめる）。
    ========================================================= */
 (function () {
@@ -13,6 +14,7 @@
 
   const MARKS = {
     ok: { icon: 'fa-circle-check', fallback: '○', label: '○' },
+    warn: { icon: 'fa-triangle-exclamation', fallback: '△', label: '△' },
     ng: { icon: 'fa-circle-xmark', fallback: '×', label: '×' },
     skip: { icon: 'fa-circle-minus', fallback: '－', label: '－' },
   };
@@ -30,9 +32,10 @@
 
   function renderSteps(result) {
     if (!result) return [];
+    const warned = result.steps.some((step) => step.status === 'warn');
     const summary = result.ok
-      ? el('p', { className: 'source-result__summary is-ok' }, [icon('fa-circle-check', '○'), el('span', {
-        text: ` すべて ○（${DS.util.formatNumber(result.rowCount)} 件・${DS.util.formatDateTime(result.modifiedAt)} 更新）` })])
+      ? el('p', { className: `source-result__summary ${warned ? 'is-warn' : 'is-ok'}` }, [icon(warned ? 'fa-triangle-exclamation' : 'fa-circle-check', warned ? '△' : '○'), el('span', {
+        text: ` ${warned ? '× はありません（△ は保存してから直せます）' : 'すべて ○'}（${DS.util.formatNumber(result.rowCount)} 件・${DS.util.formatDateTime(result.modifiedAt)} 更新）` })])
       : el('p', { className: 'source-result__summary is-ng' }, [icon('fa-circle-xmark', '×'), el('span', { text: ' × があります。対応を見て直してください' })]);
     const list = el('ol', { className: 'source-steps' }, result.steps.map((step) => {
       const mark = MARKS[step.status] || MARKS.skip;

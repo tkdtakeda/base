@@ -1,63 +1,75 @@
-"""表示する列の一覧（カタログ）。キャッシュのテーブルから列を読み取り、DB の列名をそのまま表示名にする。
+"""DB のテーブルから読み取る列の一覧（カタログ）。設定に関係なく、DB の事実だけを持つ。
 
-    並び順 … 役割のある列（schema.columns の順）を先に、残りは DB の列の順
-    id     … 役割のある列は論理名（検索・絞り込みなどで使う）。ほかの列は DB の列名
-             （DB の列名が、別の列の論理名と同じになったときは「名前#2」のように区別する）
-    label  … DB の列名（画面の見出し・詳細・絞り込みで共通）
-
-設定に書くのは役割のある列だけでよく、DB に列が増えれば自動で表示される。
+    name       … DB の列名（そのまま画面の列の id・見出しになる）
+    looks_date … 空でない値がすべて日付の書き方か（YYYY-MM-DD… / YYYY/MM/DD… / YYYYMMDD）
+                 1 つでも当てはまらない値があれば、または値がすべて空なら False
+並びは DB の順。どの列に役割（1 件を決める・番号で探す）を持たせるかは、column_model.py が設定から決める。
 """
 
-import hashlib
 import sqlite3
 from dataclasses import dataclass
 
-from .query import quote_identifier
+from .query import blank_expression, quote_identifier
+
+# 月・日の 1 桁目まで見て、ただの数字の並び（番号など）を日付と取り違えにくくする
+DATE_GLOBS = (
+    "[12][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]*",
+    "[12][0-9][0-9][0-9]/[01][0-9]/[0-3][0-9]*",
+)
+COMPACT_DATE_GLOB = "[12][0-9][0-9][0-9][01][0-9][0-3][0-9]"
+DETECT_CHUNK = 200  # 1 つの SQL で調べる列の数（SQLite の結果列数の上限より十分小さく）
 
 
 @dataclass(frozen=True)
-class Column:
-    id: str
-    physical: str
-    role: bool
-
-    def public(self):
-        return {"id": self.id, "label": self.physical, "role": self.role}
+class DbColumn:
+    name: str
+    looks_date: bool = False
 
 
-def build_catalog(table_columns, field_mappings):
-    """table_columns：DB の列名（DB の順）。field_mappings：役割のある列の 論理名 → DB の列名。"""
-    role_physical = set(field_mappings.values())
-    columns = [Column(name, physical, True) for name, physical in field_mappings.items()]
-    used = set(field_mappings)
-    for physical in table_columns:
-        if physical in role_physical:
-            continue
-        column_id, number = physical, 2
-        while column_id in used:
-            column_id, number = f"{physical}#{number}", number + 1
-        used.add(column_id)
-        columns.append(Column(column_id, physical, False))
-    return tuple(columns)
+def _date_test(column):
+    text = f"CAST({column} AS TEXT)"
+    parts = [f"{text} GLOB '{pattern}'" for pattern in DATE_GLOBS]
+    parts.append(f"(length({text}) = 8 AND {text} GLOB '{COMPACT_DATE_GLOB}')")
+    return "(" + " OR ".join(parts) + ")"
+
+
+def detect_date_columns(conn, table_name, names):
+    """値がすべて日付の書き方になっている列の名前を返す（表を列のまとまりごとに 1 回ずつ読む）。"""
+    found = set()
+    table = quote_identifier(table_name)
+    for start in range(0, len(names), DETECT_CHUNK):
+        chunk = names[start:start + DETECT_CHUNK]
+        terms = []
+        for name in chunk:
+            column = quote_identifier(name)
+            filled = f"NOT {blank_expression(column)}"
+            terms.append(f"SUM(CASE WHEN {filled} THEN 1 ELSE 0 END)")
+            terms.append(f"SUM(CASE WHEN {filled} AND NOT {_date_test(column)} THEN 1 ELSE 0 END)")
+        row = conn.execute(f"SELECT {', '.join(terms)} FROM {table}").fetchone()
+        for index, name in enumerate(chunk):
+            filled, others = row[index * 2] or 0, row[index * 2 + 1] or 0
+            if filled and not others:
+                found.add(name)
+    return found
 
 
 def read_table_columns(conn, table_name):
     return [row[1] for row in conn.execute(f"PRAGMA table_info({quote_identifier(table_name)})")]
 
 
-def catalog_from_file(open_connection, path, table_name, field_mappings):
-    """キャッシュのファイルから作る。読めなければ役割のある列だけ（画面はそれだけで動く）。"""
+def read_catalog(conn, table_name):
+    names = read_table_columns(conn, table_name)
+    dates = detect_date_columns(conn, table_name, names) if names else set()
+    return tuple(DbColumn(name, name in dates) for name in names)
+
+
+def catalog_from_file(open_connection, path, table_name):
+    """キャッシュのファイルから作る。読めなければ空（画面は「データを更新してください」と出す）。"""
     try:
         conn = open_connection(path)
         try:
-            return build_catalog(read_table_columns(conn, table_name), field_mappings)
+            return read_catalog(conn, table_name)
         finally:
             conn.close()
     except sqlite3.Error:
-        return build_catalog([], field_mappings)
-
-
-def catalog_version(columns):
-    """列の並びが変わったかを画面が見分けるための印。"""
-    text = "\u001f".join(f"{c.id}\u001e{c.physical}" for c in columns)
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+        return ()

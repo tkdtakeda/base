@@ -9,9 +9,9 @@
    （日付の絞り込み「今日〜7 日後」などをいつ開いても試せるように）。
    パターンを増やすときは patterns.register() を足すだけでよい。
 
-   行の項目は、表示定義の列（DS.sampleView.columns の id）すべてを埋める。
-   主な項目は値の候補（VALUE_RULES）から、それ以外は項目名の形（〜Date・〜Width など）から作る。
-   論理項目が増えても、項目名の形に当てはまればそのままサンプルが作られる。
+   行の項目は、表示定義の列（DS.sampleView.columns の id ＝ DB の列名）すべてを埋める。
+   別名（論理名）のある列は、論理名ごとの値の候補（VALUE_RULES）から、それ以外は列名の形（〜Date・〜Width など）から作る。
+   列が増えても、列名の形に当てはまればそのままサンプルが作られる。
    ========================================================= */
 (function () {
   'use strict';
@@ -117,8 +117,18 @@
     return rule ? rule[1](ctx, rng, field) : `${field}-${rng.int(1, 9)}`;
   }
 
-  function logicalFields() {
-    return ((DS.sampleView && DS.sampleView.columns) || []).map((column) => column.id);
+  /** [DB の列名, 値を作るときの名前（別名があれば論理名）] の並び */
+  function sampleColumns() {
+    const view = DS.sampleView || {};
+    const logicalOf = {};
+    Object.entries(view.aliases || {}).forEach(([logical, physical]) => { logicalOf[physical] = logical; });
+    return (view.columns || []).map((column) => [column.id, logicalOf[column.id] || column.id]);
+  }
+
+  /** 論理名 → DB の列名（サンプルのパターンや確認用スクリプトから、別名で列を指すため） */
+  function columnOf(logical) {
+    const aliases = (DS.sampleView && DS.sampleView.aliases) || {};
+    return aliases[logical] || logical;
   }
 
   /**
@@ -127,7 +137,9 @@
    */
   function buildRows(lotCount, seed, prefix, options) {
     const rng = createRandom(seed);
-    const fields = logicalFields();
+    const columns = sampleColumns();
+    const lotColumn = columnOf('lotNo');
+    const boxColumn = columnOf('boxNo');
     const rows = [];
     let order = 0;
     let orderLeft = 0;
@@ -154,9 +166,9 @@
         serial += 1;
         const ctx = Object.assign({ serial, box }, lot);
         const row = {};
-        fields.forEach((field) => { row[field] = valueOf(field, ctx, rng); });
-        row.lotNo = lotNo;
-        row.boxNo = pad(box, 2);
+        columns.forEach(([id, name]) => { row[id] = valueOf(name, ctx, rng); });
+        row[lotColumn] = lotNo;
+        row[boxColumn] = pad(box, 2);
         rows.push(row);
       }
     }
@@ -185,7 +197,7 @@
       const lots = ['試作-α-001', '試作-β-002', 'LOT_100%-A', 'LOT#5/特急', 'LOT(再)-12', "LOT'Q\"-1", 'LOT-全角確認-01', 'lot-lower-01'];
       return buildRows(lots.length, 7001, { year: 'SP', short: 'SP', cast: '77' }, { lotNo: (i) => lots[i - 1], boxes: 1 });
     },
-    demoQuery: { searchType: 'lotNo', keyword: 'ＬＯＴ＿１００', matchMode: 'partial' },
+    demoQuery: { keyword: 'ＬＯＴ＿１００', matchMode: 'partial' },
   });
 
   patterns.register({
@@ -196,7 +208,7 @@
     title: '1 ロットに BOX が複数',
     description: '同じロット番号で BOX 番号が違う 3 件。詳細は「ロット番号＋BOX番号」で 1 件に決まります。',
     build: () => buildRows(1, 7101, { year: 'DUP', short: 'DP', cast: '88' }, { lotNo: () => 'LOT-DUP-0001', boxes: 3 }),
-    demoQuery: { searchType: 'lotNo', keyword: 'LOT-DUP-0001', matchMode: 'exact' },
+    demoQuery: { keyword: 'LOT-DUP-0001', matchMode: 'exact' },
   });
 
   patterns.register({
@@ -208,7 +220,7 @@
     description: '標準のデータを読み込み、存在しない番号で完全一致の検索をします。',
     requires: ['standard'],
     build: () => [],
-    demoQuery: { searchType: 'lotNo', keyword: 'LOT-9999-99999', matchMode: 'exact' },
+    demoQuery: { keyword: 'LOT-9999-99999', matchMode: 'exact' },
   });
 
   patterns.register({
@@ -231,13 +243,14 @@
     title: '大量のデータ',
     description: 'ロット 10,000 件（BOX 約 20,000 件）。検索とページ送りの速さを確かめられます。',
     build: () => buildRows(10000, 4004, { year: '2025', short: '25', cast: '93' }),
-    demoQuery: { searchType: 'orderNo', keyword: 'ORD-25', matchMode: 'partial' },
+    demoQuery: { keyword: 'LOT-2025-0001', matchMode: 'partial' },
   });
 
   DS.sample = {
     groups,
     patterns,
     createRandom,
+    columnOf,
     /** requires を含めて、読み込むべきパターンの id をそろえる */
     expand(ids) {
       const result = [];
@@ -259,7 +272,7 @@
 ```javascript
 /* =========================================================
    画面だけで試すモード用の表示定義（自動生成。手で直さない）
-   元: config/sample/view.sample.json と schema.sample.json の論理情報、python/tools/sample_columns.json（列）
+   元: config/sample/view.sample.json と schema.sample.json、python/tools/sample_columns.json（DB の列）
    作り直し: python python/tools/sync_sample_view.py
    ========================================================= */
 (function () {
@@ -267,493 +280,536 @@
 
   window.DS = window.DS || {};
   window.DS.sampleView = /*VIEW_JSON_START*/{
-  "roleFields": [
-    "lotNo",
-    "boxNo",
-    "inspectionNo",
-    "castingNo",
-    "orderNo",
-    "customerName",
-    "factoryDeliveryDate",
-    "cfStatus",
-    "manufacturingMaterial",
-    "manufacturingTemper",
-    "remainingEquipmentCourse",
-    "lastActualEquipmentName",
-    "wipCategory",
-    "holdCategory"
-  ],
-  "recordKey": [
-    "lotNo",
-    "boxNo"
-  ],
-  "types": {},
-  "searchFields": [
-    "lotNo",
-    "boxNo",
-    "inspectionNo",
-    "castingNo",
-    "orderNo",
-    "customerName"
-  ],
-  "hiddenColumns": [],
-  "fields": {},
-  "filters": [
-    {
-      "field": "manufacturingMaterial",
-      "type": "values"
-    },
-    {
-      "field": "manufacturingTemper",
-      "type": "values"
-    },
-    {
-      "field": "customerName",
-      "type": "values"
-    },
-    {
-      "field": "remainingEquipmentCourse",
-      "type": "values"
-    },
-    {
-      "field": "lastActualEquipmentName",
-      "type": "values"
-    },
-    {
-      "field": "wipCategory",
-      "type": "values"
-    },
-    {
-      "field": "holdCategory",
-      "type": "values"
-    },
-    {
-      "field": "cfStatus",
-      "type": "values"
-    }
-  ],
-  "defaultSort": {
-    "field": "factoryDeliveryDate",
-    "order": "asc"
-  },
   "columns": [
     {
-      "id": "lotNo",
+      "id": "ロット番号",
       "label": "ロット番号",
+      "kind": "text",
       "role": true
     },
     {
-      "id": "boxNo",
+      "id": "BOX番号",
       "label": "BOX番号",
+      "kind": "text",
       "role": true
     },
     {
-      "id": "inspectionNo",
+      "id": "検査番号",
       "label": "検査番号",
+      "kind": "text",
       "role": true
     },
     {
-      "id": "castingNo",
+      "id": "鋳造番号",
       "label": "鋳造番号",
+      "kind": "text",
       "role": true
     },
     {
-      "id": "orderNo",
+      "id": "オーダー番号",
       "label": "オーダー番号",
+      "kind": "text",
       "role": true
     },
     {
-      "id": "customerName",
+      "id": "取引先名",
       "label": "取引先名",
+      "kind": "text",
       "role": true
     },
     {
-      "id": "factoryDeliveryDate",
+      "id": "工場納期",
       "label": "工場納期",
+      "kind": "date",
       "role": true
     },
     {
-      "id": "cfStatus",
+      "id": "状態",
       "label": "状態",
+      "kind": "text",
       "role": true
     },
     {
-      "id": "manufacturingMaterial",
+      "id": "製造材質",
       "label": "製造材質",
+      "kind": "text",
       "role": true
     },
     {
-      "id": "manufacturingTemper",
+      "id": "製造調質",
       "label": "製造調質",
+      "kind": "text",
       "role": true
     },
     {
-      "id": "remainingEquipmentCourse",
+      "id": "残仕掛設備コース",
       "label": "残仕掛設備コース",
+      "kind": "text",
       "role": true
     },
     {
-      "id": "lastActualEquipmentName",
+      "id": "最終実績設備",
       "label": "最終実績設備",
+      "kind": "text",
       "role": true
     },
     {
-      "id": "wipCategory",
+      "id": "仕掛区分",
       "label": "仕掛区分",
+      "kind": "text",
       "role": true
     },
     {
-      "id": "holdCategory",
+      "id": "保留区分",
       "label": "保留区分",
+      "kind": "text",
       "role": true
     },
     {
       "id": "plannedEquipmentName",
       "label": "plannedEquipmentName",
+      "kind": "text",
       "role": false
     },
     {
       "id": "businessUnitCode",
       "label": "businessUnitCode",
+      "kind": "text",
       "role": false
     },
     {
       "id": "demandFieldCode",
       "label": "demandFieldCode",
+      "kind": "text",
       "role": false
     },
     {
       "id": "applicationCode",
       "label": "applicationCode",
+      "kind": "text",
       "role": false
     },
     {
       "id": "applicationName",
       "label": "applicationName",
+      "kind": "text",
       "role": false
     },
     {
       "id": "orderMaterial",
       "label": "orderMaterial",
+      "kind": "text",
       "role": false
     },
     {
       "id": "orderTemper",
       "label": "orderTemper",
+      "kind": "text",
       "role": false
     },
     {
       "id": "orderThickness",
       "label": "orderThickness",
+      "kind": "text",
       "role": false
     },
     {
       "id": "orderWidth",
       "label": "orderWidth",
+      "kind": "text",
       "role": false
     },
     {
       "id": "orderLength",
       "label": "orderLength",
+      "kind": "text",
       "role": false
     },
     {
       "id": "manufacturingThickness",
       "label": "manufacturingThickness",
+      "kind": "text",
       "role": false
     },
     {
       "id": "manufacturingWidth",
       "label": "manufacturingWidth",
+      "kind": "text",
       "role": false
     },
     {
       "id": "manufacturingLength",
       "label": "manufacturingLength",
+      "kind": "text",
       "role": false
     },
     {
       "id": "productUnitWeight",
       "label": "productUnitWeight",
+      "kind": "text",
       "role": false
     },
     {
       "id": "specificGravity",
       "label": "specificGravity",
+      "kind": "text",
       "role": false
     },
     {
       "id": "shape",
       "label": "shape",
+      "kind": "text",
       "role": false
     },
     {
       "id": "surface",
       "label": "surface",
+      "kind": "text",
       "role": false
     },
     {
       "id": "processing",
       "label": "processing",
+      "kind": "text",
       "role": false
     },
     {
       "id": "surfaceProcessing",
       "label": "surfaceProcessing",
+      "kind": "text",
       "role": false
     },
     {
       "id": "cleaning",
       "label": "cleaning",
+      "kind": "text",
       "role": false
     },
     {
       "id": "deliverySpecificationNo",
       "label": "deliverySpecificationNo",
+      "kind": "text",
       "role": false
     },
     {
       "id": "allocationCategory",
       "label": "allocationCategory",
+      "kind": "text",
       "role": false
     },
     {
       "id": "holdReleaseDate",
       "label": "holdReleaseDate",
+      "kind": "date",
       "role": false
     },
     {
       "id": "temporaryPackingFlag",
       "label": "temporaryPackingFlag",
+      "kind": "text",
       "role": false
     },
     {
       "id": "urgentCategory",
       "label": "urgentCategory",
+      "kind": "text",
       "role": false
     },
     {
       "id": "allocationCode",
       "label": "allocationCode",
+      "kind": "text",
       "role": false
     },
     {
       "id": "allocationMethod",
       "label": "allocationMethod",
+      "kind": "text",
       "role": false
     },
     {
       "id": "allocationQuantity",
       "label": "allocationQuantity",
+      "kind": "text",
       "role": false
     },
     {
       "id": "allocationAdjustmentNo",
       "label": "allocationAdjustmentNo",
+      "kind": "text",
       "role": false
     },
     {
       "id": "salesDeliveryDate",
       "label": "salesDeliveryDate",
+      "kind": "date",
       "role": false
     },
     {
       "id": "promisedDeliveryDate",
       "label": "promisedDeliveryDate",
+      "kind": "date",
       "role": false
     },
     {
       "id": "shippingDate",
       "label": "shippingDate",
+      "kind": "date",
       "role": false
     },
     {
       "id": "wipRetentionTime",
       "label": "wipRetentionTime",
+      "kind": "text",
       "role": false
     },
     {
       "id": "deliveryDestinationCode",
       "label": "deliveryDestinationCode",
+      "kind": "text",
       "role": false
     },
     {
       "id": "customerCode",
       "label": "customerCode",
+      "kind": "text",
       "role": false
     },
     {
       "id": "shippingDestinationCode",
       "label": "shippingDestinationCode",
+      "kind": "text",
       "role": false
     },
     {
       "id": "deliveryDestinationName",
       "label": "deliveryDestinationName",
+      "kind": "text",
       "role": false
     },
     {
       "id": "shippingDestinationName",
       "label": "shippingDestinationName",
+      "kind": "text",
       "role": false
     },
     {
       "id": "districtCode",
       "label": "districtCode",
+      "kind": "text",
       "role": false
     },
     {
       "id": "salespersonCode",
       "label": "salespersonCode",
+      "kind": "text",
       "role": false
     },
     {
       "id": "plannedEquipmentCourse",
       "label": "plannedEquipmentCourse",
+      "kind": "text",
       "role": false
     },
     {
       "id": "actualEquipmentCourse",
       "label": "actualEquipmentCourse",
+      "kind": "text",
       "role": false
     },
     {
       "id": "totalProcessCount",
       "label": "totalProcessCount",
+      "kind": "text",
       "role": false
     },
     {
       "id": "pitPlannedDate",
       "label": "pitPlannedDate",
+      "kind": "date",
       "role": false
     },
     {
       "id": "pitActualDate",
       "label": "pitActualDate",
+      "kind": "date",
       "role": false
     },
     {
       "id": "specialSpecification",
       "label": "specialSpecification",
+      "kind": "text",
       "role": false
     },
     {
       "id": "masterNo",
       "label": "masterNo",
+      "kind": "text",
       "role": false
     },
     {
       "id": "specificationNo",
       "label": "specificationNo",
+      "kind": "text",
       "role": false
     },
     {
       "id": "qualityNo",
       "label": "qualityNo",
+      "kind": "text",
       "role": false
     },
     {
       "id": "manufacturingNo",
       "label": "manufacturingNo",
+      "kind": "text",
       "role": false
     },
     {
       "id": "testNo",
       "label": "testNo",
+      "kind": "text",
       "role": false
     },
     {
       "id": "personInCharge",
       "label": "personInCharge",
+      "kind": "text",
       "role": false
     },
     {
       "id": "boxPlannedThickness",
       "label": "boxPlannedThickness",
+      "kind": "text",
       "role": false
     },
     {
       "id": "boxPlannedWidth",
       "label": "boxPlannedWidth",
+      "kind": "text",
       "role": false
     },
     {
       "id": "boxPlannedLength",
       "label": "boxPlannedLength",
+      "kind": "text",
       "role": false
     },
     {
       "id": "boxPlannedWorkPattern",
       "label": "boxPlannedWorkPattern",
+      "kind": "text",
       "role": false
     },
     {
       "id": "boxPlannedWeight",
       "label": "boxPlannedWeight",
+      "kind": "text",
       "role": false
     },
     {
       "id": "boxPlannedCount",
       "label": "boxPlannedCount",
+      "kind": "text",
       "role": false
     },
     {
       "id": "qualityCode",
       "label": "qualityCode",
+      "kind": "text",
       "role": false
     },
     {
       "id": "annealingScheduleCategory",
       "label": "annealingScheduleCategory",
+      "kind": "text",
       "role": false
     },
     {
       "id": "annealingFurnaceNo",
       "label": "annealingFurnaceNo",
+      "kind": "text",
       "role": false
     },
     {
       "id": "lastActualProcessBoxNo",
       "label": "lastActualProcessBoxNo",
+      "kind": "text",
       "role": false
     },
     {
       "id": "lastActualThickness",
       "label": "lastActualThickness",
+      "kind": "text",
       "role": false
     },
     {
       "id": "lastActualWidth",
       "label": "lastActualWidth",
+      "kind": "text",
       "role": false
     },
     {
       "id": "lastActualLength",
       "label": "lastActualLength",
+      "kind": "text",
       "role": false
     },
     {
       "id": "lastActualGoodWeight",
       "label": "lastActualGoodWeight",
+      "kind": "text",
       "role": false
     },
     {
       "id": "lastActualCount",
       "label": "lastActualCount",
+      "kind": "text",
       "role": false
     },
     {
       "id": "workStartDate",
       "label": "workStartDate",
+      "kind": "date",
       "role": false
     },
     {
       "id": "workEndDate",
       "label": "workEndDate",
+      "kind": "date",
       "role": false
     }
   ],
-  "columnsVersion": "919bfde851dc"
+  "columnsVersion": "76e1bfa7f899",
+  "recordKey": [
+    "ロット番号",
+    "BOX番号"
+  ],
+  "searchColumn": "ロット番号",
+  "defaultSort": {
+    "field": "工場納期",
+    "order": "asc"
+  },
+  "hiddenColumns": [],
+  "fields": {},
+  "aliases": {
+    "lotNo": "ロット番号",
+    "boxNo": "BOX番号",
+    "inspectionNo": "検査番号",
+    "castingNo": "鋳造番号",
+    "orderNo": "オーダー番号",
+    "customerName": "取引先名",
+    "factoryDeliveryDate": "工場納期",
+    "cfStatus": "状態",
+    "manufacturingMaterial": "製造材質",
+    "manufacturingTemper": "製造調質",
+    "remainingEquipmentCourse": "残仕掛設備コース",
+    "lastActualEquipmentName": "最終実績設備",
+    "wipCategory": "仕掛区分",
+    "holdCategory": "保留区分"
+  },
+  "notices": [],
+  "ready": true
 }/*VIEW_JSON_END*/;
 })();
 ```
@@ -771,7 +827,8 @@
 
   /**
    * 別のツールへ渡す「送り先」の登録簿。登録すると詳細の下にボタンが出る。
-   *   DS.handoffs.register({ id, order, label, icon, send(item) })   item は 12 項目の論理名のデータ
+   *   DS.handoffs.register({ id, order, label, icon, send(item) })   item は 1 件の全列（DB の列名 → 値）。
+   *   別名（論理名）で値を取るときは item[DS.domain.migrateId('lotNo')] のように読み替える
    */
   DS.handoffs = DS.core.createRegistry('handoffs');
 
@@ -828,7 +885,7 @@
       const item = selection.item;
 
       // 見出し：1 件を特定する鍵（例：ロット番号＋BOX番号）と、札を持つ項目（例：状態）
-      const [headField, ...subFields] = DS.domain.keyFields();
+      const [headField, ...subFields] = DS.domain.keyFields().length ? DS.domain.keyFields() : DS.domain.listFields().slice(0, 1);
       const badgeField = DS.domain.detailFields().find((field) => DS.domain.hasBadge(field));
       title.replaceChildren(...[
         el('span', { className: 'detail__label', text: headField.label }),
@@ -1072,13 +1129,14 @@
    検索結果（メイン領域）：要約・ページ送り・一覧・空のときの案内・出どころ
    一覧には全列を出す（隠すのは「表示列」で選んだ列だけ）。
    行を 1 回押す／↑↓ で選ぶ。ダブルクリック／Enter で詳細を開く。
+   見出しの列名を押すと並べ替え、右の漏斗（じょうご）を押すとその列の絞り込み（column-filter.js）。
    ========================================================= */
 (function () {
   'use strict';
 
   const DS = window.DS;
 
-  function createResultsView(root, { store, bus, search, toast, openPanel, refresh }) {
+  function createResultsView(root, { store, bus, search, toast, openPanel, refresh, columnFilter, chooseKey }) {
     const { el, icon, escapeHtml, highlight, formatNumber } = DS.util;
 
     const summary = el('div', { className: 'results__summary', 'aria-live': 'polite' });
@@ -1099,15 +1157,19 @@
       return DS.domain.listFields().filter((field) => field.key || !hidden.has(field.id));
     }
 
+    const isSearched = (field, request) => Boolean(request && request.keyword && field.searchable);
+
     function headerCell(field, state) {
       const active = state.sort.key === field.id;
       const sortIcon = !active ? 'fa-sort' : state.sort.order === 'asc' ? 'fa-sort-up' : 'fa-sort-down';
       const ariaSort = !active ? 'none' : state.sort.order === 'asc' ? 'ascending' : 'descending';
-      const searched = state.search.request && state.search.request.searchType === field.id;
-      const classes = [searched ? 'is-searched' : '', field.key ? 'is-pinned' : ''].filter(Boolean).join(' ');
+      const classes = [isSearched(field, state.search.request) ? 'is-searched' : '', field.key ? 'is-pinned' : ''].filter(Boolean).join(' ');
+      const name = escapeHtml(field.listLabel);
       return `<th scope="col" aria-sort="${ariaSort}" class="${classes}" data-field="${escapeHtml(field.id)}">` +
-        `<button type="button" class="th-btn" data-sort="${escapeHtml(field.id)}" title="${escapeHtml(field.listLabel)}で並べ替え">` +
-        `<span class="th-btn__text">${escapeHtml(field.listLabel)}</span><i class="fa-solid ${sortIcon} th-btn__icon${active ? ' is-active' : ''}" aria-hidden="true"></i></button>` +
+        `<button type="button" class="th-btn" data-sort="${escapeHtml(field.id)}" title="${name}で並べ替え">` +
+        `<span class="th-btn__text">${name}</span><i class="fa-solid ${sortIcon} th-btn__icon${active ? ' is-active' : ''}" aria-hidden="true"></i></button>` +
+        `<button type="button" class="th-filter" data-filter="${escapeHtml(field.id)}" aria-haspopup="dialog" aria-pressed="false" title="${name}で絞り込む" aria-label="${name}で絞り込む">` +
+        `<i class="fa-solid fa-filter" aria-hidden="true" data-fallback="▼"></i></button>` +
         `<span class="col-resize" title="ドラッグで幅を変える（ダブルクリックで元に戻す）" aria-hidden="true"></span></th>`;
     }
 
@@ -1116,11 +1178,43 @@
       const pinned = field.key ? ' is-pinned' : '';
       if (DS.domain.hasBadge(field)) return `<td class="${pinned}">${DS.domain.badge(field, value).outerHTML}</td>`;
       const blank = value === null || value === undefined || value === '';
-      const text = blank ? '<span class="muted">—</span>'
-        : request && request.searchType === field.id ? highlight(value, request.keyword) : escapeHtml(value);
+      const searched = isSearched(field, request);
+      const text = blank ? '<span class="muted">—</span>' : searched ? highlight(value, request.keyword) : escapeHtml(value);
       // 長い値は「…」で省くため、マウスを乗せると全文が出るようにする
       const title = blank ? '' : ` title="${escapeHtml(value)}"`;
-      return `<td class="${field.mono ? 'mono' : ''}${request && request.searchType === field.id ? ' is-searched' : ''}${pinned}"${title}>${text}</td>`;
+      return `<td class="${field.mono ? 'mono' : ''}${searched ? ' is-searched' : ''}${pinned}"${title}>${text}</td>`;
+    }
+
+    /** 絞り込み中の列の見出しに印を付ける（色だけでなく、漏斗のボタンを塗りつぶした形でも示す） */
+    function renderFilterMarks(state) {
+      const filters = DS.domain.filters.compact(state.filters);
+      tableWrap.querySelectorAll('thead th[data-field]').forEach((th) => {
+        const spec = filters[th.dataset.field];
+        const button = th.querySelector('[data-filter]');
+        th.classList.toggle('is-filtered', Boolean(spec));
+        th.classList.toggle('is-filter-open', columnFilter.isOpen(th.dataset.field));
+        button.setAttribute('aria-pressed', String(Boolean(spec)));
+        const label = th.querySelector('.th-btn__text').textContent;
+        button.title = spec ? `${label}：${DS.domain.filters.describe(th.dataset.field, spec)}（押して直す）` : `${label}で絞り込む`;
+      });
+    }
+
+    /** その列の絞り込みを開く。一覧に見えていれば見出しの小窓、隠している列なら脇のパネル */
+    function openFilter(fieldId) {
+      const th = tableWrap.hidden ? null : tableWrap.querySelector(`thead th[data-field="${CSS.escape(fieldId)}"]`);
+      if (!th) {
+        openPanel('filters');
+        bus.emit('filters:focus', fieldId);
+        return;
+      }
+      if (!th.classList.contains('is-pinned')) {
+        const pinned = Array.from(tableWrap.querySelectorAll('thead th.is-pinned')).reduce((sum, node) => sum + node.offsetWidth, 0);
+        const left = th.offsetLeft - pinned;
+        if (left < tableWrap.scrollLeft || th.offsetLeft + th.offsetWidth > tableWrap.scrollLeft + tableWrap.clientWidth) {
+          tableWrap.scrollLeft = Math.max(0, left - 16);
+        }
+      }
+      if (!columnFilter.isOpen(fieldId)) columnFilter.open(fieldId);
     }
 
     function renderTable(state) {
@@ -1140,6 +1234,7 @@
         `<table class="grid${density}"><thead><tr>${fields.map((field) => headerCell(field, state)).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
       tableWrap.scrollLeft = scrollLeft; // 並べ替えなどで横の位置を失わない
       tools.afterRender(state, tableWrap);
+      renderFilterMarks(state);
     }
 
     function renderSelection(state) {
@@ -1152,6 +1247,11 @@
     }
 
     tableWrap.addEventListener('click', (event) => {
+      const filterButton = event.target.closest('[data-filter]');
+      if (filterButton) {
+        columnFilter.open(filterButton.dataset.filter);
+        return;
+      }
       const sortButton = event.target.closest('[data-sort]');
       if (sortButton) {
         search.toggleSort(sortButton.dataset.sort);
@@ -1193,9 +1293,10 @@
         return;
       }
       const count = el('strong', { className: 'results__count mono', text: `${formatNumber(result.totalCount)} 件` });
-      const title = request.keyword
+      const searchField = DS.domain.searchField();
+      const title = request.keyword && searchField
         ? el('span', { className: 'results__title' }, [
-          el('span', { text: `${DS.domain.fields.get(request.searchType).listLabel}が「` }),
+          el('span', { text: `${searchField.listLabel}が「` }),
           el('span', { className: 'mono', text: request.keyword }),
           el('span', { text: `」${request.matchMode === 'exact' ? 'と同じ' : 'を含む'}ロット` }),
         ])
@@ -1218,15 +1319,15 @@
     /** 今かかっている絞り込みを札で出す。× で 1 つずつ外せる */
     function activeFilterChips(request) {
       const entries = Object.entries(request.filters || {});
-      const nodes = entries.map(([fieldId, spec]) => {
+      const nodes = entries.filter(([fieldId]) => DS.domain.fields.has(fieldId)).map(([fieldId, spec]) => {
         const field = DS.domain.fields.get(fieldId);
         const remove = el('button', { type: 'button', className: 'filter-chip__remove', title: `${field.label}の絞り込みを外す`, 'aria-label': `${field.label}の絞り込みを外す` }, [icon('fa-xmark', '×')]);
         remove.addEventListener('click', () => search.clearFilter(fieldId));
-        const label = el('button', { type: 'button', className: 'filter-chip__label', title: '絞り込みのパネルで直す' }, [
+        const label = el('button', { type: 'button', className: 'filter-chip__label', title: 'この条件を直す' }, [
           icon('fa-filter', ''),
           el('span', { text: `${field.label}：${DS.domain.filters.describe(fieldId, spec)}` }),
         ]);
-        label.addEventListener('click', () => openPanel('filters'));
+        label.addEventListener('click', () => openFilter(fieldId));
         return el('span', { className: 'filter-chip' }, [label, remove]);
       });
       return el('span', { className: 'filter-chips' }, nodes);
@@ -1281,21 +1382,16 @@
           root.classList.toggle('is-loading', false);
           return;
         }
-        const field = DS.domain.fields.get(request.searchType);
+        const field = DS.domain.searchField();
         if (request.matchMode === 'exact') {
           actions.push(actionButton('部分一致で探し直す', 'fa-magnifying-glass-plus', () => {
             search.setQuery({ matchMode: 'partial' });
             search.run({ page: 1 });
           }, false));
         }
-        DS.domain.searchableFields().filter((other) => other.id !== request.searchType).forEach((other) => {
-          actions.push(actionButton(`${other.listLabel}として探す`, 'fa-arrow-right-arrow-left', () => {
-            search.setQuery({ searchType: other.id });
-            search.run({ page: 1 });
-          }, false));
-        });
+        actions.push(actionButton('探す列を変える', 'fa-arrow-right-arrow-left', chooseKey, false));
         card = emptyCard('fa-circle-question', '一致するロットはありません',
-          `${field.listLabel}が「${request.keyword}」${request.matchMode === 'exact' ? 'と同じ' : 'を含む'}ロットは${filterCount ? '、今の絞り込みの中に' : ''}ありません。番号の種類や一致のしかたを確かめてください。`,
+          `${field ? field.listLabel : '番号'}が「${request.keyword}」${request.matchMode === 'exact' ? 'と同じ' : 'を含む'}ロットは${filterCount ? '、今の絞り込みの中に' : ''}ありません。一致のしかたや探す列を確かめてください。ほかの列の値で探すときは、見出しの漏斗から絞り込めます。`,
           actions);
       }
       empty.replaceChildren(...(card ? [card] : []));
@@ -1332,8 +1428,9 @@
       if (changed.some((key) => tableKeys.includes(key))) {
         renderTable(state);
         renderHead(state);
-      } else if (changed.includes('selection')) {
-        renderSelection(state);
+      } else {
+        if (changed.includes('selection')) renderSelection(state);
+        if (changed.includes('filters')) renderFilterMarks(state);
       }
       if (changed.some((key) => ['search', 'cache', 'mode'].includes(key))) renderEmpty(state);
       if (changed.some((key) => ['search', 'cache', 'query'].includes(key))) renderFoot(state);
@@ -1345,6 +1442,7 @@
     bus.on('search:done', () => {
       tableWrap.scrollTop = 0;
     });
+    bus.on('column-filter', () => renderFilterMarks(store.get()));
 
     const initial = store.get();
     tools.update(initial);
@@ -1353,7 +1451,7 @@
     renderEmpty(initial);
     renderFoot(initial);
 
-    return { focusTable: () => tableWrap.focus() };
+    return { focusTable: () => tableWrap.focus(), openFilter };
   }
 
   DS.views.createResultsView = createResultsView;

@@ -3,7 +3,7 @@
 
      load()        今の読み込み先を読む
      test(path)    接続テスト（コピーも書き込みもしない）。段階ごとの ○ × を state.source.result に入れる
-     save(path)    接続テストがすべて ○ の値だけ保存できる → config.local.json に保存 → データを更新
+     save(path)    接続テストで × がない値だけ保存できる → config.local.json に保存 → データを更新
    ========================================================= */
 (function () {
   'use strict';
@@ -45,7 +45,7 @@
       }
     }
 
-    /** 確かめた値と同じで、すべて ○ のときだけ保存できる */
+    /** 確かめた値と同じで、× がない（ok）ときだけ保存できる */
     function canSave(path) {
       const { result, testedPath, status } = store.get().source;
       return status === 'idle' && Boolean(result && result.ok) && testedPath === normalizePath(path);

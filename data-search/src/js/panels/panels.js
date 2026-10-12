@@ -21,10 +21,13 @@
     icon: 'fa-database',
     label: 'データ',
     title: 'データの状態と更新',
-    watch: ['source'],
+    watch: ['source', 'record'],
     badge(state) {
       const view = DS.views.describeCache(state.cache);
       if (view.tone === 'warning' || view.tone === 'danger') return { tone: view.tone, text: '!', title: view.text };
+      if (state.cache.status && state.cache.status.available && !DS.domain.isReady()) {
+        return { tone: 'danger', text: '!', title: '1 件を決める列を選んでください' };
+      }
       return null;
     },
     mount(container, ctx) {
@@ -35,12 +38,16 @@
       const sourceNote = el('p', { className: 'pane-note' });
       const configBox = el('div', { className: 'config-help', hidden: true });
       const sourceEditor = DS.views.createSourceEditor(ctx);
+      const keyEditor = DS.views.createRecordKeyEditor(ctx);
+      const keySection = section('1 件を決める列', [keyEditor.element]);
       refreshButton.addEventListener('click', () => ctx.cache.refresh());
+      ctx.bus.on('record:edit', () => window.setTimeout(() => keyEditor.startEditing(), 0));
 
       container.append(
         summary,
         configBox,
         section('読み込み先', [sourceEditor.element]),
+        keySection,
         section('根拠', [facts]),
         section('共有データから更新', [
           el('p', { className: 'pane-note', text: '共有データを手元にコピーし、検証してから入れ替えます。失敗したときは前回のデータをそのまま使います。' }),
@@ -99,13 +106,16 @@
           if (refreshing) timer = window.setInterval(() => tick(ctx.store.get()), 1000);
           sourceNote.textContent = state.mode.description;
           sourceEditor.update(state);
+          keyEditor.update(state);
+          keySection.classList.toggle('is-alert', Boolean(status.available) && !DS.domain.isReady());
 
-          // 設定の注意（ローカルの設定にある未知のキーなど）は、ファイル名と項目を出す
-          const warnings = status.settingsWarnings || [];
+          // 設定の注意（ローカルの設定にある未知のキー・DB にない列など）は、ファイル名と項目を出す
+          const warnings = (status.settingsWarnings || []).map((w) => ({ where: `${w.file} ／ ${w.path}`, reason: w.reason, action: w.action }))
+            .concat(status.available ? DS.domain.columnNotices().map((n) => ({ where: n.path, reason: n.reason, action: n.action })) : []);
           configBox.hidden = warnings.length === 0;
           configBox.replaceChildren(...(warnings.length ? [section('設定の注意', warnings.map((w) =>
             el('div', { className: 'config-help__item' }, [
-              el('p', { className: 'config-help__where mono', text: `${w.file} ／ ${w.path}` }),
+              el('p', { className: 'config-help__where mono', text: w.where }),
               el('p', { className: 'pane-note', text: w.reason }),
               el('p', { className: 'pane-note', text: `対応：${w.action}` }),
             ])))] : []));

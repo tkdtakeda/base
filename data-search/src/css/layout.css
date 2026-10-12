@@ -399,7 +399,6 @@
 
 /* ── 画面が狭いとき：説明の文字を省き、詳細を細くする ── */
 @media (max-width: 1440px) {
-  .seg__kbd { display: none; }
   .brand__version { display: none; }
   .chip__sub { display: none; }
 }
@@ -424,25 +423,25 @@
 .detail__group:not([open]) > summary { margin-bottom: 0; }
 .detail__count { margin-left: auto; padding: 0 var(--sp-2); border-radius: var(--r-pill); background: var(--color-surface-sunken); color: var(--color-text-muted); font-size: var(--fs-xs); font-weight: var(--fw-normal); }
 
-/* ── 番号の種類が多いときの選択欄 ── */
-.type-select__wrap { position: relative; display: inline-flex; flex-shrink: 0; align-items: center; }
-.type-select {
+/* ── 探す列（上部バーの左。押すと「1 件を決める列」で変えられる） ── */
+.search__column {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--sp-2);
+  max-width: 14em;
   height: var(--h-control-lg);
-  min-width: 150px;
-  padding: 0 calc(var(--sp-6) + var(--sp-1)) 0 calc(var(--sp-6) + var(--sp-1));
-  border: var(--bw) solid var(--color-border-strong);
+  padding: 0 var(--sp-3);
+  border: var(--bw) solid var(--color-primary-border);
   border-radius: var(--r-md);
   background: var(--color-primary-soft);
   color: var(--color-primary);
   font-weight: var(--fw-bold);
-  appearance: none;
-  cursor: pointer;
 }
-.type-select:focus { border-color: var(--color-focus); outline: none; box-shadow: 0 0 0 3px var(--color-primary-soft-strong); }
-.type-select__icon,
-.type-select__chevron { position: absolute; color: var(--color-primary); pointer-events: none; }
-.type-select__icon { left: var(--sp-3); }
-.type-select__chevron { right: var(--sp-3); font-size: var(--fs-sm); }
+.search__column:hover { background: var(--color-primary-soft-strong); }
+.search__column-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search__column.is-missing { border-color: var(--color-danger); background: var(--color-danger-bg); color: var(--color-danger); }
+.search__input:disabled { background: var(--color-surface-sunken); cursor: not-allowed; }
 
 /* ── 全列の一覧：道具・左端の固定・列幅・行の高さ ── */
 .grid-tools { display: flex; align-items: center; gap: var(--sp-2); margin-left: auto; }

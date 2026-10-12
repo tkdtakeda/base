@@ -8,7 +8,9 @@
 検証で誤りが見つかれば SettingsError（すべての誤りを持つ）。注意（未知のキーなど）は warnings に入れて続ける。
 
 列の考え方：表示する列は DB のテーブルから自動で読み取る（column_catalog.py）。設定に書くのは
-役割のある列（1 件を決める・検索・絞り込み・並べ替え・日付）の論理名と DB の列名の対応だけ。
+1 件を決める列（recordKey）・番号で探す列（searchColumn）などの役割だけ。名前は DB の列名か、
+schema.columns に書いた別名（論理名）で書く。DB と照らし合わせるのは実行時（column_model.py）で、
+DB にない名前があっても起動は止めない（画面の「データ」で選び直せる）。
 パスとテーブル名は画面に渡さない。列名は表示名として画面に出す（DB の列名をそのまま表示するため）。
 相対パスはアプリのルート（data-search/）を基準に解決する。
 """
@@ -20,7 +22,7 @@ from dataclasses import dataclass
 from ..errors import AppError
 from .defaults import BUILTIN_DEFAULTS
 from .merge import deep_merge, fill_defaults, type_name
-from .validation import Issue, SettingSource, validate_config, validate_schema, validate_view
+from .validation import Issue, SettingSource, is_placeholder, validate_config, validate_schema, validate_view
 
 KINDS = ("config", "schema", "view")
 # 新しいキー（論理項目）を足してよい場所。ここ以外のサンプルにないキーは「未知のキー」
@@ -32,9 +34,11 @@ OPEN_MAPS = {
 # 以前の形の設定にあった、今は使わないキー（未知のキーとは別の文面で知らせる）
 OBSOLETE_KEYS = {
     "view": {
-        "listColumns": "一覧の列は DB から自動で表示します。検索できる項目は searchFields、隠す列は hiddenColumns に書いてください。",
+        "listColumns": "一覧の列は DB から自動で表示します。隠す列は hiddenColumns に書いてください。",
         "detailFields": "詳細には全項目を出すため使いません。",
         "detailGroups": "詳細には全項目を出すため使いません。",
+        "searchFields": "番号で探す列は 1 つにしました。schema.searchColumn に書くか、画面左の「データ」→「1 件を決める列」で選んでください。",
+        "filters": "どの列でも、一覧の見出しの漏斗（じょうご）のアイコンから絞り込めるため使いません。",
     },
 }
 
@@ -48,15 +52,32 @@ class SettingsError(AppError):
 
 
 @dataclass(frozen=True)
-class DataModel:
-    """役割のある列の決まり（schema と view から作る。ソースコードには項目名を書かない）。
-    表示するほかの列は、キャッシュのテーブルから column_catalog.py が読み取る。"""
-    fields: tuple          # 役割のある列の論理名（schema.columns の順）
-    searchable: tuple      # 番号で探せる項目（view.searchFields）
-    filters: dict          # 絞り込みの項目 → "values" / "date"（view.filters）
-    date_fields: tuple     # 日付の列（schema.types。論理名か、役割のない列なら DB の列名）
-    record_key: tuple      # 1 件を特定する項目（schema.recordKey）
-    default_sort: tuple    # (項目, "asc" / "desc")（view.defaultSort）
+class ModelSettings:
+    """列の役割の設定。名前は DB の列名か別名（schema.columns の論理名）。
+    DB と照らし合わせて実際の列を決めるのは column_model.build_model（キャッシュのテーブルを読んだあと）。"""
+    aliases: dict          # 別名 → DB の列名（schema.columns。仮の値・空は除く）
+    record_key: tuple      # 1 件を決める列（schema.recordKey）
+    search_column: object  # 番号で探す列（schema.searchColumn。null なら recordKey の 1 つ目）
+    types: dict            # 列 → "date" / "text"（schema.types）
+    default_sort: tuple    # (列, "asc" / "desc")（view.defaultSort）
+    hidden: tuple          # 最初は隠しておく列（view.hiddenColumns）
+    fields: dict           # 列ごとの表示の補助（view.fields）
+
+
+def model_settings_of(schema, view):
+    """マージ後の schema / view から ModelSettings を作る（起動時と、画面だけで試すモードの生成で共通）。"""
+    aliases = {name: physical for name, physical in schema["columns"].items()
+               if isinstance(physical, str) and physical.strip() and not is_placeholder(physical)}
+    sort = view["defaultSort"] or {}
+    return ModelSettings(
+        aliases=aliases,
+        record_key=tuple(schema["recordKey"]),
+        search_column=schema["searchColumn"] or None,
+        types=dict(schema["types"]),
+        default_sort=(sort.get("field") or None, sort.get("order") or "asc"),
+        hidden=tuple(view["hiddenColumns"]),
+        fields=dict(view["fields"]),
+    )
 
 
 @dataclass(frozen=True)
@@ -67,7 +88,6 @@ class AppConfig:
     source_path: str
     cache_path: str
     table_name: str
-    field_mappings: dict
     temporary_extension: str
     keep_previous_on_failure: bool
     default_match_mode: str
@@ -79,28 +99,9 @@ class AppConfig:
     server_port: int
     open_browser: bool
     base_dir: str
-    model: DataModel
-    view: dict             # マージ後の view（論理情報だけ）
+    model: ModelSettings
     sources: tuple         # (種類, サンプルのファイル, ローカルのファイル or None, 上書きした項目数)
     warnings: tuple        # Issue（level="warning"）
-    public: dict           # 画面へ渡す表示定義（public_view_of の結果）
-
-    def public_view(self):
-        return self.public
-
-
-def public_view_of(schema, view):
-    """画面へ渡す表示定義（列の一覧 columns は get_view_config でキャッシュから足す）。テーブル名・パスは含めない。"""
-    return {
-        "roleFields": list(schema["columns"]),
-        "recordKey": list(schema["recordKey"]),
-        "types": {name: kind for name, kind in schema["types"].items() if kind == "date"},
-        "searchFields": list(view["searchFields"]),
-        "hiddenColumns": list(view["hiddenColumns"]),
-        "fields": view["fields"],
-        "filters": view["filters"],
-        "defaultSort": view["defaultSort"],
-    }
 
 
 # ── ファイル ─────────────────────────────────────────────
@@ -170,7 +171,8 @@ def _load_pair(kind, sample_dir, local_dir, app_root, issues, warnings):
         shown = "、".join(names[:8]) + (f" ほか {len(names) - 8} 項目" if len(names) > 8 else "")
         warnings.append(Issue("warning", local_label, "columns.<役割のない項目>",
                               f"{len(names)} 項目は役割がないため使っていません（{shown}）。列は DB から自動で表示します。",
-                              f"消してかまいません。columns には {sample_label} にある論理名だけを書いてください。"))
+                              f"消してかまいません。columns には {sample_label} にある論理名だけを書いてください"
+                              "（1 件を決める列などは、DB の列名のまま recordKey・searchColumn に書けます）。"))
     for path in merged.unknown:
         if path in extra_columns:
             continue
@@ -214,14 +216,6 @@ def load_settings(app_root, local_dir=None):
     if issues:
         raise SettingsError(issues + warnings)
 
-    model = DataModel(
-        fields=tuple(schema["columns"]),
-        searchable=tuple(view["searchFields"]),
-        filters={item["field"]: item["type"] for item in view["filters"]},
-        date_fields=tuple(name for name, kind in schema["types"].items() if kind == "date"),
-        record_key=tuple(schema["recordKey"]),
-        default_sort=(view["defaultSort"]["field"], view["defaultSort"]["order"]),
-    )
     sources = tuple(
         (src.kind, src.sample_label, src.local_label if src.local_loaded else None, len(src.merge.overridden) + len(src.merge.added))
         for src in (config_src, schema_src, view_src)
@@ -233,7 +227,6 @@ def load_settings(app_root, local_dir=None):
         source_path=_resolve(app_root, config["dataSource"]["sourcePath"]),
         cache_path=_resolve(app_root, config["dataSource"]["cachePath"]),
         table_name=schema["tableName"],
-        field_mappings=dict(schema["columns"]),
         temporary_extension=config["cache"]["temporaryExtension"],
         keep_previous_on_failure=config["cache"]["keepPreviousOnFailure"],
         default_match_mode=config["search"]["defaultMatchMode"],
@@ -245,12 +238,10 @@ def load_settings(app_root, local_dir=None):
         server_port=config["devServer"]["port"],
         open_browser=config["devServer"]["openBrowser"],
         base_dir=app_root,
-        model=model,
-        view=view,
+        model=model_settings_of(schema, view),
         sources=sources,
         warnings=tuple(warnings),
-        public=public_view_of(schema, view),
     )
 
 
-__all__ = ["AppConfig", "DataModel", "SettingsError", "load_settings", "public_view_of", "type_name"]
+__all__ = ["AppConfig", "ModelSettings", "SettingsError", "load_settings", "model_settings_of", "type_name"]

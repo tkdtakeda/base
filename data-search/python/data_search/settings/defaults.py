@@ -15,14 +15,17 @@ BUILTIN_DEFAULTS = {
         "devServer": {"host": "127.0.0.1", "port": 8765, "openBrowser": True},
     },
     "schema": {
-        # 日付として比べる列（例：{"factoryDeliveryDate": "date"}）。キーは論理名か、役割のない列なら DB の列名
+        # 列の種類（例：{"工場納期": "date"}）。キーは DB の列名か別名。書かなければ値から判定する
         "types": {},
+        # 別名（論理名 → DB の列名）。なくてよい（設定の名前は DB の列名で書ける）
+        "columns": {},
+        # 番号で探す列。null なら recordKey の 1 つ目
+        "searchColumn": None,
     },
     "view": {
         # 列ごとの表示の補助（等幅・コピー・入力例・値の札）。表示名は DB の列名を使うため書かない
         "fields": {},
-        "filters": [],
-        # 最初は隠しておく列（論理名か DB の列名）。各自が画面の「表示列」で変えられる
+        # 最初は隠しておく列（DB の列名か別名）。各自が画面の「表示列」で変えられる
         "hiddenColumns": [],
     },
 }

@@ -2,13 +2,14 @@
    検索結果（メイン領域）：要約・ページ送り・一覧・空のときの案内・出どころ
    一覧には全列を出す（隠すのは「表示列」で選んだ列だけ）。
    行を 1 回押す／↑↓ で選ぶ。ダブルクリック／Enter で詳細を開く。
+   見出しの列名を押すと並べ替え、右の漏斗（じょうご）を押すとその列の絞り込み（column-filter.js）。
    ========================================================= */
 (function () {
   'use strict';
 
   const DS = window.DS;
 
-  function createResultsView(root, { store, bus, search, toast, openPanel, refresh }) {
+  function createResultsView(root, { store, bus, search, toast, openPanel, refresh, columnFilter, chooseKey }) {
     const { el, icon, escapeHtml, highlight, formatNumber } = DS.util;
 
     const summary = el('div', { className: 'results__summary', 'aria-live': 'polite' });
@@ -29,15 +30,19 @@
       return DS.domain.listFields().filter((field) => field.key || !hidden.has(field.id));
     }
 
+    const isSearched = (field, request) => Boolean(request && request.keyword && field.searchable);
+
     function headerCell(field, state) {
       const active = state.sort.key === field.id;
       const sortIcon = !active ? 'fa-sort' : state.sort.order === 'asc' ? 'fa-sort-up' : 'fa-sort-down';
       const ariaSort = !active ? 'none' : state.sort.order === 'asc' ? 'ascending' : 'descending';
-      const searched = state.search.request && state.search.request.searchType === field.id;
-      const classes = [searched ? 'is-searched' : '', field.key ? 'is-pinned' : ''].filter(Boolean).join(' ');
+      const classes = [isSearched(field, state.search.request) ? 'is-searched' : '', field.key ? 'is-pinned' : ''].filter(Boolean).join(' ');
+      const name = escapeHtml(field.listLabel);
       return `<th scope="col" aria-sort="${ariaSort}" class="${classes}" data-field="${escapeHtml(field.id)}">` +
-        `<button type="button" class="th-btn" data-sort="${escapeHtml(field.id)}" title="${escapeHtml(field.listLabel)}で並べ替え">` +
-        `<span class="th-btn__text">${escapeHtml(field.listLabel)}</span><i class="fa-solid ${sortIcon} th-btn__icon${active ? ' is-active' : ''}" aria-hidden="true"></i></button>` +
+        `<button type="button" class="th-btn" data-sort="${escapeHtml(field.id)}" title="${name}で並べ替え">` +
+        `<span class="th-btn__text">${name}</span><i class="fa-solid ${sortIcon} th-btn__icon${active ? ' is-active' : ''}" aria-hidden="true"></i></button>` +
+        `<button type="button" class="th-filter" data-filter="${escapeHtml(field.id)}" aria-haspopup="dialog" aria-pressed="false" title="${name}で絞り込む" aria-label="${name}で絞り込む">` +
+        `<i class="fa-solid fa-filter" aria-hidden="true" data-fallback="▼"></i></button>` +
         `<span class="col-resize" title="ドラッグで幅を変える（ダブルクリックで元に戻す）" aria-hidden="true"></span></th>`;
     }
 
@@ -46,11 +51,43 @@
       const pinned = field.key ? ' is-pinned' : '';
       if (DS.domain.hasBadge(field)) return `<td class="${pinned}">${DS.domain.badge(field, value).outerHTML}</td>`;
       const blank = value === null || value === undefined || value === '';
-      const text = blank ? '<span class="muted">—</span>'
-        : request && request.searchType === field.id ? highlight(value, request.keyword) : escapeHtml(value);
+      const searched = isSearched(field, request);
+      const text = blank ? '<span class="muted">—</span>' : searched ? highlight(value, request.keyword) : escapeHtml(value);
       // 長い値は「…」で省くため、マウスを乗せると全文が出るようにする
       const title = blank ? '' : ` title="${escapeHtml(value)}"`;
-      return `<td class="${field.mono ? 'mono' : ''}${request && request.searchType === field.id ? ' is-searched' : ''}${pinned}"${title}>${text}</td>`;
+      return `<td class="${field.mono ? 'mono' : ''}${searched ? ' is-searched' : ''}${pinned}"${title}>${text}</td>`;
+    }
+
+    /** 絞り込み中の列の見出しに印を付ける（色だけでなく、漏斗のボタンを塗りつぶした形でも示す） */
+    function renderFilterMarks(state) {
+      const filters = DS.domain.filters.compact(state.filters);
+      tableWrap.querySelectorAll('thead th[data-field]').forEach((th) => {
+        const spec = filters[th.dataset.field];
+        const button = th.querySelector('[data-filter]');
+        th.classList.toggle('is-filtered', Boolean(spec));
+        th.classList.toggle('is-filter-open', columnFilter.isOpen(th.dataset.field));
+        button.setAttribute('aria-pressed', String(Boolean(spec)));
+        const label = th.querySelector('.th-btn__text').textContent;
+        button.title = spec ? `${label}：${DS.domain.filters.describe(th.dataset.field, spec)}（押して直す）` : `${label}で絞り込む`;
+      });
+    }
+
+    /** その列の絞り込みを開く。一覧に見えていれば見出しの小窓、隠している列なら脇のパネル */
+    function openFilter(fieldId) {
+      const th = tableWrap.hidden ? null : tableWrap.querySelector(`thead th[data-field="${CSS.escape(fieldId)}"]`);
+      if (!th) {
+        openPanel('filters');
+        bus.emit('filters:focus', fieldId);
+        return;
+      }
+      if (!th.classList.contains('is-pinned')) {
+        const pinned = Array.from(tableWrap.querySelectorAll('thead th.is-pinned')).reduce((sum, node) => sum + node.offsetWidth, 0);
+        const left = th.offsetLeft - pinned;
+        if (left < tableWrap.scrollLeft || th.offsetLeft + th.offsetWidth > tableWrap.scrollLeft + tableWrap.clientWidth) {
+          tableWrap.scrollLeft = Math.max(0, left - 16);
+        }
+      }
+      if (!columnFilter.isOpen(fieldId)) columnFilter.open(fieldId);
     }
 
     function renderTable(state) {
@@ -70,6 +107,7 @@
         `<table class="grid${density}"><thead><tr>${fields.map((field) => headerCell(field, state)).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
       tableWrap.scrollLeft = scrollLeft; // 並べ替えなどで横の位置を失わない
       tools.afterRender(state, tableWrap);
+      renderFilterMarks(state);
     }
 
     function renderSelection(state) {
@@ -82,6 +120,11 @@
     }
 
     tableWrap.addEventListener('click', (event) => {
+      const filterButton = event.target.closest('[data-filter]');
+      if (filterButton) {
+        columnFilter.open(filterButton.dataset.filter);
+        return;
+      }
       const sortButton = event.target.closest('[data-sort]');
       if (sortButton) {
         search.toggleSort(sortButton.dataset.sort);
@@ -123,9 +166,10 @@
         return;
       }
       const count = el('strong', { className: 'results__count mono', text: `${formatNumber(result.totalCount)} 件` });
-      const title = request.keyword
+      const searchField = DS.domain.searchField();
+      const title = request.keyword && searchField
         ? el('span', { className: 'results__title' }, [
-          el('span', { text: `${DS.domain.fields.get(request.searchType).listLabel}が「` }),
+          el('span', { text: `${searchField.listLabel}が「` }),
           el('span', { className: 'mono', text: request.keyword }),
           el('span', { text: `」${request.matchMode === 'exact' ? 'と同じ' : 'を含む'}ロット` }),
         ])
@@ -148,15 +192,15 @@
     /** 今かかっている絞り込みを札で出す。× で 1 つずつ外せる */
     function activeFilterChips(request) {
       const entries = Object.entries(request.filters || {});
-      const nodes = entries.map(([fieldId, spec]) => {
+      const nodes = entries.filter(([fieldId]) => DS.domain.fields.has(fieldId)).map(([fieldId, spec]) => {
         const field = DS.domain.fields.get(fieldId);
         const remove = el('button', { type: 'button', className: 'filter-chip__remove', title: `${field.label}の絞り込みを外す`, 'aria-label': `${field.label}の絞り込みを外す` }, [icon('fa-xmark', '×')]);
         remove.addEventListener('click', () => search.clearFilter(fieldId));
-        const label = el('button', { type: 'button', className: 'filter-chip__label', title: '絞り込みのパネルで直す' }, [
+        const label = el('button', { type: 'button', className: 'filter-chip__label', title: 'この条件を直す' }, [
           icon('fa-filter', ''),
           el('span', { text: `${field.label}：${DS.domain.filters.describe(fieldId, spec)}` }),
         ]);
-        label.addEventListener('click', () => openPanel('filters'));
+        label.addEventListener('click', () => openFilter(fieldId));
         return el('span', { className: 'filter-chip' }, [label, remove]);
       });
       return el('span', { className: 'filter-chips' }, nodes);
@@ -211,21 +255,16 @@
           root.classList.toggle('is-loading', false);
           return;
         }
-        const field = DS.domain.fields.get(request.searchType);
+        const field = DS.domain.searchField();
         if (request.matchMode === 'exact') {
           actions.push(actionButton('部分一致で探し直す', 'fa-magnifying-glass-plus', () => {
             search.setQuery({ matchMode: 'partial' });
             search.run({ page: 1 });
           }, false));
         }
-        DS.domain.searchableFields().filter((other) => other.id !== request.searchType).forEach((other) => {
-          actions.push(actionButton(`${other.listLabel}として探す`, 'fa-arrow-right-arrow-left', () => {
-            search.setQuery({ searchType: other.id });
-            search.run({ page: 1 });
-          }, false));
-        });
+        actions.push(actionButton('探す列を変える', 'fa-arrow-right-arrow-left', chooseKey, false));
         card = emptyCard('fa-circle-question', '一致するロットはありません',
-          `${field.listLabel}が「${request.keyword}」${request.matchMode === 'exact' ? 'と同じ' : 'を含む'}ロットは${filterCount ? '、今の絞り込みの中に' : ''}ありません。番号の種類や一致のしかたを確かめてください。`,
+          `${field ? field.listLabel : '番号'}が「${request.keyword}」${request.matchMode === 'exact' ? 'と同じ' : 'を含む'}ロットは${filterCount ? '、今の絞り込みの中に' : ''}ありません。一致のしかたや探す列を確かめてください。ほかの列の値で探すときは、見出しの漏斗から絞り込めます。`,
           actions);
       }
       empty.replaceChildren(...(card ? [card] : []));
@@ -262,8 +301,9 @@
       if (changed.some((key) => tableKeys.includes(key))) {
         renderTable(state);
         renderHead(state);
-      } else if (changed.includes('selection')) {
-        renderSelection(state);
+      } else {
+        if (changed.includes('selection')) renderSelection(state);
+        if (changed.includes('filters')) renderFilterMarks(state);
       }
       if (changed.some((key) => ['search', 'cache', 'mode'].includes(key))) renderEmpty(state);
       if (changed.some((key) => ['search', 'cache', 'query'].includes(key))) renderFoot(state);
@@ -275,6 +315,7 @@
     bus.on('search:done', () => {
       tableWrap.scrollTop = 0;
     });
+    bus.on('column-filter', () => renderFilterMarks(store.get()));
 
     const initial = store.get();
     tools.update(initial);
@@ -283,7 +324,7 @@
     renderEmpty(initial);
     renderFoot(initial);
 
-    return { focusTable: () => tableWrap.focus() };
+    return { focusTable: () => tableWrap.focus(), openFilter };
   }
 
   DS.views.createResultsView = createResultsView;

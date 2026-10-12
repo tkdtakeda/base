@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from datetime import datetime
 
 from . import cache_copier
-from .column_catalog import build_catalog, catalog_from_file, catalog_version
+from .column_catalog import catalog_from_file
 from .cache_validator import open_readonly, validate_cache_file
 from .errors import AppError
 
@@ -38,20 +38,20 @@ class CacheService:
         self.state_path = config.cache_path + ".status.json"
         # 置換中に検索が走らないよう、更新と読み取りを 1 本の鍵で順番にする
         self.lock = threading.RLock()
-        # 今の schema（テーブル名・列名）と合わないキャッシュは使わない。
-        # SQLite は存在しない列名を "..." で書くと文字列として扱うため、合わないまま検索すると誤った値が返る。
+        # 今の設定（読み込み先・テーブル名）と合わないキャッシュは使わない
         self.stale = False
-        self._catalog = None  # 表示する列の一覧（キャッシュから読み取る。キャッシュが変わったら作り直す）
+        self._catalog = None  # DB の列の一覧（キャッシュから読み取る。キャッシュが変わったら作り直す）
 
     # ── 列の一覧 ──
     def catalog(self):
-        """表示する列（column_catalog.Column の並び）。キャッシュがなければ役割のある列だけ。"""
+        """DB の列（column_catalog.DbColumn の並び）。キャッシュがなければ空。"""
         with self.lock:
             if not self.cache_available():
-                return build_catalog([], self.config.field_mappings)
+                return ()
             if self._catalog is None:
-                self._catalog = catalog_from_file(open_readonly, self.cache_path, self.config.table_name, self.config.field_mappings)
-                self.logger.info("column catalog columns=%d", len(self._catalog))  # 列名は残さない
+                self._catalog = catalog_from_file(open_readonly, self.cache_path, self.config.table_name)
+                self.logger.info("column catalog columns=%d dates=%d", len(self._catalog),
+                                 sum(1 for column in self._catalog if column.looks_date))  # 列名は残さない
             return self._catalog
 
     # ── 状態の読み書き ──
@@ -72,8 +72,10 @@ class CacheService:
     def use_config(self, config):
         """読み込み先の変更などで設定を差し替える。前の読み込み先から作ったキャッシュは使わない。"""
         with self.lock:
+            # 列の一覧は読み込み先とテーブル名だけで決まる（1 件を決める列の変更では読み直さない）
+            if (config.source_path, config.table_name) != (self.config.source_path, self.config.table_name):
+                self._catalog = None
             self.config = config
-            self._catalog = None
             if not self._same_source():
                 self.stale = True
 
@@ -86,7 +88,7 @@ class CacheService:
         return os.path.isfile(self.cache_path) and not self.stale
 
     def verify_existing(self):
-        """手元のキャッシュが今の schema と合うかを確かめる（起動時）。合わなければ使わない印を付けて False。"""
+        """手元のキャッシュが今の設定（読み込み先・テーブル名）と合うかを確かめる（起動時）。合わなければ使わない印を付けて False。"""
         if not os.path.isfile(self.cache_path):
             return False
         if not self._same_source():
@@ -94,7 +96,7 @@ class CacheService:
             self.logger.warning("existing cache was built from another source")
             return False
         try:
-            validate_cache_file(self.cache_path, self.config.table_name, self.config.field_mappings)
+            validate_cache_file(self.cache_path, self.config.table_name)
             self.stale = False
             return True
         except AppError as error:
@@ -109,7 +111,7 @@ class CacheService:
             state = self._read_state()
             try:
                 source_mtime = cache_copier.copy_to_temp(self.config.source_path, self.temp_path)
-                row_count = validate_cache_file(self.temp_path, self.config.table_name, self.config.field_mappings)
+                row_count = validate_cache_file(self.temp_path, self.config.table_name)
                 os.makedirs(os.path.dirname(self.cache_path) or ".", exist_ok=True)
                 os.replace(self.temp_path, self.cache_path)
                 self.stale = False
@@ -176,7 +178,7 @@ class CacheService:
         if not available and self.stale:
             message = ("手元のキャッシュは前の読み込み先から作ったため使っていません。データを更新してください。"
                        if not self._same_source() else
-                       "手元のキャッシュが今の設定（テーブル名・列名）と合わないため使っていません。データを更新してください。")
+                       "手元のキャッシュが今の設定（テーブル名）と合わないため使っていません。データを更新してください。")
         elif not available:
             message = "検索できるデータがまだありません。データを更新してください。"
         elif not succeeded:
@@ -199,8 +201,6 @@ class CacheService:
             "lastRefreshAt": state.get("lastRefreshAt"),
             "errorCode": None if succeeded else state.get("errorCode"),
             "errorMessage": None if succeeded else state.get("errorMessage"),
-            # 列の並びの印。変わったら画面は表示定義を読み直す
-            "columnsVersion": catalog_version(self.catalog()),
         })
 
     # ── 読み取り ──

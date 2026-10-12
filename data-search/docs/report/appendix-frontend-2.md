@@ -13,8 +13,9 @@
 
   const DS = window.DS;
   const STORAGE_KEY = 'mock:samples';
-  const searchable = () => DS.domain.searchableFields().map((field) => field.id);
+  const RECORD_KEY = 'mock:record'; // このモードで選んだ「1 件を決める列」（ブラウザにだけ保存する）
   const KEYWORD_MAX = 100;
+  const RECORD_KEY_MAX = 3;
   const PAGE_SIZE = 100;
   const MAX_PAGE_SIZE = 500;
   const LATENCY_MS = 60;
@@ -27,6 +28,28 @@
     success: false,
     error: { code, userMessage, detailId: 'MOCK-' + Math.random().toString(16).slice(2, 8).toUpperCase() },
   });
+  const isBlank = (value) => value === null || value === undefined || String(value).trim() === '';
+  const textOf = (value) => (isBlank(value) ? null : String(value));
+
+  /**
+   * 表示定義に、このモードで選んだ「1 件を決める列」を重ねる（Python 版の column_model と同じ決まり：
+   * 1 件を決める列 → 探す列 を先頭に並べ、番号の列は text として扱う）
+   */
+  function viewWithRecord(base, record) {
+    const view = JSON.parse(JSON.stringify(base));
+    const ids = view.columns.map((column) => column.id);
+    if (!record || !Array.isArray(record.recordKey) || !record.recordKey.length || !record.recordKey.every((id) => ids.includes(id))) return view;
+    view.recordKey = record.recordKey.slice();
+    view.searchColumn = ids.includes(record.searchColumn) ? record.searchColumn : record.recordKey[0];
+    const lead = Array.from(new Set(view.recordKey.concat([view.searchColumn])));
+    const byId = new Map(view.columns.map((column) => [column.id, column]));
+    view.columns = lead.map((id) => Object.assign({}, byId.get(id), { role: true, kind: 'text' }))
+      .concat(view.columns.filter((column) => !lead.includes(column.id)));
+    view.columnsVersion = `${base.columnsVersion}-${lead.join('|')}`;
+    view.ready = true;
+    view.notices = [];
+    return view;
+  }
 
   function createMockAdapter() {
     // 読み込んだパターンの id と時刻だけを保存し、データは種から作り直す（保存量を小さくする）
@@ -52,14 +75,22 @@
     rebuild();
 
     // ── 一覧・検索・絞り込み（Python 版の lot_service と同じ決まり） ──
+    /** 絞り込みの列と種類を確かめる（どの列でも絞り込める。日付の列は日付の範囲、ほかは値から選ぶ） */
+    function badFilter(filters) {
+      return Object.entries(filters || {}).some(([fieldId, spec]) => {
+        const field = DS.domain.fields.get(fieldId);
+        return !field || !spec || spec.type !== field.filter;
+      });
+    }
+
     function filterRows(payload) {
       const keyword = DS.util.normalize(payload.keyword).toLowerCase();
-      const searchType = searchable().includes(payload.searchType) ? payload.searchType : null;
+      const searchField = DS.domain.searchField();
       const today = DS.domain.filters.todayIso();
       const filters = Object.entries(DS.domain.filters.compact(payload.filters));
       return rows.filter((row) => {
-        if (keyword && searchType) {
-          const value = String(row[searchType] == null ? '' : row[searchType]).toLowerCase();
+        if (keyword && searchField) {
+          const value = String(row[searchField.id] == null ? '' : row[searchField.id]).toLowerCase();
           if (payload.matchMode === 'exact' ? value !== keyword : !value.includes(keyword)) return false;
         }
         return filters.every(([fieldId, spec]) =>
@@ -71,15 +102,14 @@
       const started = performance.now();
       const keyword = DS.util.normalize(payload.keyword);
       if (keyword.length > KEYWORD_MAX) return fail('INVALID_REQUEST', `検索する番号は ${KEYWORD_MAX} 文字以内で入力してください。`);
-      if (keyword && !searchable().includes(payload.searchType)) return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
       if (rows.length === 0) return fail('CACHE_UNAVAILABLE', '検索できるデータがまだありません。左の「サンプル」から読み込んでください。');
+      if (badFilter(payload.filters)) return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
       const page = Math.max(1, Number(payload.page) || 1);
       const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(payload.pageSize) || PAGE_SIZE));
       const sortKey = DS.domain.fields.has(payload.sortKey) ? payload.sortKey : DS.domain.DEFAULT_SORT.key;
       const sortField = DS.domain.fields.get(sortKey);
       const direction = payload.sortOrder === 'desc' ? -1 : 1;
       const sortValue = (row) => (sortField.type === 'date' ? DS.domain.filters.normalizeDate(row[sortKey]) : row[sortKey]);
-      const isBlank = (value) => value === null || value === undefined || String(value).trim() === '';
       const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
       const hits = filterRows(payload);
@@ -142,7 +172,53 @@
       get_application_info: () => ({ id: 'data-search', name: 'Data Search', version: '0.1.0' }),
 
       // 表示定義：config/sample の view・schema と python/tools/sample_columns.json から自動生成した js/sample/sample-view.js
-      get_view_config: () => Object.assign({ success: true }, JSON.parse(JSON.stringify(DS.sampleView))),
+      // ＋ このモードで選んだ「1 件を決める列」
+      get_view_config: () => Object.assign({ success: true, recordSettingsFile: '（サンプルのモードではブラウザに保存）' },
+        viewWithRecord(DS.sampleView, DS.core.storage.read(RECORD_KEY, null))),
+
+      check_record_key(payload) {
+        if (rows.length === 0) return fail('CACHE_UNAVAILABLE', '検索できるデータがまだありません。左の「サンプル」から読み込んでください。');
+        const names = payload.recordKey;
+        if (!Array.isArray(names) || names.length < 1 || names.length > RECORD_KEY_MAX || new Set(names).size !== names.length ||
+          !names.every((id) => DS.domain.fields.has(id))) {
+          return fail('INVALID_REQUEST', `1 件を決める列は、一覧にある列から重ならないように 1〜${RECORD_KEY_MAX} 個選んでください。`);
+        }
+        const groups = new Map();
+        let blank = 0;
+        rows.forEach((row) => {
+          const values = names.map((id) => textOf(row[id]));
+          if (values.every((value) => value === null)) blank += 1;
+          const key = JSON.stringify(values);
+          const entry = groups.get(key) || { values, count: 0 };
+          entry.count += 1;
+          groups.set(key, entry);
+        });
+        const duplicated = Array.from(groups.values()).filter((entry) => entry.count > 1).sort((a, b) => b.count - a.count);
+        const top = duplicated[0];
+        return {
+          success: true,
+          recordKey: names,
+          rowCount: rows.length,
+          duplicateGroups: duplicated.length,
+          duplicateRows: duplicated.reduce((sum, entry) => sum + entry.count, 0),
+          blankRows: blank,
+          unique: duplicated.length === 0,
+          example: top ? { values: Object.fromEntries(names.map((id, index) => [id, top.values[index]])), count: top.count } : null,
+        };
+      },
+
+      update_record_settings(payload) {
+        const checked = commands.check_record_key(payload);
+        if (!checked.success) return checked;
+        const searchColumn = payload.searchColumn;
+        if (searchColumn != null && !DS.domain.fields.has(searchColumn)) return fail('INVALID_REQUEST', '番号で探す列は、一覧にある列から選んでください。');
+        const stored = DS.core.storage.write(RECORD_KEY, { recordKey: payload.recordKey.slice(), searchColumn: searchColumn || null });
+        if (!stored.ok) return fail('SETTINGS_WRITE_FAILED', `保存できませんでした：${stored.reason}`);
+        return {
+          success: true, saved: true, recordKey: payload.recordKey.slice(), searchColumn: searchColumn || payload.recordKey[0],
+          localFile: '（サンプルのモードではブラウザに保存）', message: '1 件を決める列を保存しました（サンプルのモードではブラウザにだけ保存します）。',
+        };
+      },
 
       get_cache_status() {
         const available = rows.length > 0;
@@ -164,7 +240,7 @@
           lastRefreshAt: saved.refreshedAt || saved.loadedAt,
           errorCode: failed ? 'SOURCE_UNAVAILABLE' : null,
           errorMessage: failed ? '共有データに接続できません。ネットワークと共有フォルダを確認してください。' : null,
-          columnsVersion: DS.sampleView.columnsVersion,
+          columnsVersion: viewWithRecord(DS.sampleView, DS.core.storage.read(RECORD_KEY, null)).columnsVersion,
         };
       },
 
@@ -197,20 +273,24 @@
         const field = DS.domain.fields.get(payload.field);
         if (!field || field.filter !== 'values') return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
         if (rows.length === 0) return fail('CACHE_UNAVAILABLE', '検索できるデータがまだありません。左の「サンプル」から読み込んでください。');
+        if (badFilter(payload.filters)) return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
+        // match：その文字を含む値だけ（大文字小文字・全角半角を区別しない）
+        const match = payload.match ? DS.util.normalize(payload.match).toLowerCase() : '';
         const others = Object.assign({}, payload.filters || {});
         delete others[field.id];
         const counts = new Map();
         filterRows(Object.assign({}, payload, { filters: others })).forEach((row) => {
-          const raw = row[field.id];
-          const value = raw === null || raw === undefined || String(raw).trim() === '' ? null : String(raw);
+          const value = textOf(row[field.id]);
+          if (match && (value === null || !value.toLowerCase().includes(match))) return;
           counts.set(value, (counts.get(value) || 0) + 1);
         });
         const values = Array.from(counts, ([value, count]) => ({ value, count }))
           .sort((a, b) => b.count - a.count || String(a.value).localeCompare(String(b.value)));
-        return { success: true, field: field.id, values: values.slice(0, VALUE_LIST_LIMIT), truncated: values.length > VALUE_LIST_LIMIT };
+        return { success: true, field: field.id, values: values.slice(0, VALUE_LIST_LIMIT), truncated: values.length > VALUE_LIST_LIMIT, match: match || null };
       },
 
       get_lot_detail(payload) {
+        if (!DS.domain.isReady()) return fail('KEY_NOT_READY', '1 件を決める列が決まっていません。画面左の「データ」→「1 件を決める列」で選んでください。');
         const keys = DS.domain.keyFields().map((field) => field.id);
         const found = rows.filter((row) => keys.every((id) => (row[id] || null) === (payload[id] || null)));
         if (found.length === 0) return fail('NOT_FOUND', '選んだデータが見つかりません。データが更新された可能性があります。もう一度検索してください。');
@@ -298,15 +378,16 @@
     return { hidden: DS.domain.defaultHiddenColumns(), widths: {}, density: 'compact' };
   }
 
-  /** 保存した列の設定を読み直す。知らない列（DB から消えた列）は捨てる。新しく増えた列は表示する */
+  /** 保存した列の設定を読み直す。以前の形（別名）は DB の列名に読み替え、知らない列（DB から消えた列）は捨てる。新しく増えた列は表示する */
   function restoreColumns(prefs) {
     const base = defaultColumns();
     if (!Array.isArray(prefs.hiddenColumns)) return base;
     const known = (id) => DS.domain.fields.has(id);
+    const migrate = DS.domain.migrateId;
     const widths = {};
-    Object.entries(prefs.columnWidths || {}).forEach(([id, width]) => { if (known(id) && Number(width) > 0) widths[id] = Number(width); });
+    Object.entries(prefs.columnWidths || {}).forEach(([id, width]) => { if (known(migrate(id)) && Number(width) > 0) widths[migrate(id)] = Number(width); });
     return {
-      hidden: prefs.hiddenColumns.filter(known),
+      hidden: Array.from(new Set(prefs.hiddenColumns.map(migrate).filter(known))),
       widths,
       density: prefs.density === 'comfortable' ? 'comfortable' : 'compact',
     };
@@ -314,14 +395,12 @@
 
   function createInitialState(mode) {
     const prefs = DS.core.storage.read(PREFS_KEY, {});
-    const searchable = DS.domain.searchableFields().map((field) => field.id);
     return {
       mode,
       appInfo: null,
       cache: { status: null, refreshing: false, refreshStartedAt: null },
       source: { path: null, editable: false, localFile: '', loaded: false, loadError: null, status: 'idle', result: null, testedPath: null },
       query: {
-        searchType: searchable.includes(prefs.searchType) ? prefs.searchType : searchable[0],
         keyword: '',
         matchMode: prefs.matchMode === 'exact' ? 'exact' : 'partial',
       },
@@ -330,9 +409,10 @@
       tags: { items: DS.controllers.loadTags(), activeId: null },
       search: { status: 'idle', result: null, request: null, error: null },
       selection: { key: null, item: null, status: 'idle', error: null, duplicated: false, open: false },
+      record: { status: 'idle', result: null, checked: null },
       ui: { panel: null },
       columns: restoreColumns(prefs),
-      history: prefs.history || {},
+      history: migrateHistory(prefs.history || {}),
       samplesVersion: 0,
     };
   }
@@ -343,7 +423,6 @@
     bus.on('state', ({ state, changed }) => {
       if (!changed.some((key) => WATCHED.includes(key))) return;
       const result = DS.core.storage.write(PREFS_KEY, {
-        searchType: state.query.searchType,
         matchMode: state.query.matchMode,
         hiddenColumns: state.columns.hidden,
         columnWidths: state.columns.widths,
@@ -354,10 +433,21 @@
     });
   }
 
-  function pushHistory(history, searchType, keyword) {
-    const list = (history[searchType] || []).filter((item) => item !== keyword);
+  /** 前に探した番号は「探した列（DB の列名）」ごとに持つ。以前の形（別名）で保存したものは読み替える */
+  function migrateHistory(history) {
+    const result = {};
+    Object.entries(history).forEach(([id, list]) => {
+      if (!Array.isArray(list)) return;
+      const key = DS.domain.migrateId(id);
+      result[key] = Array.from(new Set((result[key] || []).concat(list))).slice(0, HISTORY_MAX);
+    });
+    return result;
+  }
+
+  function pushHistory(history, columnId, keyword) {
+    const list = (history[columnId] || []).filter((item) => item !== keyword);
     list.unshift(keyword);
-    return Object.assign({}, history, { [searchType]: list.slice(0, HISTORY_MAX) });
+    return Object.assign({}, history, { [columnId]: list.slice(0, HISTORY_MAX) });
   }
 
   DS.controllers.createInitialState = createInitialState;
@@ -516,12 +606,17 @@
         return { ok: false, reason: '表示できるデータがありません。データを更新してください', action: 'refresh', actionLabel: 'データを更新する' };
       }
       if (state.search.status === 'loading') return { ok: false, reason: '読み込んでいます…', busy: true };
+      const field = DS.domain.searchField();
+      // 1 件を決める列が DB にない：番号を入れていなければ、選び直すよう案内する（探す列があれば番号では探せる）
+      const keyMissing = Boolean(cacheStatus && cacheStatus.available && !DS.domain.isReady());
+      if (keyMissing && (!field || !keywordOf())) {
+        return { ok: false, reason: '1 件を決める列が DB にありません。左の「データ」で選んでください', action: 'choose-key', actionLabel: '1 件を決める列を選ぶ' };
+      }
       const searching = state.search.request && state.search.request.keyword;
       if (!keywordOf()) {
         // 番号で探している途中に入力を空にしたら、番号の検索を外して一覧に戻せる
         if (searching) return { ok: true, label: '一覧に戻す', icon: 'fa-list' };
-        const field = DS.domain.fields.get(state.query.searchType);
-        return { ok: false, quiet: true, reason: `${field.listLabel}を入れると、一覧の中から探せます` };
+        return { ok: false, quiet: true, reason: field ? `${field.listLabel}を入れると、一覧の中から探せます` : '' };
       }
       return { ok: true };
     }
@@ -536,7 +631,8 @@
         filters: DS.domain.filters.compact(state.filters),
       };
       const keyword = keywordOf();
-      if (keyword) Object.assign(request, { searchType: state.query.searchType, keyword, matchMode: state.query.matchMode });
+      // 探す列は設定で決まる（schema.searchColumn）。画面からは送らない
+      if (keyword && DS.domain.searchField()) Object.assign(request, { keyword, matchMode: state.query.matchMode });
       return request;
     }
 
@@ -552,7 +648,7 @@
         const result = await api.call('list_lots', request);
         if (token !== searchToken) return; // 古い結果は捨てる
         const patch = { search: { status: 'done', result, request, error: null } };
-        if (request.keyword) patch.history = DS.controllers.pushHistory(store.get().history, request.searchType, result.keyword || request.keyword);
+        if (request.keyword) patch.history = DS.controllers.pushHistory(store.get().history, DS.domain.searchField().id, result.keyword || request.keyword);
         store.set(patch);
         bus.emit('search:done', result);
         // 選んでいた行が結果に残っていなければ、選択を外して詳細を閉じる
@@ -626,6 +722,12 @@
 
     async function select(item) {
       const key = DS.domain.recordKey(item);
+      if (!DS.domain.isReady()) {
+        // 1 件を決める列がないと、詳細の 1 件を決められない
+        store.set({ selection: Object.assign({}, EMPTY_SELECTION, { key, item }) });
+        toast.show({ tone: 'warning', message: '詳細を開くには、左の「データ」で 1 件を決める列を選んでください', actionLabel: '選ぶ', onAction: () => bus.emit('record:choose') });
+        return;
+      }
       const token = ++detailToken;
       // 一覧の値ですぐに表示し（0.4 秒以内の反応）、最新の詳細で置き換える
       store.set({ selection: { key, item, status: 'loading', error: null, duplicated: false, open: true } });
@@ -670,7 +772,7 @@
 
      load()        今の読み込み先を読む
      test(path)    接続テスト（コピーも書き込みもしない）。段階ごとの ○ × を state.source.result に入れる
-     save(path)    接続テストがすべて ○ の値だけ保存できる → config.local.json に保存 → データを更新
+     save(path)    接続テストで × がない値だけ保存できる → config.local.json に保存 → データを更新
    ========================================================= */
 (function () {
   'use strict';
@@ -712,7 +814,7 @@
       }
     }
 
-    /** 確かめた値と同じで、すべて ○ のときだけ保存できる */
+    /** 確かめた値と同じで、× がない（ok）ときだけ保存できる */
     function canSave(path) {
       const { result, testedPath, status } = store.get().source;
       return status === 'idle' && Boolean(result && result.ok) && testedPath === normalizePath(path);
@@ -758,14 +860,17 @@
 /* =========================================================
    列の登録簿。中身はソースコードに書かず、表示定義（get_view_config）から組み立てる。
 
-     columns      … 表示する列（DB のテーブルから読み取った全列）。label は DB の列名
-                    並び：役割のある列（schema.columns の順）→ ほかの列（DB の順）
-     roleFields   … 役割のある列の論理名（1 件を決める・検索・絞り込み・並べ替え）
-     searchFields … 番号で探せる列
-     hiddenColumns… 最初は隠しておく列（論理名か DB の列名）。各自が「表示列」で変えられる
+     columns      … DB のテーブルの全列。id も見出しも DB の列名
+                    並び：1 件を決める列 → 番号で探す列 → 別名のある列 → ほかの列（DB の順）
+                    kind：date（日付の範囲で絞り込む）／ text（値から選んで絞り込む）
+     recordKey    … 1 件を決める列（一覧の左端に固定）。DB に足りなければ空（ready=false）
+     searchColumn … 番号で探す列（上部バーの入力欄）
+     aliases      … 別名（論理名）→ DB の列名。以前の形（論理名）で保存したタグ・表示の設定を読み替える
+     hiddenColumns… 最初は隠しておく列。各自が「表示列」で変えられる
+     notices      … 設定と DB の食い違い（「データ」パネルに出す）
 
    表示定義の出どころ
-     Python 版・デスクトップ版 … get_view_config 命令（config の schema / view ＋ キャッシュのテーブルの列）
+     Python 版・デスクトップ版 … get_view_config 命令（設定 ＋ キャッシュのテーブルの列）
      画面だけで試すモード     … js/sample/sample-view.js（公開サンプルとダミーの列一覧から自動生成）
    ========================================================= */
 (function () {
@@ -779,74 +884,96 @@
     { id: 'other', label: 'そのほかの項目', icon: 'fa-table-columns' },
   ];
 
-  let lists = { list: [], searchable: [], key: [], filter: [], sections: [], hidden: [] };
-  let version = null;
+  let lists = { list: [], key: [], search: null, sections: [], hidden: [] };
+  let meta = { version: null, aliases: {}, notices: [], ready: false, settingsFile: '' };
 
   /** 表示定義を当てはめる。起動時に 1 回、画面の部品を作る前に呼ぶ */
   function applyView(view) {
     const fields = DS.core.createRegistry('fields');
-    const filters = new Map((view.filters || []).map((filter) => [filter.field, filter.type]));
-    const searchFields = view.searchFields || [];
     const options = view.fields || {};
     const recordKey = view.recordKey || [];
     const hiddenNames = new Set(view.hiddenColumns || []);
 
     (view.columns || []).forEach((column, index) => {
-      // 表示の補助（等幅・コピー・入力例・値の札）は、論理名か DB の列名のどちらで書いてもよい
-      const option = options[column.id] || options[column.label] || {};
-      const searchable = searchFields.includes(column.id);
+      const option = options[column.id] || {};
+      const searchable = column.id === view.searchColumn;
+      const key = recordKey.includes(column.id);
+      const kind = column.kind === 'date' ? 'date' : 'text';
       fields.register({
         id: column.id,
         order: (index + 1) * 10,
-        // 表示名は DB の列名。詳細・一覧の見出し・検索の種類・絞り込みのすべてで同じ
-        label: column.label,
-        listLabel: column.label,
+        // 表示名は DB の列名。詳細・一覧の見出し・絞り込みのすべてで同じ
+        label: column.label || column.id,
+        listLabel: column.label || column.id,
         role: Boolean(column.role),
-        // 番号で探せる列は、指定がなければ等幅で表示し、コピーできるようにする（0 と O を見分けやすく、転記しやすく）
-        mono: option.mono === undefined ? searchable : Boolean(option.mono),
-        copy: option.copy === undefined ? searchable : Boolean(option.copy),
+        // 番号の列（探す列・1 件を決める列）は、指定がなければ等幅で表示し、コピーできるようにする（0 と O を見分けやすく、転記しやすく）
+        mono: option.mono === undefined ? searchable || key : Boolean(option.mono),
+        copy: option.copy === undefined ? searchable || key : Boolean(option.copy),
         example: option.example || '',
         badge: (option.badge || []).map((rule) => ({ pattern: new RegExp(rule.match), tone: rule.tone })),
-        filter: filters.get(column.id) || null,
-        type: (view.types || {})[column.id] || (view.types || {})[column.label] || 'text',
+        type: kind,
+        // どの列でも絞り込める。日付の列は日付の範囲、ほかは値から選ぶ
+        filter: kind === 'date' ? 'date' : 'values',
         searchable,
-        key: recordKey.includes(column.id),
+        key,
       });
     });
 
     const all = fields.list();
-    const pick = (ids) => ids.map((id) => fields.get(id)).filter(Boolean);
     lists = {
       list: all,
-      searchable: pick(searchFields),
-      key: pick(recordKey),
-      filter: pick((view.filters || []).map((filter) => filter.field)),
+      key: recordKey.map((id) => fields.get(id)).filter(Boolean),
+      search: fields.get(view.searchColumn) || null,
       // 詳細は全項目。役割のある列を先にまとめる
       sections: SECTIONS.map((group) => ({ group, fields: all.filter((field) => (group.id === 'role') === field.role) }))
         .filter((section) => section.fields.length),
-      hidden: all.filter((field) => hiddenNames.has(field.id) || hiddenNames.has(field.label)).map((field) => field.id),
+      hidden: all.filter((field) => hiddenNames.has(field.id)).map((field) => field.id),
     };
-    version = view.columnsVersion || null;
+    meta = {
+      version: view.columnsVersion || null,
+      aliases: view.aliases || {},
+      notices: view.notices || [],
+      ready: Boolean(view.ready),
+      settingsFile: view.recordSettingsFile || '',
+    };
 
     DS.domain.fields = fields;
-    DS.domain.DEFAULT_SORT = { key: view.defaultSort.field, order: view.defaultSort.order };
+    const sort = view.defaultSort || {};
+    DS.domain.DEFAULT_SORT = { key: sort.field || (all[0] && all[0].id) || null, order: sort.order === 'desc' ? 'desc' : 'asc' };
+  }
+
+  /** 以前の形（別名＝論理名）で保存した列の名前を、今の列の id（DB の列名）に読み替える。知らない名前はそのまま */
+  function migrateId(id) {
+    if (DS.domain.fields && DS.domain.fields.has(id)) return id;
+    return Object.prototype.hasOwnProperty.call(meta.aliases, id) ? meta.aliases[id] : id;
   }
 
   DS.domain.applyView = applyView;
+  DS.domain.migrateId = migrateId;
   DS.domain.listFields = () => lists.list;
   DS.domain.detailFields = () => lists.list;
   DS.domain.detailSections = () => lists.sections;
-  DS.domain.searchableFields = () => lists.searchable;
+  /** 番号で探す列（決まっていなければ null） */
+  DS.domain.searchField = () => lists.search;
   DS.domain.keyFields = () => lists.key;
-  DS.domain.filterFields = () => lists.filter;
+  /** 絞り込める列（全列） */
+  DS.domain.filterFields = () => lists.list;
   /** 設定で「最初は隠す」とした列の id */
   DS.domain.defaultHiddenColumns = () => lists.hidden.slice();
-  /** 列の並びの印（データの更新で列が変わったかを見分ける） */
-  DS.domain.columnsVersion = () => version;
+  /** 列の並びの印（データの更新や 1 件を決める列の変更で、列の決まりが変わったかを見分ける） */
+  DS.domain.columnsVersion = () => meta.version;
+  /** 1 件を決める列がそろっているか（そろっていなければ詳細は開けない） */
+  DS.domain.isReady = () => meta.ready && lists.key.length > 0;
+  /** 設定と DB の食い違い [{ path, reason, action }] */
+  DS.domain.columnNotices = () => meta.notices.slice();
+  /** 1 件を決める列の保存先（画面に出すファイル名） */
+  DS.domain.recordSettingsFile = () => meta.settingsFile;
 
-  /** 1 件を特定する鍵（schema の recordKey。例：ロット番号＋BOX番号）を文字列にする */
-  DS.domain.recordKey = (item) =>
-    lists.key.map((field) => (item[field.id] == null ? '' : item[field.id])).join('\u001f');
+  /** 1 件を特定する鍵（例：ロット番号＋BOX番号）を文字列にする。鍵が決まっていなければ行の中身全体 */
+  DS.domain.recordKey = (item) => {
+    const fields = lists.key.length ? lists.key : lists.list;
+    return fields.map((field) => (item[field.id] == null ? '' : item[field.id])).join('\u001f');
+  };
 })();
 ```
 
@@ -924,6 +1051,7 @@
           <li>一覧には<strong>全列</strong>が DB の列名のまま出ます。左端のロット番号・BOX番号は横に動かしても残ります。</li>
           <li>行を押すと選び、<strong>ダブルクリック</strong>か <kbd>Enter</kbd> で右に<strong>詳細</strong>が出ます。<kbd>↑</kbd><kbd>↓</kbd> で行を移れます。</li>
           <li>番号が分かっているときは、上部バーに入れて <kbd>Enter</kbd>。今の絞り込みの中から探します。</li>
+          <li>ほかの列の値で探すときは、一覧の見出しの<strong>漏斗（じょうご）</strong>のアイコンから絞り込みます。どの列でも使えます。</li>
         </ol>
         <p>右上の青いボタンは、いつも「次にすること」を指します。データがないときは「サンプルを読み込む」「データを更新する」に変わります。</p>`,
     },
@@ -939,14 +1067,16 @@
         <p>どのデータを見ているかは、上部バー右と一覧の下に必ず表示されます。</p>`,
     },
     {
-      id: 'filters', group: 'search', order: 5, title: '絞り込む',
+      id: 'filters', group: 'search', order: 5, title: '絞り込む（どの列でも）',
       body: `
         <ul>
-          <li>一覧の上の「絞り込み」か、左の <span class="manual-icon">▼</span> で絞り込みのパネルが開きます。</li>
-          <li>項目を開き、値にチェックを付けるとすぐ一覧に反映されます。値の横の数は、ほかの条件を当てはめたときの件数です。</li>
-          <li>項目どうしは「かつ」、同じ項目の中は「または」で絞り込みます。（空欄）も選べます。</li>
-          <li>日付の項目は「今日より前」「今日〜7 日後」などから選べます。「範囲を自分で決める」で日数や日付そのものも指定できます。</li>
-          <li>今かかっている条件は一覧の見出しに札で出ます。札の × で 1 つずつ外せます。</li>
+          <li>一覧の見出しの右にある<strong>漏斗（じょうご）</strong><span class="manual-icon">▼</span>を押すと、その列の絞り込みが列の真下に開きます（<kbd>Enter</kbd> でも開きます）。</li>
+          <li>値にチェックを付けるとすぐ一覧に反映されます。値の横の数は、ほかの条件を当てはめたときの件数です。値が多い列は、上の欄に打つとデータ全体から探します（<kbd>Enter</kbd> で値の一覧へ移り、<kbd>Space</kbd> で選べます）。</li>
+          <li>日付の列は「今日より前」「今日〜7 日後」などから選べます。「範囲を自分で決める」で日数や日付そのものも指定できます。日付の列かどうかは、値から自動で決まります。</li>
+          <li>列どうしは「かつ」、同じ列の中は「または」で絞り込みます。（空欄）も選べます。</li>
+          <li>絞り込み中の列は、見出しの色が変わり、漏斗が青く塗りつぶされます。<kbd>Esc</kbd> か小窓の外を押すと閉じます。</li>
+          <li>今かかっている条件は一覧の上に札で出ます。札を押すとその条件を直せ、× で外せます。</li>
+          <li>左の <span class="manual-icon">▼</span>「絞り込み」では、今の条件をまとめて見たり、すべて解除したりできます。隠している列にも「条件を足す」から絞り込めます。</li>
         </ul>`,
     },
     {
@@ -964,6 +1094,7 @@
       id: 'search', group: 'search', order: 10, title: '番号で探す',
       body: `
         <ul>
+          <li>上部バーの入力欄で探す列は 1 つです（入力欄の左に列名が出ます）。列名を押すと、探す列を変えられます。</li>
           <li><strong>部分一致</strong>：入力した文字を含むものを探します（例：「0012」で LOT-2026-00012 も見つかる）。</li>
           <li><strong>完全一致</strong>：入力した文字と同じものだけを探します。</li>
           <li>今の絞り込み（タグ）の中から探します。見つからないときは「絞り込みを外して探す」を押してください。</li>
@@ -990,7 +1121,7 @@
           <li>行をダブルクリック（または選んで <kbd>Enter</kbd>）すると右に詳細が出ます。「主な項目」「そのほかの項目」に分けて全項目が並びます。見出しを押すと開閉でき、開き方は次回も保たれます。</li>
           <li>詳細を開いたまま <kbd>↑</kbd><kbd>↓</kbd> で行を移ると、詳細も切り替わります。</li>
           <li>番号の横の <span class="manual-icon">⧉</span> でコピーできます。</li>
-          <li>詳細は 1 件を特定する項目（標準は「ロット番号＋BOX番号」）で決めています。</li>
+          <li>詳細は「1 件を決める列」（標準は「ロット番号＋BOX番号」）で決めています。左の「データ」で変えられます。</li>
           <li><kbd>Esc</kbd> か右上の × で閉じます。</li>
         </ul>`,
     },
@@ -1009,11 +1140,25 @@
       body: `
         <ol class="manual-steps">
           <li>左の「データ」→「読み込み先」に、今の共有データのパスが出ます。</li>
-          <li><strong>接続を確かめる</strong>で、書き方 → 場所 → 読めるか → SQLite か → テーブルと列 → 件数 の順に ○ × が出ます。× の段階には「対応」が出ます。</li>
+          <li><strong>接続を確かめる</strong>で、書き方 → 場所 → 読めるか → SQLite か → テーブルと列 → 件数 の順に ○ △ × が出ます。× の段階には「対応」が出ます。</li>
           <li><strong>変更</strong>を押し、エクスプローラーでファイルを Shift＋右クリック →「パスとしてコピー」して貼り付け、<kbd>Enter</kbd> で確かめます。</li>
-          <li>すべて ○ なら「保存して更新」が押せます（もう一度 <kbd>Enter</kbd>）。保存すると、新しい読み込み先からデータを取り直します。</li>
+          <li>× がなければ「保存して更新」が押せます（もう一度 <kbd>Enter</kbd>）。保存すると、新しい読み込み先からデータを取り直します。</li>
+          <li>△（1 件を決める列がない）は、保存したあと「1 件を決める列」で選び直せば使えます。</li>
         </ol>
         <p>確かめるだけなら、共有データには何も書き込みません。</p>`,
+    },
+    {
+      id: 'record-key', group: 'data', order: 17, title: '1 件を決める列・探す列を選ぶ',
+      body: `
+        <p>似た構成の別の DB を読み込むと、列名が違うことがあります。そのときは列を選び直すだけで使えます（設定ファイルを手で直す必要はありません）。</p>
+        <ol class="manual-steps">
+          <li>左の「データ」→「1 件を決める列」の<strong>変更</strong>を押します。</li>
+          <li>1 件を決める列を 1〜3 つ、列名で入れます（候補から選べます。<kbd>Enter</kbd> で次の欄へ）。ふつうは「ロット番号＋BOX番号」のように 2 つです。</li>
+          <li>「番号で探す列」は上部バーの入力欄で探す列です。空欄なら 1 つ目の列で探します。</li>
+          <li><strong>確かめる</strong>で、その組み合わせで 1 件に決まるかを数えます。同じ組み合わせがあれば △ で例を出します（保存はできます）。</li>
+          <li><strong>保存</strong>すると画面を読み込み直し、選んだ列が一覧の左端に固定されます。</li>
+        </ol>
+        <p>1 件を決める列が DB にないときは、右上の青いボタンが「1 件を決める列を選ぶ」に変わります。</p>`,
     },
     {
       id: 'columns', group: 'data', order: 20, title: '表示する列を選ぶ',
@@ -1038,7 +1183,7 @@
       id: 'zero', group: 'trouble', order: 10, title: '0 件になったとき',
       body: `
         <ul>
-          <li>番号の種類が合っているか確かめてください。0 件の画面から、ほかの種類で探し直せます。</li>
+          <li>探す列が合っているか確かめてください。0 件の画面の「探す列を変える」から変えられます。ほかの列の値で探すときは、見出しの漏斗から絞り込めます。</li>
           <li>完全一致のときは「部分一致で探し直す」を試してください。</li>
           <li>上部バー右の札が「前回のデータを使用中」のときは、新しいデータがまだ入っていない可能性があります。</li>
         </ul>`,
@@ -1058,9 +1203,9 @@
         <table class="manual-table">
           <tr><th>キー</th><th>動き</th></tr>
           <tr><td><kbd>/</kbd></td><td>入力欄へ移る</td></tr>
-          <tr><td><kbd>Alt</kbd>+<kbd>1</kbd>〜<kbd>4</kbd></td><td>番号の種類を切り替える</td></tr>
           <tr><td><kbd>Enter</kbd></td><td>検索する（日本語の変換中は除く）</td></tr>
-          <tr><td><kbd>Esc</kbd></td><td>入力を消す／詳細・パネル・説明書を閉じる</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>入力を消す／絞り込みの小窓・詳細・パネル・説明書を閉じる</td></tr>
+          <tr><td><kbd>Tab</kbd> → <kbd>Enter</kbd></td><td>見出しの漏斗に移って、その列の絞り込みを開く</td></tr>
           <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>一覧で行を移る（一覧を選んでいるとき）</td></tr>
           <tr><td><kbd>F1</kbd></td><td>この説明書を開く・閉じる</td></tr>
         </table>`,
@@ -1219,10 +1364,13 @@
     icon: 'fa-database',
     label: 'データ',
     title: 'データの状態と更新',
-    watch: ['source'],
+    watch: ['source', 'record'],
     badge(state) {
       const view = DS.views.describeCache(state.cache);
       if (view.tone === 'warning' || view.tone === 'danger') return { tone: view.tone, text: '!', title: view.text };
+      if (state.cache.status && state.cache.status.available && !DS.domain.isReady()) {
+        return { tone: 'danger', text: '!', title: '1 件を決める列を選んでください' };
+      }
       return null;
     },
     mount(container, ctx) {
@@ -1233,12 +1381,16 @@
       const sourceNote = el('p', { className: 'pane-note' });
       const configBox = el('div', { className: 'config-help', hidden: true });
       const sourceEditor = DS.views.createSourceEditor(ctx);
+      const keyEditor = DS.views.createRecordKeyEditor(ctx);
+      const keySection = section('1 件を決める列', [keyEditor.element]);
       refreshButton.addEventListener('click', () => ctx.cache.refresh());
+      ctx.bus.on('record:edit', () => window.setTimeout(() => keyEditor.startEditing(), 0));
 
       container.append(
         summary,
         configBox,
         section('読み込み先', [sourceEditor.element]),
+        keySection,
         section('根拠', [facts]),
         section('共有データから更新', [
           el('p', { className: 'pane-note', text: '共有データを手元にコピーし、検証してから入れ替えます。失敗したときは前回のデータをそのまま使います。' }),
@@ -1297,13 +1449,16 @@
           if (refreshing) timer = window.setInterval(() => tick(ctx.store.get()), 1000);
           sourceNote.textContent = state.mode.description;
           sourceEditor.update(state);
+          keyEditor.update(state);
+          keySection.classList.toggle('is-alert', Boolean(status.available) && !DS.domain.isReady());
 
-          // 設定の注意（ローカルの設定にある未知のキーなど）は、ファイル名と項目を出す
-          const warnings = status.settingsWarnings || [];
+          // 設定の注意（ローカルの設定にある未知のキー・DB にない列など）は、ファイル名と項目を出す
+          const warnings = (status.settingsWarnings || []).map((w) => ({ where: `${w.file} ／ ${w.path}`, reason: w.reason, action: w.action }))
+            .concat(status.available ? DS.domain.columnNotices().map((n) => ({ where: n.path, reason: n.reason, action: n.action })) : []);
           configBox.hidden = warnings.length === 0;
           configBox.replaceChildren(...(warnings.length ? [section('設定の注意', warnings.map((w) =>
             el('div', { className: 'config-help__item' }, [
-              el('p', { className: 'config-help__where mono', text: `${w.file} ／ ${w.path}` }),
+              el('p', { className: 'config-help__where mono', text: w.where }),
               el('p', { className: 'pane-note', text: w.reason }),
               el('p', { className: 'pane-note', text: `対応：${w.action}` }),
             ])))] : []));

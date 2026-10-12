@@ -8,7 +8,8 @@
 
   /**
    * 別のツールへ渡す「送り先」の登録簿。登録すると詳細の下にボタンが出る。
-   *   DS.handoffs.register({ id, order, label, icon, send(item) })   item は 12 項目の論理名のデータ
+   *   DS.handoffs.register({ id, order, label, icon, send(item) })   item は 1 件の全列（DB の列名 → 値）。
+   *   別名（論理名）で値を取るときは item[DS.domain.migrateId('lotNo')] のように読み替える
    */
   DS.handoffs = DS.core.createRegistry('handoffs');
 
@@ -65,7 +66,7 @@
       const item = selection.item;
 
       // 見出し：1 件を特定する鍵（例：ロット番号＋BOX番号）と、札を持つ項目（例：状態）
-      const [headField, ...subFields] = DS.domain.keyFields();
+      const [headField, ...subFields] = DS.domain.keyFields().length ? DS.domain.keyFields() : DS.domain.listFields().slice(0, 1);
       const badgeField = DS.domain.detailFields().find((field) => DS.domain.hasBadge(field));
       title.replaceChildren(...[
         el('span', { className: 'detail__label', text: headField.label }),

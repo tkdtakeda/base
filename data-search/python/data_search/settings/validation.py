@@ -1,9 +1,10 @@
 """マージ後の設定（config / schema / view）を役割ごとに確かめる。
 
   config … アプリと実行環境。DB 接続に必要なパス（sourcePath / cachePath）はここで確かめる
-  schema … テーブル名と、役割のある列の論理名 → DB の列名。仮の値・空・重複をここで確かめる
-  view   … 検索・絞り込み・並べ替え・隠す列。参照する論理名が schema.columns にあるかをここで確かめる
-（表示する列そのものは DB から自動で読み取るため、設定では確かめない）
+  schema … テーブル名・1 件を決める列・番号で探す列・別名・種類。書き方（空・重複・数）をここで確かめる
+  view   … 並べ替え・隠す列・表示の補助。書き方をここで確かめる
+（列名が DB にあるかは、キャッシュのテーブルを読んでから column_model.py が確かめる。
+  DB にない名前は止めずに画面の「データ」で知らせ、選び直せるようにする）
 
 問題はすべて集めて返す（最初の 1 つで止めない）。1 件ごとに
 「対象ファイル・JSON 上の項目・理由・対応」を持たせ、利用者が直せるようにする。
@@ -17,8 +18,8 @@ from ..fields import MATCH_MODES, SORT_ORDERS
 PLACEHOLDER_PATTERN = re.compile(r"<[^<>]+>")
 LOG_LEVELS = ("debug", "info", "warning", "error")
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost")
-FILTER_TYPES = ("values", "date")
 COLUMN_TYPES = ("text", "date")
+RECORD_KEY_MAX = 3  # 1 件を決める列の数の上限
 BADGE_TONES = ("success", "info", "warning", "danger", "neutral")
 
 
@@ -142,37 +143,36 @@ def validate_schema(schema, src, config):
     elif _blank(table):
         err("tableName", "値が空です。", "実際のテーブル名を設定してください。")
 
-    columns = schema["columns"]
-    if not isinstance(columns, dict) or not columns:
-        err("columns", "論理項目と物理列名の対応がありません。", "{ \"論理名\": \"物理列名\" } の形で設定してください。")
-        return issues
-    for logical, physical in columns.items():
+    # 別名（論理名 → DB の列名）は任意。仮の値のままの別名は使わない（実行時に読み飛ばす）
+    for logical, physical in schema["columns"].items():
         path = f"columns.{logical}"
         if _blank(logical):
             err(path, "論理名が空です。", "論理名を設定してください。")
-        if not isinstance(physical, str):
-            err(path, "物理列名は文字列にしてください。", "\"物理列名\" の形で設定してください。")
-        elif is_placeholder(physical):
-            err(path, f"仮の値（{physical}）のままです。",
-                f"{src.local_label} の columns.{logical} に実際の列名を設定してください。", file=src.local_label)
-        elif not physical.strip():
-            err(path, "物理列名が空です。", "実際の列名を設定してください。")
+        if physical is not None and not isinstance(physical, str):
+            err(path, "DB の列名は文字列にしてください。", "\"DB の列名\" の形で設定してください（使わないならその行を消す）。")
 
     record_key = schema["recordKey"]
     if not record_key:
-        err("recordKey", "1 件を特定する論理項目がありません。", "例：[\"lotNo\", \"castingNo\"]")
+        err("recordKey", "1 件を特定する列がありません。",
+            "DB の列名を 1〜3 個書いてください（例：[\"ロット番号\", \"BOX番号\"]）。画面左の「データ」→「1 件を決める列」でも選べます。")
+    elif len(record_key) > RECORD_KEY_MAX:
+        err("recordKey", f"1 件を特定する列が {len(record_key)} 個あります。", f"{RECORD_KEY_MAX} 個までにしてください。")
     for index, name in enumerate(record_key):
-        if name not in columns:
-            err(f"recordKey[{index}]", f"\"{name}\" は schema.columns に定義されていません。",
-                "columns に論理項目を足すか、recordKey を直してください。")
-    if len(set(record_key)) != len(record_key):
-        err("recordKey", "同じ論理項目が重複しています。", "重複を消してください。")
+        if _blank(name):
+            err(f"recordKey[{index}]", "列の名前が空か、文字列ではありません。", "DB の列名か別名を書いてください。")
+    if len(set(map(str, record_key))) != len(record_key):
+        err("recordKey", "同じ列が重複しています。", "重複を消してください。")
 
-    # types のキーは論理名か、役割のない列なら DB の列名（DB から読み取るため、ここでは有無を確かめない）
+    search_column = schema["searchColumn"]
+    if search_column is not None and _blank(search_column):
+        err("searchColumn", "列の名前が空か、文字列ではありません。",
+            "DB の列名か別名を書くか、null にしてください（null なら recordKey の 1 つ目で探します）。")
+
+    # types のキーは DB の列名か別名（DB から読み取るため、ここでは有無を確かめない）
     for name, kind in schema["types"].items():
         path = f"types.{name}"
         if _blank(name):
-            err(path, "列の名前が空です。", "論理名か DB の列名を書いてください。")
+            err(path, "列の名前が空です。", "DB の列名か別名を書いてください。")
         if kind not in COLUMN_TYPES:
             err(path, f"\"{kind}\" は型として使えません。", "text か date にしてください。")
     return issues
@@ -182,38 +182,18 @@ def validate_schema(schema, src, config):
 
 def validate_view(view, src, schema):
     issues = []
-    columns = schema["columns"]
-    types = schema["types"]
 
     def err(path, reason, action):
         issues.append(Issue("error", src.origin(path), path, reason, action))
 
-    def check_field(path, name):
-        if not isinstance(name, str) or name not in columns:
-            err(path, f"\"{name}\" はマージ後の schema.columns に定義されていません。",
-                "schema 側へ論理項目を追加するか、view 側の field を修正してください。")
-            return False
-        return True
-
     def warn(path, reason, action):
         issues.append(Issue("warning", src.origin(path), path, reason, action))
 
-    searchable = view["searchFields"]
-    if not searchable:
-        err("searchFields", "番号で探せる項目が 1 つもありません。", "少なくとも 1 つの論理名を書いてください（例：[\"lotNo\"]）。")
-    seen = set()
-    for index, name in enumerate(searchable):
-        path = f"searchFields[{index}]"
-        if check_field(path, name):
-            if name in seen:
-                err(path, f"\"{name}\" が searchFields の中で重複しています。", "どちらか一方を消してください。")
-            seen.add(name)
-
     for index, name in enumerate(view["hiddenColumns"]):
         if _blank(name):
-            err(f"hiddenColumns[{index}]", "列の名前が空か、文字列ではありません。", "論理名か DB の列名を書いてください。")
+            err(f"hiddenColumns[{index}]", "列の名前が空か、文字列ではありません。", "DB の列名か別名を書いてください。")
 
-    # fields のキーは論理名か、役割のない列なら DB の列名（DB から読み取るため、ここでは有無を確かめない）
+    # fields のキーは DB の列名か別名（DB から読み取るため、ここでは有無を確かめない）
     unused = []
     for name, options in view["fields"].items():
         path = f"fields.{name}"
@@ -236,24 +216,6 @@ def validate_view(view, src, schema):
             if rule.get("tone") not in BADGE_TONES:
                 err(f"{rule_path}.tone", f"\"{rule.get('tone')}\" は使えません。", " / ".join(BADGE_TONES) + " のいずれかにしてください。")
 
-    seen = set()
-    for index, item in enumerate(view["filters"]):
-        base = f"filters[{index}]"
-        if not isinstance(item, dict):
-            err(base, "{ \"field\": ..., \"type\": ... } の形ではありません。", "形を直してください。")
-            continue
-        field = item.get("field")
-        if check_field(f"{base}.field", field):
-            if field in seen:
-                err(f"{base}.field", f"\"{field}\" が filters の中で重複しています。", "どちらか一方を消してください。")
-            seen.add(field)
-        kind = item.get("type")
-        if kind not in FILTER_TYPES:
-            err(f"{base}.type", f"\"{kind}\" は絞り込みの種類として使えません。", "values か date にしてください。")
-        elif kind == "date" and types.get(field) != "date":
-            err(f"{base}.type", f"\"{field}\" は schema.types で date になっていません。",
-                f"schema の types に \"{field}\": \"date\" を足すか、type を values にしてください。")
-
     # 以前の形の表示名・まとまりは使わない（表示名は DB の列名。まとめて 1 件の注意にする）
     if unused:
         shown = "、".join(unused[:4]) + (f" ほか {len(unused) - 4} 件" if len(unused) > 4 else "")
@@ -261,7 +223,11 @@ def validate_view(view, src, schema):
              "消してかまいません。")
 
     sort = view["defaultSort"]
-    check_field("defaultSort.field", sort.get("field"))
+    if not isinstance(sort, dict):
+        err("defaultSort", "{ \"field\": ..., \"order\": ... } の形ではありません。", "形を直してください。")
+        return issues
+    if sort.get("field") is not None and _blank(sort.get("field")):
+        err("defaultSort.field", "列の名前が空か、文字列ではありません。", "DB の列名か別名を書いてください。")
     if sort.get("order") not in SORT_ORDERS:
         err("defaultSort.order", f"\"{sort.get('order')}\" は使えません。", "asc か desc にしてください。")
     return issues

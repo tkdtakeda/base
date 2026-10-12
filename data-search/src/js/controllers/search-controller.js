@@ -28,12 +28,17 @@
         return { ok: false, reason: '表示できるデータがありません。データを更新してください', action: 'refresh', actionLabel: 'データを更新する' };
       }
       if (state.search.status === 'loading') return { ok: false, reason: '読み込んでいます…', busy: true };
+      const field = DS.domain.searchField();
+      // 1 件を決める列が DB にない：番号を入れていなければ、選び直すよう案内する（探す列があれば番号では探せる）
+      const keyMissing = Boolean(cacheStatus && cacheStatus.available && !DS.domain.isReady());
+      if (keyMissing && (!field || !keywordOf())) {
+        return { ok: false, reason: '1 件を決める列が DB にありません。左の「データ」で選んでください', action: 'choose-key', actionLabel: '1 件を決める列を選ぶ' };
+      }
       const searching = state.search.request && state.search.request.keyword;
       if (!keywordOf()) {
         // 番号で探している途中に入力を空にしたら、番号の検索を外して一覧に戻せる
         if (searching) return { ok: true, label: '一覧に戻す', icon: 'fa-list' };
-        const field = DS.domain.fields.get(state.query.searchType);
-        return { ok: false, quiet: true, reason: `${field.listLabel}を入れると、一覧の中から探せます` };
+        return { ok: false, quiet: true, reason: field ? `${field.listLabel}を入れると、一覧の中から探せます` : '' };
       }
       return { ok: true };
     }
@@ -48,7 +53,8 @@
         filters: DS.domain.filters.compact(state.filters),
       };
       const keyword = keywordOf();
-      if (keyword) Object.assign(request, { searchType: state.query.searchType, keyword, matchMode: state.query.matchMode });
+      // 探す列は設定で決まる（schema.searchColumn）。画面からは送らない
+      if (keyword && DS.domain.searchField()) Object.assign(request, { keyword, matchMode: state.query.matchMode });
       return request;
     }
 
@@ -64,7 +70,7 @@
         const result = await api.call('list_lots', request);
         if (token !== searchToken) return; // 古い結果は捨てる
         const patch = { search: { status: 'done', result, request, error: null } };
-        if (request.keyword) patch.history = DS.controllers.pushHistory(store.get().history, request.searchType, result.keyword || request.keyword);
+        if (request.keyword) patch.history = DS.controllers.pushHistory(store.get().history, DS.domain.searchField().id, result.keyword || request.keyword);
         store.set(patch);
         bus.emit('search:done', result);
         // 選んでいた行が結果に残っていなければ、選択を外して詳細を閉じる
@@ -138,6 +144,12 @@
 
     async function select(item) {
       const key = DS.domain.recordKey(item);
+      if (!DS.domain.isReady()) {
+        // 1 件を決める列がないと、詳細の 1 件を決められない
+        store.set({ selection: Object.assign({}, EMPTY_SELECTION, { key, item }) });
+        toast.show({ tone: 'warning', message: '詳細を開くには、左の「データ」で 1 件を決める列を選んでください', actionLabel: '選ぶ', onAction: () => bus.emit('record:choose') });
+        return;
+      }
       const token = ++detailToken;
       // 一覧の値ですぐに表示し（0.4 秒以内の反応）、最新の詳細で置き換える
       store.set({ selection: { key, item, status: 'loading', error: null, duplicated: false, open: true } });

@@ -15,6 +15,11 @@ def local_file(local_dir, kind):
 
 def set_local_value(local_dir, kind, path, value):
     """path（例：("dataSource", "sourcePath")）の値を書き込む。書き込んだファイルのパスを返す。"""
+    return set_local_values(local_dir, kind, {path: value})
+
+
+def set_local_values(local_dir, kind, values):
+    """{path: 値} をまとめて 1 回で書き込む（控えの .bak も 1 回だけ作る）。書き込んだファイルのパスを返す。"""
     target = local_file(local_dir, kind)
     data = {}
     if os.path.isfile(target):
@@ -23,14 +28,15 @@ def set_local_value(local_dir, kind, path, value):
         if not isinstance(data, dict):
             raise ValueError("local file is not an object")
         shutil.copyfile(target, target + ".bak")
-    node = data
-    for key in path[:-1]:
-        child = node.get(key)
-        if not isinstance(child, dict):
-            child = {}
-            node[key] = child
-        node = child
-    node[path[-1]] = value
+    for path, value in values.items():
+        node = data
+        for key in path[:-1]:
+            child = node.get(key)
+            if not isinstance(child, dict):
+                child = {}
+                node[key] = child
+            node = child
+        node[path[-1]] = value
     os.makedirs(local_dir, exist_ok=True)
     temp = target + ".writing"
     with open(temp, "w", encoding="utf-8") as fp:

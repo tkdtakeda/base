@@ -28,8 +28,12 @@
   const { store, search, samples, tags } = app;
   const before = { samples: samples.loadedIds(), tags: store.get().tags.items.slice(), filters: store.get().filters };
   const result = () => store.get().search.result;
-  const searchFor = async (searchType, keyword, matchMode) => {
-    search.setQuery({ searchType, keyword, matchMode: matchMode || 'partial' });
+  const col = window.DS.sample.columnOf; // 論理名 → DB の列名（画面の列の id）
+  const LOT = col('lotNo');
+  const STATUS = col('cfStatus');
+  const CUSTOMER = col('customerName');
+  const searchFor = async (keyword, matchMode) => {
+    search.setQuery({ keyword, matchMode: matchMode || 'partial' });
     await search.run({ page: 1 });
     return result();
   };
@@ -50,25 +54,43 @@
     const dates = result().items.map((item) => item[sortKey]);
     check('既定の並べ替え（view の defaultSort）の順に並ぶ', dates.every((date, i) => i === 0 || dates[i - 1] <= date), sortKey);
 
-    // ── 番号の検索（任意） ──
-    let r = await searchFor('lotNo', 'LOT-2026-00012', 'exact');
+    // ── 番号の検索（任意。探す列は 1 つ） ──
+    check('探す列は 1 件を決める列の 1 つ目', window.DS.domain.searchField().id === LOT && document.querySelector('.search__column').textContent.includes(LOT));
+    let r = await searchFor('LOT-2026-00012', 'exact');
     const boxes = r.totalCount;
-    check('完全一致でそのロットの BOX だけが出る', boxes >= 1 && boxes <= 3 && r.items.every((item) => item.lotNo === 'LOT-2026-00012'), `${boxes} 件`);
-    r = await searchFor('lotNo', 'ｌｏｔ－２０２６－０００１２', 'exact');
+    check('完全一致でそのロットの BOX だけが出る', boxes >= 1 && boxes <= 3 && r.items.every((item) => item[LOT] === 'LOT-2026-00012'), `${boxes} 件`);
+    r = await searchFor('ｌｏｔ－２０２６－０００１２', 'exact');
     check('全角・小文字でも見つかる', r.totalCount === boxes);
-    r = await searchFor('lotNo', 'NOTHING-0', 'partial');
+    r = await searchFor('NOTHING-0', 'partial');
     check('0 件も正常に表示する', r.totalCount === 0 && document.querySelector('.empty').hidden === false);
     await search.clearKeyword();
     check('入力を消すと一覧に戻る', result().totalCount === total && !store.get().search.request.keyword);
 
-    // ── 絞り込み ──
-    await search.setFilter('cfStatus', { type: 'values', values: ['仕掛中'] });
+    // ── 絞り込み（どの列でも） ──
+    await search.setFilter(STATUS, { type: 'values', values: ['仕掛中'] });
     const wip = result().totalCount;
-    check('状態で絞り込める', wip > 0 && wip < total && result().items.every((item) => item.cfStatus === '仕掛中'), `${wip} 件`);
-    await search.setFilter('customerName', { type: 'values', values: ['架空商事'] });
-    check('取引先名でも絞り込める（かつ）', result().items.every((item) => item.cfStatus === '仕掛中' && item.customerName === '架空商事'), `${result().totalCount} 件`);
-    const values = await app.api.call('get_filter_values', { field: 'cfStatus', filters: store.get().filters });
+    check('状態で絞り込める', wip > 0 && wip < total && result().items.every((item) => item[STATUS] === '仕掛中'), `${wip} 件`);
+    await search.setFilter(CUSTOMER, { type: 'values', values: ['架空商事'] });
+    check('取引先名でも絞り込める（かつ）', result().items.every((item) => item[STATUS] === '仕掛中' && item[CUSTOMER] === '架空商事'), `${result().totalCount} 件`);
+    const values = await app.api.call('get_filter_values', { field: STATUS, filters: store.get().filters });
     check('値の一覧に件数が出る（自分の条件は外して数える）', values.values.length > 1);
+    check('見出しで絞り込み中の列に印が付く', document.querySelector(`.grid thead th[data-field="${CSS.escape(STATUS)}"]`).classList.contains('is-filtered'));
+    const other = window.DS.domain.listFields().find((field) => !field.role && field.filter === 'values');
+    document.querySelector(`.grid thead th[data-field="${CSS.escape(other.id)}"] [data-filter]`).click();
+    await wait(400);
+    const pop = document.querySelector('.col-filter');
+    check('見出しの漏斗で、役割のない列の絞り込みが開く', !pop.hidden && pop.textContent.includes(other.label), other.label);
+    const box = pop.querySelector('.value-list input[type="checkbox"]');
+    box.click();
+    await wait(400);
+    check('小窓で選ぶとすぐ一覧に反映される', Boolean(store.get().filters[other.id]) && result().items.every((item) => item[other.id] === store.get().filters[other.id].values[0]));
+    app.columnFilter.close(false);
+    check('小窓を閉じられる', pop.hidden);
+    const due = window.DS.domain.fields.get(col('factoryDeliveryDate'));
+    check('日付の列は値から判定し、日付の範囲で絞り込む', due.filter === 'date');
+    const matched = await app.api.call('get_filter_values', { field: LOT, match: 'lot-2026-0001' });
+    check('値が多い列は、文字でデータ全体から探せる', matched.values.length > 0 && matched.values.every((entry) => entry.value.toLowerCase().includes('lot-2026-0001')), `${matched.values.length} 個`);
+    await search.clearFilter(other.id);
 
     // ── タグ ──
     const saved = tags.save('確認用タグ');
@@ -78,7 +100,7 @@
     check('「すべて」で絞り込みを外せる', result().totalCount === total && store.get().tags.activeId === null);
     await tags.apply(saved.tag.id);
     check('タグを押すと同じ条件に戻る', Object.keys(store.get().filters).length === 2 && store.get().tags.activeId === saved.tag.id);
-    await search.setFilter('cfStatus', { type: 'values', values: ['仕掛中', '保留'] });
+    await search.setFilter(STATUS, { type: 'values', values: ['仕掛中', '保留'] });
     check('条件を変えると「変更あり」になる', tags.isModified() === true);
     tags.remove(saved.tag.id);
     check('タグを消せる', !store.get().tags.items.some((tag) => tag.id === saved.tag.id));
@@ -106,8 +128,14 @@
     r = result();
     check('同じロット番号の 3 BOX が出る', r.totalCount === 3);
     await search.select(r.items[2]);
-    check('ロット番号＋BOX番号で 1 件に決まる', store.get().selection.item.boxNo === r.items[2].boxNo);
+    check('ロット番号＋BOX番号で 1 件に決まる', store.get().selection.item[col('boxNo')] === r.items[2][col('boxNo')]);
     search.closeDetail();
+
+    // ── 1 件を決める列の確認（保存すると画面を読み込み直すため、確かめるだけ） ──
+    let keyCheck = await app.api.call('check_record_key', { recordKey: [LOT] });
+    check('ロット番号だけでは重なりを知らせる', keyCheck.unique === false && keyCheck.example && keyCheck.example.count === 3, `${keyCheck.duplicateGroups} 組`);
+    keyCheck = await app.api.call('check_record_key', { recordKey: [LOT, col('boxNo')] });
+    check('ロット番号＋BOX番号なら 1 件に決まる', keyCheck.unique === true);
 
     // ── 更新の失敗 ──
     await samples.load('refresh-failure');

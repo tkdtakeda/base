@@ -20,6 +20,11 @@ def local_file(local_dir, kind):
 
 def set_local_value(local_dir, kind, path, value):
     """path（例：("dataSource", "sourcePath")）の値を書き込む。書き込んだファイルのパスを返す。"""
+    return set_local_values(local_dir, kind, {path: value})
+
+
+def set_local_values(local_dir, kind, values):
+    """{path: 値} をまとめて 1 回で書き込む（控えの .bak も 1 回だけ作る）。書き込んだファイルのパスを返す。"""
     target = local_file(local_dir, kind)
     data = {}
     if os.path.isfile(target):
@@ -28,14 +33,15 @@ def set_local_value(local_dir, kind, path, value):
         if not isinstance(data, dict):
             raise ValueError("local file is not an object")
         shutil.copyfile(target, target + ".bak")
-    node = data
-    for key in path[:-1]:
-        child = node.get(key)
-        if not isinstance(child, dict):
-            child = {}
-            node[key] = child
-        node = child
-    node[path[-1]] = value
+    for path, value in values.items():
+        node = data
+        for key in path[:-1]:
+            child = node.get(key)
+            if not isinstance(child, dict):
+                child = {}
+                node[key] = child
+            node = child
+        node[path[-1]] = value
     os.makedirs(local_dir, exist_ok=True)
     temp = target + ".writing"
     with open(temp, "w", encoding="utf-8") as fp:
@@ -61,6 +67,8 @@ def restore_backup(local_dir, kind, existed):
 
     ① パスの書き方  ② 場所に届くか  ③ 読めるか  ④ SQLite として開けるか  ⑤ テーブル・列  ⑥ 件数
 前の段階が × なら、後の段階は「確かめていない」（skip）にする。画面には段階ごとに 理由・対応 を出す。
+△（warn）は「使えるが、保存のあとで直すことがある」（例：1 件を決める列がない → 画面で選び直す）。
+△ だけなら保存できる（似た構成の別の DB へ切り替えられるように）。
 ログにはパスを残さない（呼び出し側は段階の id と結果だけを記録する）。
 """
 
@@ -68,6 +76,7 @@ import os
 import sqlite3
 from datetime import datetime
 
+from .column_model import missing_key_columns
 from .query import quote_identifier
 from .settings.validation import is_placeholder
 
@@ -103,8 +112,9 @@ def resolve_path(app_root, path):
     return os.path.normpath(path if os.path.isabs(path) else os.path.join(app_root, path))
 
 
-def check_source(path, table_name, field_mappings, app_root):
-    """段階ごとの結果 [{id, label, status: ok/ng/skip, message, action}] と、まとめ {ok, rowCount, modifiedAt} を返す。"""
+def check_source(path, table_name, model_settings, app_root):
+    """段階ごとの結果 [{id, label, status: ok/warn/ng/skip, message, action}] と、まとめ {ok, rowCount, modifiedAt} を返す。
+    model_settings：settings.ModelSettings（1 件を決める列があるかを確かめる）"""
     results = []
     state = {"path": normalize_path(path), "conn": None, "row_count": None, "modified": None}
     checks = {
@@ -112,7 +122,7 @@ def check_source(path, table_name, field_mappings, app_root):
         "reach": lambda: _check_reach(state),
         "read": lambda: _check_read(state),
         "sqlite": lambda: _check_sqlite(state),
-        "table": lambda: _check_table(state, table_name, field_mappings),
+        "table": lambda: _check_table(state, table_name, model_settings),
         "rows": lambda: _check_rows(state, table_name),
     }
     failed = False
@@ -122,8 +132,9 @@ def check_source(path, table_name, field_mappings, app_root):
                 results.append({"id": step_id, "label": label, "status": "skip", "message": "前の段階が × のため確かめていません。", "action": ""})
                 continue
             try:
-                message = checks[step_id]()
-                results.append({"id": step_id, "label": label, "status": "ok", "message": message, "action": ""})
+                outcome = checks[step_id]()
+                status, message, action = outcome if isinstance(outcome, tuple) else ("ok", outcome, "")
+                results.append({"id": step_id, "label": label, "status": status, "message": message, "action": action})
             except StepFailed as failure:
                 failed = True
                 results.append({"id": step_id, "label": label, "status": "ng", "message": failure.message, "action": failure.action})
@@ -191,22 +202,23 @@ def _check_sqlite(state):
     return "開けます。"
 
 
-def _check_table(state, table_name, field_mappings):
+def _check_table(state, table_name, model_settings):
     conn = state["conn"]
     try:
         exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type IN ('table', 'view') AND name = ?", (table_name,)).fetchone()
         if not exists:
             raise StepFailed("schema の tableName のテーブルがありません。",
                              "読み込み先が正しいか、schema.local.json の tableName を確認してください。")
-        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({quote_identifier(table_name)})")}
+        columns = [row[1] for row in conn.execute(f"PRAGMA table_info({quote_identifier(table_name)})")]
     except sqlite3.Error:
         raise StepFailed("テーブルの情報を読めません。", "共有データの管理者に、ファイルの状態を確認してください。") from None
-    missing = [logical for logical, physical in field_mappings.items() if physical not in columns]
+    if not columns:
+        raise StepFailed("テーブルに列がありません。", "読み込み先が正しいか確認してください。")
+    missing = missing_key_columns(model_settings, columns)
     if missing:
-        names = "、".join(missing[:8]) + (f" ほか {len(missing) - 8} 項目" if len(missing) > 8 else "")
-        raise StepFailed(f"使う列が {len(missing)} 個ありません（{names}）。",
-                         "読み込み先が正しいか、schema.local.json の columns を確認してください。")
-    return f"テーブルと、役割のある列 {len(field_mappings)} 個がそろっています（列は全部で {len(columns)} 個）。"
+        return ("warn", f"テーブルはあります（列は {len(columns)} 個）。1 件を決める列（{'、'.join(missing)}）はありません。",
+                "保存してデータを更新したあと、画面左の「データ」→「1 件を決める列」で選んでください。")
+    return f"テーブルと、1 件を決める列がそろっています（列は全部で {len(columns)} 個）。"
 
 
 def _check_rows(state, table_name):
@@ -231,7 +243,7 @@ def _readonly_uri(path):
 ```python
 """読み込み先（共有 SQLite のパス）の確認・接続テスト・変更。
 
-変更の流れ：接続テスト（すべて ○ のときだけ次へ）→ config.local.json の dataSource.sourcePath に保存
+変更の流れ：接続テスト（× がないときだけ次へ。△ は保存してから直せる）→ config.local.json の dataSource.sourcePath に保存
             → 設定を読み直して検証 → 動いている設定を差し替え → キャッシュを作り直す。
 読み直しで誤りが出たら、保存を取り消して元の設定のまま動かす。
 ログにはパスを残さない（段階の id・結果・件数だけ）。
@@ -240,8 +252,8 @@ def _readonly_uri(path):
 import os
 
 from .errors import AppError
-from .settings import SettingsError, load_settings
-from .settings.local_writer import local_file, restore_backup, set_local_value
+from .settings.local_writer import local_file
+from .settings_updater import file_label, save_local_values
 from .source_check import check_source, normalize_path
 
 SOURCE_KEY = ("dataSource", "sourcePath")
@@ -253,17 +265,13 @@ class SourceService:
         self.app_root = app_root
         self.local_dir = local_dir or os.path.join(app_root, "config", "local")
 
-    def _label(self, path):
-        relative = os.path.relpath(path, self.app_root)
-        return path if relative.startswith("..") else relative.replace("\\", "/")
-
     def describe(self):
         config = self.context.config
         return {
             "success": True,
             "sourcePath": config.source_path,
             "editable": True,
-            "localFile": self._label(local_file(self.local_dir, "config")),
+            "localFile": file_label(self.app_root, local_file(self.local_dir, "config")),
         }
 
     def test(self, payload):
@@ -273,7 +281,7 @@ class SourceService:
             path = config.source_path
         if not isinstance(path, str) or len(path) > 1024:
             raise AppError("INVALID_REQUEST", "sourcePath must be a string up to 1024 chars")
-        result = check_source(path, config.table_name, config.field_mappings, self.app_root)
+        result = check_source(path, config.table_name, config.model, self.app_root)
         self.context.logger.info(
             "source check ok=%s steps=%s", result["ok"],
             ",".join(f"{step['id']}:{step['status']}" for step in result["steps"]),
@@ -286,23 +294,9 @@ class SourceService:
             return dict(checked, saved=False, message="接続テストで × があるため、保存していません。")
 
         new_path = normalize_path(payload.get("sourcePath"))
-        target = local_file(self.local_dir, "config")
-        existed = os.path.isfile(target)
-        try:
-            set_local_value(self.local_dir, "config", SOURCE_KEY, new_path)
-        except (OSError, ValueError) as exc:
-            raise AppError("SETTINGS_WRITE_FAILED", f"write failed: {type(exc).__name__}") from exc
-        try:
-            config = load_settings(self.app_root, self.local_dir)
-        except SettingsError as error:
-            restore_backup(self.local_dir, "config", existed)
-            reasons = " / ".join(f"{issue.path}：{issue.reason}" for issue in error.issues if issue.level == "error")
-            raise AppError("SETTINGS_WRITE_FAILED", "reload failed",
-                           user_message=f"保存すると設定に誤りが出るため、元に戻しました（{reasons}）。") from error
-
-        self._use_config(config)
+        target = save_local_values(self.context, self.app_root, self.local_dir, "config", {SOURCE_KEY: new_path})
         self.context.logger.info("source updated rows=%s", checked["rowCount"])
-        response = dict(checked, saved=True, localFile=self._label(target))
+        response = dict(checked, saved=True, localFile=file_label(self.app_root, target))
         try:
             refreshed = self.context.cache_service.refresh()
             response.update(refreshed=True, refreshRowCount=refreshed["rowCount"],
@@ -310,12 +304,6 @@ class SourceService:
         except AppError as error:
             response.update(refreshed=False, message=f"読み込み先は保存しましたが、データの更新に失敗しました：{error.user_message}")
         return response
-
-    def _use_config(self, config):
-        """動いている設定を差し替える。読み込み先が変わったら、前の読み込み先のキャッシュは使わない。"""
-        self.context.config = config
-        self.context.cache_service.use_config(config)
-        self.context.lot_service.config = config
 ```
 
 `python/tools/make_dummy_db.py`
@@ -324,18 +312,19 @@ class SourceService:
 """動作確認用のダミー共有 SQLite と、それを指す上書き設定（config/dummy/）を作る。
 
   config/dummy/config.local.json … 共有 SQLite のパスだけ
-  config/dummy/schema.local.json … テーブル名と、役割のある列の DB の列名だけ
+  config/dummy/schema.local.json … テーブル名と、別名（論理名 → DB の列名）だけ
   config/dummy/view.local.json   … 隠す列（UPDATED_AT）だけ
 
 実データは使わない。列は python/tools/sample_columns.json（画面だけで試すモードと共通）の順に作る。
-役割のある列は日本語の列名、ほかの列は英字の列名にしてあり、DB の列名がそのまま表示されることと、
+別名のある列は日本語の列名、ほかの列は英字の列名にしてあり、DB の列名がそのまま表示されることと、
 schema の columns（論理名 → DB の列名）が効いていることを確かめられる。
 
 使い方:
     python python/tools/make_dummy_db.py                    … 正常なダミー（ロット 2,500 件・BOX 約 5,000 件）
     python python/tools/make_dummy_db.py --lots 50000       … 大量データ
     python python/tools/make_dummy_db.py --variant corrupt  … 壊れたファイル（異常系の確認）
-        variant: normal / missing-table / missing-column / corrupt
+        variant: normal / missing-table / missing-key / corrupt
+        missing-key … 1 件を決める列（BOX番号）がない似た DB。画面で列を選び直す流れを確かめる
     python python/tools/make_dummy_db.py --if-missing       … すでにあれば何もしない
 起動: python python/run_server.py --local-dir config/dummy
 """
@@ -358,8 +347,8 @@ SCHEMA_PATH = os.path.join(DUMMY_DIR, "schema.local.json")
 VIEW_PATH = os.path.join(DUMMY_DIR, "view.local.json")
 SEED = 20261011
 
-# missing-column の確認で消す論理項目
-DROP_FOR_MISSING = "cfStatus"
+# missing-key の確認で消す列（1 件を決める列の 2 つ目）
+DROP_FOR_MISSING = "boxNo"
 
 MATERIALS = ["A1100", "A3003", "A5052", "A6061", "A6063", "A7075"]
 TEMPERS = ["O", "H14", "H24", "H32", "T5", "T6", "T651"]
@@ -457,7 +446,7 @@ def write_database(path, rows, table, columns, variant):
             fp.write(b"this is not a sqlite database" * 100)
         return
 
-    kept = [c for c in columns if not (variant == "missing-column" and c[2] == DROP_FOR_MISSING)]
+    kept = [c for c in columns if not (variant == "missing-key" and c[2] == DROP_FOR_MISSING)]
     table_name = "t_other" if variant == "missing-table" else table
     names = [physical for _, physical, _ in kept] + ["UPDATED_AT"]
     lot_column = next(physical for _, physical, role in columns if role == "lotNo")
@@ -494,7 +483,7 @@ def write_config(table, columns):
 def main():
     parser = argparse.ArgumentParser(description="ダミーの共有 SQLite を作る")
     parser.add_argument("--lots", type=int, default=2500, help="ロットの数（1 ロットに BOX 1〜3 件）")
-    parser.add_argument("--variant", choices=["normal", "missing-table", "missing-column", "corrupt"], default="normal")
+    parser.add_argument("--variant", choices=["normal", "missing-table", "missing-key", "corrupt"], default="normal")
     parser.add_argument("--if-missing", action="store_true")
     args = parser.parse_args()
 
@@ -793,8 +782,11 @@ if __name__ == "__main__":
 """画面だけで試すモード（index.html を直接開いたとき）用の表示定義を、公開サンプルから作り直す。
 
 file:// で開いた画面は JSON ファイルを読めないため、config/sample/schema.sample.json と
-view.sample.json の論理情報を src/js/sample/sample-view.js に書き写して使う。
-表示する列（columns）は、ダミーと共通の列の一覧 python/tools/sample_columns.json から作る（実データとは無関係）。
+view.sample.json の設定を、本物と同じ決まり（column_model.build_model）で表示定義にして
+src/js/sample/sample-view.js に書き写す。
+DB の列は、ダミーと共通の列の一覧 python/tools/sample_columns.json を使う（実データとは無関係）。
+別名（schema.columns）の DB の列名は sample_columns.json の role から、日付の列は名前が Date で終わる列とする
+（サンプルデータ・ダミーデータは、その列に日付を入れる）。
 サンプルの view / schema を変えたら、このスクリプトを実行する（テストで一致を確かめている）。
 
 使い方: python python/tools/sync_sample_view.py
@@ -807,8 +799,9 @@ import sys
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(APP_ROOT, "python"))
 
-from data_search.column_catalog import build_catalog, catalog_version  # noqa: E402
-from data_search.settings import public_view_of  # noqa: E402
+from data_search.column_catalog import DbColumn  # noqa: E402
+from data_search.column_model import build_model  # noqa: E402
+from data_search.settings import model_settings_of  # noqa: E402
 from data_search.settings.defaults import BUILTIN_DEFAULTS  # noqa: E402
 from data_search.settings.merge import fill_defaults  # noqa: E402
 
@@ -818,7 +811,7 @@ OUTPUT = os.path.join(APP_ROOT, "src", "js", "sample", "sample-view.js")
 
 TEMPLATE = """/* =========================================================
    画面だけで試すモード用の表示定義（自動生成。手で直さない）
-   元: config/sample/view.sample.json と schema.sample.json の論理情報、python/tools/sample_columns.json（列）
+   元: config/sample/view.sample.json と schema.sample.json、python/tools/sample_columns.json（DB の列）
    作り直し: python python/tools/sync_sample_view.py
    ========================================================= */
 (function () {{
@@ -830,7 +823,8 @@ TEMPLATE = """/* =========================================================
 """
 
 
-def main():
+def build_sample_view():
+    """公開サンプルの設定と sample_columns.json から、画面へ渡す表示定義（get_view_config と同じ形）を作る。"""
     with open(os.path.join(SAMPLE_DIR, "schema.sample.json"), encoding="utf-8") as fp:
         schema = json.load(fp)
     with open(os.path.join(SAMPLE_DIR, "view.sample.json"), encoding="utf-8") as fp:
@@ -840,10 +834,14 @@ def main():
     view = fill_defaults(view, BUILTIN_DEFAULTS["view"])
     with open(SAMPLE_COLUMNS, encoding="utf-8") as fp:
         sample_columns = json.load(fp)["columns"]
-    mappings = {c["role"]: c["name"] for c in sample_columns if "role" in c}
-    catalog = build_catalog([c["name"] for c in sample_columns], {name: mappings[name] for name in schema["columns"]})
-    data = dict(public_view_of(schema, view), columns=[c.public() for c in catalog], columnsVersion=catalog_version(catalog))
-    text = json.dumps(data, ensure_ascii=False, indent=2)
+    physical = {c["role"]: c["name"] for c in sample_columns if "role" in c}
+    schema["columns"] = {name: physical[name] for name in schema["columns"] if name in physical}
+    catalog = tuple(DbColumn(c["name"], c.get("role", c["name"]).endswith("Date")) for c in sample_columns)
+    return build_model(model_settings_of(schema, view), catalog).public()
+
+
+def main():
+    text = json.dumps(build_sample_view(), ensure_ascii=False, indent=2)
     with open(OUTPUT, "w", encoding="utf-8", newline="\n") as fp:
         fp.write(TEMPLATE.format(json=text))
     print(f"書き出しました: {OUTPUT}")
@@ -886,8 +884,12 @@ if __name__ == "__main__":
   const { store, search, samples, tags } = app;
   const before = { samples: samples.loadedIds(), tags: store.get().tags.items.slice(), filters: store.get().filters };
   const result = () => store.get().search.result;
-  const searchFor = async (searchType, keyword, matchMode) => {
-    search.setQuery({ searchType, keyword, matchMode: matchMode || 'partial' });
+  const col = window.DS.sample.columnOf; // 論理名 → DB の列名（画面の列の id）
+  const LOT = col('lotNo');
+  const STATUS = col('cfStatus');
+  const CUSTOMER = col('customerName');
+  const searchFor = async (keyword, matchMode) => {
+    search.setQuery({ keyword, matchMode: matchMode || 'partial' });
     await search.run({ page: 1 });
     return result();
   };
@@ -908,25 +910,43 @@ if __name__ == "__main__":
     const dates = result().items.map((item) => item[sortKey]);
     check('既定の並べ替え（view の defaultSort）の順に並ぶ', dates.every((date, i) => i === 0 || dates[i - 1] <= date), sortKey);
 
-    // ── 番号の検索（任意） ──
-    let r = await searchFor('lotNo', 'LOT-2026-00012', 'exact');
+    // ── 番号の検索（任意。探す列は 1 つ） ──
+    check('探す列は 1 件を決める列の 1 つ目', window.DS.domain.searchField().id === LOT && document.querySelector('.search__column').textContent.includes(LOT));
+    let r = await searchFor('LOT-2026-00012', 'exact');
     const boxes = r.totalCount;
-    check('完全一致でそのロットの BOX だけが出る', boxes >= 1 && boxes <= 3 && r.items.every((item) => item.lotNo === 'LOT-2026-00012'), `${boxes} 件`);
-    r = await searchFor('lotNo', 'ｌｏｔ－２０２６－０００１２', 'exact');
+    check('完全一致でそのロットの BOX だけが出る', boxes >= 1 && boxes <= 3 && r.items.every((item) => item[LOT] === 'LOT-2026-00012'), `${boxes} 件`);
+    r = await searchFor('ｌｏｔ－２０２６－０００１２', 'exact');
     check('全角・小文字でも見つかる', r.totalCount === boxes);
-    r = await searchFor('lotNo', 'NOTHING-0', 'partial');
+    r = await searchFor('NOTHING-0', 'partial');
     check('0 件も正常に表示する', r.totalCount === 0 && document.querySelector('.empty').hidden === false);
     await search.clearKeyword();
     check('入力を消すと一覧に戻る', result().totalCount === total && !store.get().search.request.keyword);
 
-    // ── 絞り込み ──
-    await search.setFilter('cfStatus', { type: 'values', values: ['仕掛中'] });
+    // ── 絞り込み（どの列でも） ──
+    await search.setFilter(STATUS, { type: 'values', values: ['仕掛中'] });
     const wip = result().totalCount;
-    check('状態で絞り込める', wip > 0 && wip < total && result().items.every((item) => item.cfStatus === '仕掛中'), `${wip} 件`);
-    await search.setFilter('customerName', { type: 'values', values: ['架空商事'] });
-    check('取引先名でも絞り込める（かつ）', result().items.every((item) => item.cfStatus === '仕掛中' && item.customerName === '架空商事'), `${result().totalCount} 件`);
-    const values = await app.api.call('get_filter_values', { field: 'cfStatus', filters: store.get().filters });
+    check('状態で絞り込める', wip > 0 && wip < total && result().items.every((item) => item[STATUS] === '仕掛中'), `${wip} 件`);
+    await search.setFilter(CUSTOMER, { type: 'values', values: ['架空商事'] });
+    check('取引先名でも絞り込める（かつ）', result().items.every((item) => item[STATUS] === '仕掛中' && item[CUSTOMER] === '架空商事'), `${result().totalCount} 件`);
+    const values = await app.api.call('get_filter_values', { field: STATUS, filters: store.get().filters });
     check('値の一覧に件数が出る（自分の条件は外して数える）', values.values.length > 1);
+    check('見出しで絞り込み中の列に印が付く', document.querySelector(`.grid thead th[data-field="${CSS.escape(STATUS)}"]`).classList.contains('is-filtered'));
+    const other = window.DS.domain.listFields().find((field) => !field.role && field.filter === 'values');
+    document.querySelector(`.grid thead th[data-field="${CSS.escape(other.id)}"] [data-filter]`).click();
+    await wait(400);
+    const pop = document.querySelector('.col-filter');
+    check('見出しの漏斗で、役割のない列の絞り込みが開く', !pop.hidden && pop.textContent.includes(other.label), other.label);
+    const box = pop.querySelector('.value-list input[type="checkbox"]');
+    box.click();
+    await wait(400);
+    check('小窓で選ぶとすぐ一覧に反映される', Boolean(store.get().filters[other.id]) && result().items.every((item) => item[other.id] === store.get().filters[other.id].values[0]));
+    app.columnFilter.close(false);
+    check('小窓を閉じられる', pop.hidden);
+    const due = window.DS.domain.fields.get(col('factoryDeliveryDate'));
+    check('日付の列は値から判定し、日付の範囲で絞り込む', due.filter === 'date');
+    const matched = await app.api.call('get_filter_values', { field: LOT, match: 'lot-2026-0001' });
+    check('値が多い列は、文字でデータ全体から探せる', matched.values.length > 0 && matched.values.every((entry) => entry.value.toLowerCase().includes('lot-2026-0001')), `${matched.values.length} 個`);
+    await search.clearFilter(other.id);
 
     // ── タグ ──
     const saved = tags.save('確認用タグ');
@@ -936,7 +956,7 @@ if __name__ == "__main__":
     check('「すべて」で絞り込みを外せる', result().totalCount === total && store.get().tags.activeId === null);
     await tags.apply(saved.tag.id);
     check('タグを押すと同じ条件に戻る', Object.keys(store.get().filters).length === 2 && store.get().tags.activeId === saved.tag.id);
-    await search.setFilter('cfStatus', { type: 'values', values: ['仕掛中', '保留'] });
+    await search.setFilter(STATUS, { type: 'values', values: ['仕掛中', '保留'] });
     check('条件を変えると「変更あり」になる', tags.isModified() === true);
     tags.remove(saved.tag.id);
     check('タグを消せる', !store.get().tags.items.some((tag) => tag.id === saved.tag.id));
@@ -964,8 +984,14 @@ if __name__ == "__main__":
     r = result();
     check('同じロット番号の 3 BOX が出る', r.totalCount === 3);
     await search.select(r.items[2]);
-    check('ロット番号＋BOX番号で 1 件に決まる', store.get().selection.item.boxNo === r.items[2].boxNo);
+    check('ロット番号＋BOX番号で 1 件に決まる', store.get().selection.item[col('boxNo')] === r.items[2][col('boxNo')]);
     search.closeDetail();
+
+    // ── 1 件を決める列の確認（保存すると画面を読み込み直すため、確かめるだけ） ──
+    let keyCheck = await app.api.call('check_record_key', { recordKey: [LOT] });
+    check('ロット番号だけでは重なりを知らせる', keyCheck.unique === false && keyCheck.example && keyCheck.example.count === 3, `${keyCheck.duplicateGroups} 組`);
+    keyCheck = await app.api.call('check_record_key', { recordKey: [LOT, col('boxNo')] });
+    check('ロット番号＋BOX番号なら 1 件に決まる', keyCheck.unique === true);
 
     // ── 更新の失敗 ──
     await samples.load('refresh-failure');

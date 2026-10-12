@@ -12,9 +12,25 @@
   const NAME_MAX = 30;
   const TAGS_MAX = 50;
 
+  /**
+   * 保存したタグを読む。以前の形（別名＝論理名）で保存した列の名前は、DB の列名に読み替えて保存し直す。
+   * 今の DB にない列の条件は消さずに残す（別の読み込み先へ戻したときに使えるように）。押したときに外す。
+   */
   DS.controllers.loadTags = () => {
-    const items = DS.core.storage.read(STORAGE_KEY, []);
-    return Array.isArray(items) ? items.filter(isValidTag) : [];
+    const stored = DS.core.storage.read(STORAGE_KEY, []);
+    const items = Array.isArray(stored) ? stored.filter(isValidTag) : [];
+    let migrated = false;
+    const result = items.map((tag) => {
+      const filters = {};
+      Object.entries(tag.filters).forEach(([fieldId, spec]) => {
+        const id = DS.domain.migrateId(fieldId);
+        if (id !== fieldId) migrated = true;
+        filters[id] = spec;
+      });
+      return Object.assign({}, tag, { filters });
+    });
+    if (migrated) DS.core.storage.write(STORAGE_KEY, result);
+    return result;
   };
 
   /** 知らない項目や壊れた条件は捨てる（設定ファイルを手で直した場合などに備える） */
@@ -22,9 +38,11 @@
     return tag && typeof tag.id === 'string' && typeof tag.name === 'string' && tag.filters && typeof tag.filters === 'object';
   }
 
+  /** 今の列で使える条件だけを残す（以前の形の列名は読み替える。ない列・種類の違う条件は外す） */
   function sanitizeFilters(filters) {
     const result = {};
-    Object.entries(filters || {}).forEach(([fieldId, spec]) => {
+    Object.entries(filters || {}).forEach(([name, spec]) => {
+      const fieldId = DS.domain.migrateId(name);
       const field = DS.domain.fields.get(fieldId);
       if (field && field.filter && spec && spec.type === field.filter) result[fieldId] = spec;
     });
@@ -119,8 +137,11 @@
         return search.setFilters({});
       }
       const tag = items().find((item) => item.id === id);
+      const filters = sanitizeFilters(JSON.parse(JSON.stringify(tag.filters)));
+      const skipped = Object.keys(tag.filters).length - Object.keys(filters).length;
+      if (skipped > 0) toast.show({ tone: 'warning', message: `タグ「${tag.name}」の条件のうち ${skipped} 列は、今のデータにないため外して絞り込みました` });
       store.merge('tags', { activeId: id });
-      return search.setFilters(JSON.parse(JSON.stringify(tag.filters)));
+      return search.setFilters(filters);
     }
 
     function move(id, delta) {

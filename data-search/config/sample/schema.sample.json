@@ -5,6 +5,7 @@
     "lotNo",
     "boxNo"
   ],
+  "searchColumn": null,
   "columns": {
     "lotNo": "<LOT_NO_COLUMN>",
     "boxNo": "<BOX_NO_COLUMN>",

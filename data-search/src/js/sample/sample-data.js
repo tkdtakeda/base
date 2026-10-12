@@ -4,9 +4,9 @@
    （日付の絞り込み「今日〜7 日後」などをいつ開いても試せるように）。
    パターンを増やすときは patterns.register() を足すだけでよい。
 
-   行の項目は、表示定義の列（DS.sampleView.columns の id）すべてを埋める。
-   主な項目は値の候補（VALUE_RULES）から、それ以外は項目名の形（〜Date・〜Width など）から作る。
-   論理項目が増えても、項目名の形に当てはまればそのままサンプルが作られる。
+   行の項目は、表示定義の列（DS.sampleView.columns の id ＝ DB の列名）すべてを埋める。
+   別名（論理名）のある列は、論理名ごとの値の候補（VALUE_RULES）から、それ以外は列名の形（〜Date・〜Width など）から作る。
+   列が増えても、列名の形に当てはまればそのままサンプルが作られる。
    ========================================================= */
 (function () {
   'use strict';
@@ -112,8 +112,18 @@
     return rule ? rule[1](ctx, rng, field) : `${field}-${rng.int(1, 9)}`;
   }
 
-  function logicalFields() {
-    return ((DS.sampleView && DS.sampleView.columns) || []).map((column) => column.id);
+  /** [DB の列名, 値を作るときの名前（別名があれば論理名）] の並び */
+  function sampleColumns() {
+    const view = DS.sampleView || {};
+    const logicalOf = {};
+    Object.entries(view.aliases || {}).forEach(([logical, physical]) => { logicalOf[physical] = logical; });
+    return (view.columns || []).map((column) => [column.id, logicalOf[column.id] || column.id]);
+  }
+
+  /** 論理名 → DB の列名（サンプルのパターンや確認用スクリプトから、別名で列を指すため） */
+  function columnOf(logical) {
+    const aliases = (DS.sampleView && DS.sampleView.aliases) || {};
+    return aliases[logical] || logical;
   }
 
   /**
@@ -122,7 +132,9 @@
    */
   function buildRows(lotCount, seed, prefix, options) {
     const rng = createRandom(seed);
-    const fields = logicalFields();
+    const columns = sampleColumns();
+    const lotColumn = columnOf('lotNo');
+    const boxColumn = columnOf('boxNo');
     const rows = [];
     let order = 0;
     let orderLeft = 0;
@@ -149,9 +161,9 @@
         serial += 1;
         const ctx = Object.assign({ serial, box }, lot);
         const row = {};
-        fields.forEach((field) => { row[field] = valueOf(field, ctx, rng); });
-        row.lotNo = lotNo;
-        row.boxNo = pad(box, 2);
+        columns.forEach(([id, name]) => { row[id] = valueOf(name, ctx, rng); });
+        row[lotColumn] = lotNo;
+        row[boxColumn] = pad(box, 2);
         rows.push(row);
       }
     }
@@ -180,7 +192,7 @@
       const lots = ['試作-α-001', '試作-β-002', 'LOT_100%-A', 'LOT#5/特急', 'LOT(再)-12', "LOT'Q\"-1", 'LOT-全角確認-01', 'lot-lower-01'];
       return buildRows(lots.length, 7001, { year: 'SP', short: 'SP', cast: '77' }, { lotNo: (i) => lots[i - 1], boxes: 1 });
     },
-    demoQuery: { searchType: 'lotNo', keyword: 'ＬＯＴ＿１００', matchMode: 'partial' },
+    demoQuery: { keyword: 'ＬＯＴ＿１００', matchMode: 'partial' },
   });
 
   patterns.register({
@@ -191,7 +203,7 @@
     title: '1 ロットに BOX が複数',
     description: '同じロット番号で BOX 番号が違う 3 件。詳細は「ロット番号＋BOX番号」で 1 件に決まります。',
     build: () => buildRows(1, 7101, { year: 'DUP', short: 'DP', cast: '88' }, { lotNo: () => 'LOT-DUP-0001', boxes: 3 }),
-    demoQuery: { searchType: 'lotNo', keyword: 'LOT-DUP-0001', matchMode: 'exact' },
+    demoQuery: { keyword: 'LOT-DUP-0001', matchMode: 'exact' },
   });
 
   patterns.register({
@@ -203,7 +215,7 @@
     description: '標準のデータを読み込み、存在しない番号で完全一致の検索をします。',
     requires: ['standard'],
     build: () => [],
-    demoQuery: { searchType: 'lotNo', keyword: 'LOT-9999-99999', matchMode: 'exact' },
+    demoQuery: { keyword: 'LOT-9999-99999', matchMode: 'exact' },
   });
 
   patterns.register({
@@ -226,13 +238,14 @@
     title: '大量のデータ',
     description: 'ロット 10,000 件（BOX 約 20,000 件）。検索とページ送りの速さを確かめられます。',
     build: () => buildRows(10000, 4004, { year: '2025', short: '25', cast: '93' }),
-    demoQuery: { searchType: 'orderNo', keyword: 'ORD-25', matchMode: 'partial' },
+    demoQuery: { keyword: 'LOT-2025-0001', matchMode: 'partial' },
   });
 
   DS.sample = {
     groups,
     patterns,
     createRandom,
+    columnOf,
     /** requires を含めて、読み込むべきパターンの id をそろえる */
     expand(ids) {
       const result = [];

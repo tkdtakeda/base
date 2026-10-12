@@ -11,6 +11,7 @@
 | 18_readme.md | 18：README の全文 |
 | appendix-backend-*.md | 付録：そのほかのバックエンド・ツール・設定の修正ファイル全文 |
 | appendix-frontend-*.md | 付録：画面側の修正ファイル全文 |
+| appendix-backend-3.md / appendix-frontend-5.md | 付録：その後の変更（1 件を決める列を画面で選ぶ・全列を見出しから絞り込む）で足した・書き直したファイルの全文 |
 
 依頼書「設定ファイルおよびフォルダ構成の見直し依頼」の 12 章（成果物 1〜18）に対応する。
 コードと JSON は、このリポジトリの実ファイルから自動で書き写したもの（省略なし）。
@@ -100,6 +101,7 @@ data-search/
     "lotNo",
     "boxNo"
   ],
+  "searchColumn": null,
   "columns": {
     "lotNo": "<LOT_NO_COLUMN>",
     "boxNo": "<BOX_NO_COLUMN>",
@@ -127,49 +129,7 @@ data-search/
 
 ```json
 {
-  "searchFields": [
-    "lotNo",
-    "boxNo",
-    "inspectionNo",
-    "castingNo",
-    "orderNo",
-    "customerName"
-  ],
   "hiddenColumns": [],
-  "filters": [
-    {
-      "field": "manufacturingMaterial",
-      "type": "values"
-    },
-    {
-      "field": "manufacturingTemper",
-      "type": "values"
-    },
-    {
-      "field": "customerName",
-      "type": "values"
-    },
-    {
-      "field": "remainingEquipmentCourse",
-      "type": "values"
-    },
-    {
-      "field": "lastActualEquipmentName",
-      "type": "values"
-    },
-    {
-      "field": "wipCategory",
-      "type": "values"
-    },
-    {
-      "field": "holdCategory",
-      "type": "values"
-    },
-    {
-      "field": "cfStatus",
-      "type": "values"
-    }
-  ],
   "defaultSort": {
     "field": "factoryDeliveryDate",
     "order": "asc"

@@ -13,7 +13,9 @@
 検証で誤りが見つかれば SettingsError（すべての誤りを持つ）。注意（未知のキーなど）は warnings に入れて続ける。
 
 列の考え方：表示する列は DB のテーブルから自動で読み取る（column_catalog.py）。設定に書くのは
-役割のある列（1 件を決める・検索・絞り込み・並べ替え・日付）の論理名と DB の列名の対応だけ。
+1 件を決める列（recordKey）・番号で探す列（searchColumn）などの役割だけ。名前は DB の列名か、
+schema.columns に書いた別名（論理名）で書く。DB と照らし合わせるのは実行時（column_model.py）で、
+DB にない名前があっても起動は止めない（画面の「データ」で選び直せる）。
 パスとテーブル名は画面に渡さない。列名は表示名として画面に出す（DB の列名をそのまま表示するため）。
 相対パスはアプリのルート（data-search/）を基準に解決する。
 """
@@ -25,7 +27,7 @@ from dataclasses import dataclass
 from ..errors import AppError
 from .defaults import BUILTIN_DEFAULTS
 from .merge import deep_merge, fill_defaults, type_name
-from .validation import Issue, SettingSource, validate_config, validate_schema, validate_view
+from .validation import Issue, SettingSource, is_placeholder, validate_config, validate_schema, validate_view
 
 KINDS = ("config", "schema", "view")
 # 新しいキー（論理項目）を足してよい場所。ここ以外のサンプルにないキーは「未知のキー」
@@ -37,9 +39,11 @@ OPEN_MAPS = {
 # 以前の形の設定にあった、今は使わないキー（未知のキーとは別の文面で知らせる）
 OBSOLETE_KEYS = {
     "view": {
-        "listColumns": "一覧の列は DB から自動で表示します。検索できる項目は searchFields、隠す列は hiddenColumns に書いてください。",
+        "listColumns": "一覧の列は DB から自動で表示します。隠す列は hiddenColumns に書いてください。",
         "detailFields": "詳細には全項目を出すため使いません。",
         "detailGroups": "詳細には全項目を出すため使いません。",
+        "searchFields": "番号で探す列は 1 つにしました。schema.searchColumn に書くか、画面左の「データ」→「1 件を決める列」で選んでください。",
+        "filters": "どの列でも、一覧の見出しの漏斗（じょうご）のアイコンから絞り込めるため使いません。",
     },
 }
 
@@ -53,15 +57,32 @@ class SettingsError(AppError):
 
 
 @dataclass(frozen=True)
-class DataModel:
-    """役割のある列の決まり（schema と view から作る。ソースコードには項目名を書かない）。
-    表示するほかの列は、キャッシュのテーブルから column_catalog.py が読み取る。"""
-    fields: tuple          # 役割のある列の論理名（schema.columns の順）
-    searchable: tuple      # 番号で探せる項目（view.searchFields）
-    filters: dict          # 絞り込みの項目 → "values" / "date"（view.filters）
-    date_fields: tuple     # 日付の列（schema.types。論理名か、役割のない列なら DB の列名）
-    record_key: tuple      # 1 件を特定する項目（schema.recordKey）
-    default_sort: tuple    # (項目, "asc" / "desc")（view.defaultSort）
+class ModelSettings:
+    """列の役割の設定。名前は DB の列名か別名（schema.columns の論理名）。
+    DB と照らし合わせて実際の列を決めるのは column_model.build_model（キャッシュのテーブルを読んだあと）。"""
+    aliases: dict          # 別名 → DB の列名（schema.columns。仮の値・空は除く）
+    record_key: tuple      # 1 件を決める列（schema.recordKey）
+    search_column: object  # 番号で探す列（schema.searchColumn。null なら recordKey の 1 つ目）
+    types: dict            # 列 → "date" / "text"（schema.types）
+    default_sort: tuple    # (列, "asc" / "desc")（view.defaultSort）
+    hidden: tuple          # 最初は隠しておく列（view.hiddenColumns）
+    fields: dict           # 列ごとの表示の補助（view.fields）
+
+
+def model_settings_of(schema, view):
+    """マージ後の schema / view から ModelSettings を作る（起動時と、画面だけで試すモードの生成で共通）。"""
+    aliases = {name: physical for name, physical in schema["columns"].items()
+               if isinstance(physical, str) and physical.strip() and not is_placeholder(physical)}
+    sort = view["defaultSort"] or {}
+    return ModelSettings(
+        aliases=aliases,
+        record_key=tuple(schema["recordKey"]),
+        search_column=schema["searchColumn"] or None,
+        types=dict(schema["types"]),
+        default_sort=(sort.get("field") or None, sort.get("order") or "asc"),
+        hidden=tuple(view["hiddenColumns"]),
+        fields=dict(view["fields"]),
+    )
 
 
 @dataclass(frozen=True)
@@ -72,7 +93,6 @@ class AppConfig:
     source_path: str
     cache_path: str
     table_name: str
-    field_mappings: dict
     temporary_extension: str
     keep_previous_on_failure: bool
     default_match_mode: str
@@ -84,28 +104,9 @@ class AppConfig:
     server_port: int
     open_browser: bool
     base_dir: str
-    model: DataModel
-    view: dict             # マージ後の view（論理情報だけ）
+    model: ModelSettings
     sources: tuple         # (種類, サンプルのファイル, ローカルのファイル or None, 上書きした項目数)
     warnings: tuple        # Issue（level="warning"）
-    public: dict           # 画面へ渡す表示定義（public_view_of の結果）
-
-    def public_view(self):
-        return self.public
-
-
-def public_view_of(schema, view):
-    """画面へ渡す表示定義（列の一覧 columns は get_view_config でキャッシュから足す）。テーブル名・パスは含めない。"""
-    return {
-        "roleFields": list(schema["columns"]),
-        "recordKey": list(schema["recordKey"]),
-        "types": {name: kind for name, kind in schema["types"].items() if kind == "date"},
-        "searchFields": list(view["searchFields"]),
-        "hiddenColumns": list(view["hiddenColumns"]),
-        "fields": view["fields"],
-        "filters": view["filters"],
-        "defaultSort": view["defaultSort"],
-    }
 
 
 # ── ファイル ─────────────────────────────────────────────
@@ -175,7 +176,8 @@ def _load_pair(kind, sample_dir, local_dir, app_root, issues, warnings):
         shown = "、".join(names[:8]) + (f" ほか {len(names) - 8} 項目" if len(names) > 8 else "")
         warnings.append(Issue("warning", local_label, "columns.<役割のない項目>",
                               f"{len(names)} 項目は役割がないため使っていません（{shown}）。列は DB から自動で表示します。",
-                              f"消してかまいません。columns には {sample_label} にある論理名だけを書いてください。"))
+                              f"消してかまいません。columns には {sample_label} にある論理名だけを書いてください"
+                              "（1 件を決める列などは、DB の列名のまま recordKey・searchColumn に書けます）。"))
     for path in merged.unknown:
         if path in extra_columns:
             continue
@@ -219,14 +221,6 @@ def load_settings(app_root, local_dir=None):
     if issues:
         raise SettingsError(issues + warnings)
 
-    model = DataModel(
-        fields=tuple(schema["columns"]),
-        searchable=tuple(view["searchFields"]),
-        filters={item["field"]: item["type"] for item in view["filters"]},
-        date_fields=tuple(name for name, kind in schema["types"].items() if kind == "date"),
-        record_key=tuple(schema["recordKey"]),
-        default_sort=(view["defaultSort"]["field"], view["defaultSort"]["order"]),
-    )
     sources = tuple(
         (src.kind, src.sample_label, src.local_label if src.local_loaded else None, len(src.merge.overridden) + len(src.merge.added))
         for src in (config_src, schema_src, view_src)
@@ -238,7 +232,6 @@ def load_settings(app_root, local_dir=None):
         source_path=_resolve(app_root, config["dataSource"]["sourcePath"]),
         cache_path=_resolve(app_root, config["dataSource"]["cachePath"]),
         table_name=schema["tableName"],
-        field_mappings=dict(schema["columns"]),
         temporary_extension=config["cache"]["temporaryExtension"],
         keep_previous_on_failure=config["cache"]["keepPreviousOnFailure"],
         default_match_mode=config["search"]["defaultMatchMode"],
@@ -250,15 +243,13 @@ def load_settings(app_root, local_dir=None):
         server_port=config["devServer"]["port"],
         open_browser=config["devServer"]["openBrowser"],
         base_dir=app_root,
-        model=model,
-        view=view,
+        model=model_settings_of(schema, view),
         sources=sources,
         warnings=tuple(warnings),
-        public=public_view_of(schema, view),
     )
 
 
-__all__ = ["AppConfig", "DataModel", "SettingsError", "load_settings", "public_view_of", "type_name"]
+__all__ = ["AppConfig", "ModelSettings", "SettingsError", "load_settings", "model_settings_of", "type_name"]
 ```
 
 `python/data_search/settings/__init__.py`
@@ -272,11 +263,11 @@ __all__ = ["AppConfig", "DataModel", "SettingsError", "load_settings", "public_v
     defaults.py   … sample に書かない運用項目の既定値
 """
 
-from .loader import AppConfig, DataModel, SettingsError, load_settings, public_view_of
+from .loader import AppConfig, ModelSettings, SettingsError, load_settings, model_settings_of
 from .merge import deep_merge
 from .validation import Issue
 
-__all__ = ["AppConfig", "DataModel", "Issue", "SettingsError", "deep_merge", "load_settings", "public_view_of"]
+__all__ = ["AppConfig", "Issue", "ModelSettings", "SettingsError", "deep_merge", "load_settings", "model_settings_of"]
 ```
 
 ## 10. 再帰マージ処理のコード全文
@@ -391,14 +382,17 @@ BUILTIN_DEFAULTS = {
         "devServer": {"host": "127.0.0.1", "port": 8765, "openBrowser": True},
     },
     "schema": {
-        # 日付として比べる列（例：{"factoryDeliveryDate": "date"}）。キーは論理名か、役割のない列なら DB の列名
+        # 列の種類（例：{"工場納期": "date"}）。キーは DB の列名か別名。書かなければ値から判定する
         "types": {},
+        # 別名（論理名 → DB の列名）。なくてよい（設定の名前は DB の列名で書ける）
+        "columns": {},
+        # 番号で探す列。null なら recordKey の 1 つ目
+        "searchColumn": None,
     },
     "view": {
         # 列ごとの表示の補助（等幅・コピー・入力例・値の札）。表示名は DB の列名を使うため書かない
         "fields": {},
-        "filters": [],
-        # 最初は隠しておく列（論理名か DB の列名）。各自が画面の「表示列」で変えられる
+        # 最初は隠しておく列（DB の列名か別名）。各自が画面の「表示列」で変えられる
         "hiddenColumns": [],
     },
 }
@@ -412,9 +406,10 @@ BUILTIN_DEFAULTS = {
 """マージ後の設定（config / schema / view）を役割ごとに確かめる。
 
   config … アプリと実行環境。DB 接続に必要なパス（sourcePath / cachePath）はここで確かめる
-  schema … テーブル名と、役割のある列の論理名 → DB の列名。仮の値・空・重複をここで確かめる
-  view   … 検索・絞り込み・並べ替え・隠す列。参照する論理名が schema.columns にあるかをここで確かめる
-（表示する列そのものは DB から自動で読み取るため、設定では確かめない）
+  schema … テーブル名・1 件を決める列・番号で探す列・別名・種類。書き方（空・重複・数）をここで確かめる
+  view   … 並べ替え・隠す列・表示の補助。書き方をここで確かめる
+（列名が DB にあるかは、キャッシュのテーブルを読んでから column_model.py が確かめる。
+  DB にない名前は止めずに画面の「データ」で知らせ、選び直せるようにする）
 
 問題はすべて集めて返す（最初の 1 つで止めない）。1 件ごとに
 「対象ファイル・JSON 上の項目・理由・対応」を持たせ、利用者が直せるようにする。
@@ -428,8 +423,8 @@ from ..fields import MATCH_MODES, SORT_ORDERS
 PLACEHOLDER_PATTERN = re.compile(r"<[^<>]+>")
 LOG_LEVELS = ("debug", "info", "warning", "error")
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost")
-FILTER_TYPES = ("values", "date")
 COLUMN_TYPES = ("text", "date")
+RECORD_KEY_MAX = 3  # 1 件を決める列の数の上限
 BADGE_TONES = ("success", "info", "warning", "danger", "neutral")
 
 
@@ -553,37 +548,36 @@ def validate_schema(schema, src, config):
     elif _blank(table):
         err("tableName", "値が空です。", "実際のテーブル名を設定してください。")
 
-    columns = schema["columns"]
-    if not isinstance(columns, dict) or not columns:
-        err("columns", "論理項目と物理列名の対応がありません。", "{ \"論理名\": \"物理列名\" } の形で設定してください。")
-        return issues
-    for logical, physical in columns.items():
+    # 別名（論理名 → DB の列名）は任意。仮の値のままの別名は使わない（実行時に読み飛ばす）
+    for logical, physical in schema["columns"].items():
         path = f"columns.{logical}"
         if _blank(logical):
             err(path, "論理名が空です。", "論理名を設定してください。")
-        if not isinstance(physical, str):
-            err(path, "物理列名は文字列にしてください。", "\"物理列名\" の形で設定してください。")
-        elif is_placeholder(physical):
-            err(path, f"仮の値（{physical}）のままです。",
-                f"{src.local_label} の columns.{logical} に実際の列名を設定してください。", file=src.local_label)
-        elif not physical.strip():
-            err(path, "物理列名が空です。", "実際の列名を設定してください。")
+        if physical is not None and not isinstance(physical, str):
+            err(path, "DB の列名は文字列にしてください。", "\"DB の列名\" の形で設定してください（使わないならその行を消す）。")
 
     record_key = schema["recordKey"]
     if not record_key:
-        err("recordKey", "1 件を特定する論理項目がありません。", "例：[\"lotNo\", \"castingNo\"]")
+        err("recordKey", "1 件を特定する列がありません。",
+            "DB の列名を 1〜3 個書いてください（例：[\"ロット番号\", \"BOX番号\"]）。画面左の「データ」→「1 件を決める列」でも選べます。")
+    elif len(record_key) > RECORD_KEY_MAX:
+        err("recordKey", f"1 件を特定する列が {len(record_key)} 個あります。", f"{RECORD_KEY_MAX} 個までにしてください。")
     for index, name in enumerate(record_key):
-        if name not in columns:
-            err(f"recordKey[{index}]", f"\"{name}\" は schema.columns に定義されていません。",
-                "columns に論理項目を足すか、recordKey を直してください。")
-    if len(set(record_key)) != len(record_key):
-        err("recordKey", "同じ論理項目が重複しています。", "重複を消してください。")
+        if _blank(name):
+            err(f"recordKey[{index}]", "列の名前が空か、文字列ではありません。", "DB の列名か別名を書いてください。")
+    if len(set(map(str, record_key))) != len(record_key):
+        err("recordKey", "同じ列が重複しています。", "重複を消してください。")
 
-    # types のキーは論理名か、役割のない列なら DB の列名（DB から読み取るため、ここでは有無を確かめない）
+    search_column = schema["searchColumn"]
+    if search_column is not None and _blank(search_column):
+        err("searchColumn", "列の名前が空か、文字列ではありません。",
+            "DB の列名か別名を書くか、null にしてください（null なら recordKey の 1 つ目で探します）。")
+
+    # types のキーは DB の列名か別名（DB から読み取るため、ここでは有無を確かめない）
     for name, kind in schema["types"].items():
         path = f"types.{name}"
         if _blank(name):
-            err(path, "列の名前が空です。", "論理名か DB の列名を書いてください。")
+            err(path, "列の名前が空です。", "DB の列名か別名を書いてください。")
         if kind not in COLUMN_TYPES:
             err(path, f"\"{kind}\" は型として使えません。", "text か date にしてください。")
     return issues
@@ -593,38 +587,18 @@ def validate_schema(schema, src, config):
 
 def validate_view(view, src, schema):
     issues = []
-    columns = schema["columns"]
-    types = schema["types"]
 
     def err(path, reason, action):
         issues.append(Issue("error", src.origin(path), path, reason, action))
 
-    def check_field(path, name):
-        if not isinstance(name, str) or name not in columns:
-            err(path, f"\"{name}\" はマージ後の schema.columns に定義されていません。",
-                "schema 側へ論理項目を追加するか、view 側の field を修正してください。")
-            return False
-        return True
-
     def warn(path, reason, action):
         issues.append(Issue("warning", src.origin(path), path, reason, action))
 
-    searchable = view["searchFields"]
-    if not searchable:
-        err("searchFields", "番号で探せる項目が 1 つもありません。", "少なくとも 1 つの論理名を書いてください（例：[\"lotNo\"]）。")
-    seen = set()
-    for index, name in enumerate(searchable):
-        path = f"searchFields[{index}]"
-        if check_field(path, name):
-            if name in seen:
-                err(path, f"\"{name}\" が searchFields の中で重複しています。", "どちらか一方を消してください。")
-            seen.add(name)
-
     for index, name in enumerate(view["hiddenColumns"]):
         if _blank(name):
-            err(f"hiddenColumns[{index}]", "列の名前が空か、文字列ではありません。", "論理名か DB の列名を書いてください。")
+            err(f"hiddenColumns[{index}]", "列の名前が空か、文字列ではありません。", "DB の列名か別名を書いてください。")
 
-    # fields のキーは論理名か、役割のない列なら DB の列名（DB から読み取るため、ここでは有無を確かめない）
+    # fields のキーは DB の列名か別名（DB から読み取るため、ここでは有無を確かめない）
     unused = []
     for name, options in view["fields"].items():
         path = f"fields.{name}"
@@ -647,24 +621,6 @@ def validate_view(view, src, schema):
             if rule.get("tone") not in BADGE_TONES:
                 err(f"{rule_path}.tone", f"\"{rule.get('tone')}\" は使えません。", " / ".join(BADGE_TONES) + " のいずれかにしてください。")
 
-    seen = set()
-    for index, item in enumerate(view["filters"]):
-        base = f"filters[{index}]"
-        if not isinstance(item, dict):
-            err(base, "{ \"field\": ..., \"type\": ... } の形ではありません。", "形を直してください。")
-            continue
-        field = item.get("field")
-        if check_field(f"{base}.field", field):
-            if field in seen:
-                err(f"{base}.field", f"\"{field}\" が filters の中で重複しています。", "どちらか一方を消してください。")
-            seen.add(field)
-        kind = item.get("type")
-        if kind not in FILTER_TYPES:
-            err(f"{base}.type", f"\"{kind}\" は絞り込みの種類として使えません。", "values か date にしてください。")
-        elif kind == "date" and types.get(field) != "date":
-            err(f"{base}.type", f"\"{field}\" は schema.types で date になっていません。",
-                f"schema の types に \"{field}\": \"date\" を足すか、type を values にしてください。")
-
     # 以前の形の表示名・まとまりは使わない（表示名は DB の列名。まとめて 1 件の注意にする）
     if unused:
         shown = "、".join(unused[:4]) + (f" ほか {len(unused) - 4} 件" if len(unused) > 4 else "")
@@ -672,7 +628,11 @@ def validate_view(view, src, schema):
              "消してかまいません。")
 
     sort = view["defaultSort"]
-    check_field("defaultSort.field", sort.get("field"))
+    if not isinstance(sort, dict):
+        err("defaultSort", "{ \"field\": ..., \"order\": ... } の形ではありません。", "形を直してください。")
+        return issues
+    if sort.get("field") is not None and _blank(sort.get("field")):
+        err("defaultSort.field", "列の名前が空か、文字列ではありません。", "DB の列名か別名を書いてください。")
     if sort.get("order") not in SORT_ORDERS:
         err("defaultSort.order", f"\"{sort.get('order')}\" は使えません。", "asc か desc にしてください。")
     return issues
@@ -702,8 +662,12 @@ from .errors import AppError
 from .query import quote_identifier
 
 
-def validate_cache_file(path, table_name, field_mappings):
-    """SQLite として開けること・表と列がそろっていることを確かめ、行数を返す。"""
+def validate_cache_file(path, table_name):
+    """SQLite として開けること・表があることを確かめ、行数を返す。
+
+    列は確かめない（1 件を決める列などが DB になくても、データは使えるようにして画面で選び直してもらう）。
+    検索では、このファイルから読み取った列（column_catalog）だけを使うため、ない列を参照することはない。
+    """
     try:
         conn = open_readonly(path)
     except sqlite3.Error as exc:
@@ -722,18 +686,6 @@ def validate_cache_file(path, table_name, field_mappings):
         ).fetchone()
         if not exists:
             raise AppError("CACHE_TABLE_MISSING", "required table not found")
-
-        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({quote_identifier(table_name)})")}
-        missing = [logical for logical, physical in field_mappings.items() if physical not in columns]
-        if missing:
-            raise AppError(
-                "CACHE_COLUMN_MISSING",
-                f"missing logical fields: {', '.join(missing)}",
-                user_message=(
-                    f"取得したデータに、schema.local.json の columns で指定した列（{', '.join('columns.' + name for name in missing)}）が"
-                    "ないため、使用しませんでした。列名を確認してください。"
-                ),
-            )
         return conn.execute(f"SELECT COUNT(*) FROM {quote_identifier(table_name)}").fetchone()[0]
     finally:
         conn.close()
@@ -777,6 +729,7 @@ from data_search.errors import AppError  # noqa: E402
 from data_search.http_server import AppContext, create_server  # noqa: E402
 from data_search.logging_setup import setup_logging  # noqa: E402
 from data_search.lot_service import LotService  # noqa: E402
+from data_search.record_service import RecordService  # noqa: E402
 from data_search.settings import SettingsError, load_settings  # noqa: E402
 from data_search.source_service import SourceService  # noqa: E402
 
@@ -808,12 +761,20 @@ def print_issues(issues):
 def print_source_check(result):
     """接続テストの結果を段階ごとに出す（パスは出さない）。"""
     print("  読み込み先の接続テスト:")
-    marks = {"ok": "○", "ng": "×", "skip": "－"}
+    marks = {"ok": "○", "warn": "△", "ng": "×", "skip": "－"}
     for step in result["steps"]:
         print(f"    {marks[step['status']]} {step['label']}：{step['message']}")
         if step["action"]:
             print(f"        対応：{step['action']}")
     print("    （画面左の「データ」→「読み込み先」から、パスを確かめて直せます）")
+
+
+def print_column_notices(model):
+    """DB と設定の食い違い（1 件を決める列がないなど）。止めずに知らせ、画面で選び直してもらう。"""
+    for notice in model.notices:
+        print()
+        print(f"[列の注意] {notice.path}：{notice.reason}")
+        print(f"  対応：{notice.action}")
 
 
 def bind(context, host, port):
@@ -850,10 +811,11 @@ def main():
     cache_service = CacheService(config, logger)
     context = AppContext(config, cache_service, LotService(config, cache_service, logger), logger)
     context.source_service = SourceService(context, APP_ROOT, local_dir)
+    context.record_service = RecordService(context, APP_ROOT, local_dir)
 
     has_cache = os.path.isfile(config.cache_path)
     if has_cache and not cache_service.verify_existing():
-        print("手元のキャッシュが今の設定（読み込み先・テーブル名・列名）と合わないため、作り直します…")
+        print("手元のキャッシュが今の設定（読み込み先・テーブル名）と合わないため、作り直します…")
     if not cache_service.cache_available():
         if not has_cache:
             print("初回のため、共有データからキャッシュを作成しています…")
@@ -863,6 +825,7 @@ def main():
         except AppError as error:
             print(f"  失敗：{error.user_message}（画面の「データ」から再度更新できます）")
             print_source_check(context.source_service.test({}))
+    print_column_notices(context.lot_service.model)
 
     try:
         server = bind(context, config.server_host, args.port or config.server_port)
@@ -954,7 +917,7 @@ if errorlevel 1 pause
     const bus = DS.core.createEventBus();
     const api = DS.api.createClient(DS.api.selectAdapter());
 
-    // 表示定義（項目・表示名・表示順・検索・絞り込み）を最初に読み込み、論理項目の登録簿を組み立てる
+    // 表示定義（DB の全列・種類・1 件を決める列・探す列）を最初に読み込み、列の登録簿を組み立てる
     try {
       DS.domain.applyView(await api.call('get_view_config'));
     } catch (error) {
@@ -980,11 +943,19 @@ if errorlevel 1 pause
     const samples = DS.controllers.createSampleController({ store, api, toast, search, cache });
     const source = DS.controllers.createSourceController({ store, api, toast, search, cache });
     const tags = DS.controllers.createTagController({ store, bus, toast, search });
+    const record = DS.controllers.createRecordController({ store, api, toast });
 
     const manual = DS.views.createManualView(document.getElementById('manual-host'));
     const openPanel = (id) => store.merge('ui', { panel: id });
     const refresh = () => cache.refresh();
-    const ctx = { store, bus, api, toast, search, cache, samples, tags, source };
+    // 「1 件を決める列を選ぶ」：データのパネルを開き、その場所で変更を始める
+    const chooseKey = () => {
+      openPanel('data');
+      bus.emit('record:edit');
+    };
+    bus.on('record:choose', chooseKey);
+    const ctx = { store, bus, api, toast, search, cache, samples, tags, source, record };
+    const columnFilter = DS.views.createColumnFilter({ store, bus, ctx });
 
     DS.views.createSidePanel({
       rail: document.getElementById('rail'),
@@ -992,10 +963,10 @@ if errorlevel 1 pause
       store, bus, ctx,
       openManual: manual.toggle,
     });
-    const searchBar = DS.views.createSearchBar(document.getElementById('search-host'), { store, bus, search, openPanel, refresh });
+    const searchBar = DS.views.createSearchBar(document.getElementById('search-host'), { store, bus, search, openPanel, refresh, chooseKey });
     DS.views.createStatusChips(document.getElementById('status-host'), { store, bus, openPanel });
     DS.views.createTagBar(document.getElementById('tagbar'), { store, bus, tags, openPanel });
-    DS.views.createResultsView(document.getElementById('results'), { store, bus, search, toast, openPanel, refresh });
+    const results = DS.views.createResultsView(document.getElementById('results'), { store, bus, search, toast, openPanel, refresh, columnFilter, chooseKey });
     DS.views.createDetailView(document.getElementById('detail'), { store, bus, search, toast });
 
     // Esc：開いているものを手前から順に閉じる（入力中の Esc は入力欄が受け持つ）
@@ -1017,7 +988,7 @@ if errorlevel 1 pause
     await search.run({ page: 1 }); // 起動したらすぐ一覧を出す（入力は不要）
     searchBar.focus();
 
-    DS.app = { store, bus, api, search, cache, samples, tags, source, manual }; // 確認用スクリプト（tests/ui-check.js）から使う
+    DS.app = { store, bus, api, search, cache, samples, tags, source, record, manual, columnFilter, results }; // 確認用スクリプト（tests/ui-check.js）から使う
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);

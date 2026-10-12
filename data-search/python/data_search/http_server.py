@@ -39,6 +39,7 @@ class AppContext:
     lot_service: object
     logger: object
     source_service: object = None   # 読み込み先の確認・変更（SourceService）。作成後に入れる
+    record_service: object = None   # 1 件を決める列の確認・変更（RecordService）。作成後に入れる
 
 
 class RequestHandler(SimpleHTTPRequestHandler):

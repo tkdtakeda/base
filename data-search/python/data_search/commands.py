@@ -3,7 +3,6 @@
 命令を増やすときは @command("名前") を付けた関数を足すだけでよい（既存の処理は変えない）。
 """
 
-from .column_catalog import catalog_version
 from .errors import AppError
 
 _REGISTRY = {}
@@ -54,7 +53,8 @@ def refresh_cache(ctx, payload):
 
 @command("get_cache_status")
 def get_cache_status(ctx, payload):
-    return ctx.cache_service.status()
+    # 列の決まりの印。変わったら（DB の列が増えた・1 件を決める列を変えた）画面は表示定義を読み直す
+    return dict(ctx.cache_service.status(), columnsVersion=ctx.lot_service.model.version)
 
 
 @command("get_data_source")
@@ -77,10 +77,22 @@ def update_data_source(ctx, payload):
 
 @command("get_view_config")
 def get_view_config(ctx, payload):
-    """画面の表示定義（view と schema の論理情報）と、表示する列（DB の列名が表示名）。テーブル名・パスは含めない。"""
-    columns = ctx.cache_service.catalog()
-    return dict(ctx.config.public_view(), success=True,
-                columns=[column.public() for column in columns], columnsVersion=catalog_version(columns))
+    """画面の表示定義：DB の全列（DB の列名が id・表示名）と種類、1 件を決める列、番号で探す列、注意。
+    テーブル名・パスは含めない。"""
+    return dict(ctx.lot_service.model.public(), success=True,
+                recordSettingsFile=ctx.record_service.describe()["localFile"] if ctx.record_service else None)
+
+
+@command("check_record_key")
+def check_record_key(ctx, payload):
+    """選んだ列の組み合わせで 1 件に決まるかを数える（保存はしない）。"""
+    return ctx.record_service.check(payload)
+
+
+@command("update_record_settings")
+def update_record_settings(ctx, payload):
+    """1 件を決める列と番号で探す列を schema.local.json に保存し、列の決まりを差し替える。"""
+    return ctx.record_service.update(payload)
 
 
 @command("get_application_info")

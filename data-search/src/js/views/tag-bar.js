@@ -121,8 +121,9 @@
           return;
         }
         const active = tag.id === activeId;
-        const describe = Object.entries(tag.filters).map(([fieldId, spec]) =>
-          `${DS.domain.fields.get(fieldId).label}：${DS.domain.filters.describe(fieldId, spec)}`).join(' / ');
+        const describe = Object.entries(tag.filters).map(([fieldId, spec]) => (DS.domain.fields.has(fieldId) && DS.domain.fields.get(fieldId).filter === spec.type
+          ? `${DS.domain.fields.get(fieldId).label}：${DS.domain.filters.describe(fieldId, spec)}`
+          : `${fieldId}：（今のデータにない列）`)).join(' / ');
         const group = el('span', { className: `tag-group${active ? ' is-active' : ''}` }, [
           chip(tag.name, active, () => tags.apply(tag.id), { title: describe }),
         ]);

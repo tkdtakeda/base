@@ -1,5 +1,5 @@
 /* =========================================================
-   絞り込み：タグの列・今かかっている条件の札・絞り込みのパネル
+   絞り込み：タグの列・今かかっている条件の札・見出しの漏斗と小窓・絞り込みのパネル
    ========================================================= */
 
 /* ── タグの列（一覧のすぐ上） ── */
@@ -155,6 +155,70 @@
 .filter-chip__label:hover,
 .filter-chip__remove:hover { background: var(--color-primary-soft-strong); }
 
+/* ── 見出しの漏斗（じょうご）：どの列でも絞り込める ── */
+.grid thead .th-btn { padding-right: calc(var(--sp-3) + 24px); }
+
+.th-filter {
+  position: absolute;
+  top: 50%;
+  right: var(--sp-2);
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: var(--bw) solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--color-border-strong);
+  font-size: var(--fs-xs);
+  transform: translateY(-50%);
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.th-filter:hover,
+.th-filter:focus-visible { border-color: var(--color-primary-border); background: var(--color-surface); color: var(--color-primary); }
+.grid thead th:hover .th-filter { color: var(--color-text-subtle); }
+
+/* 絞り込み中：色だけでなく、塗りつぶした四角の形でも分かるようにする */
+.grid thead th.is-filtered { background: var(--color-primary-soft); }
+.grid thead th.is-filtered .th-btn__text { color: var(--color-primary); }
+.grid thead th.is-filtered .th-filter { border-color: var(--color-primary); background: var(--color-primary); color: var(--color-text-inverse); }
+.grid thead th.is-filter-open .th-filter { box-shadow: 0 0 0 3px var(--color-primary-soft-strong); }
+
+/* ── 列ごとの絞り込みの小窓 ── */
+.col-filter {
+  position: fixed;
+  z-index: var(--z-panel);
+  display: flex;
+  flex-direction: column;
+  width: 300px;
+  border: var(--bw) solid var(--color-border);
+  border-top: var(--bw-bar) solid var(--color-primary);
+  border-radius: var(--r-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-2);
+  animation: col-filter-in var(--dur-base) var(--ease);
+}
+
+.col-filter[hidden] { display: none; }
+
+@keyframes col-filter-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.col-filter__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-2); padding: var(--sp-2) var(--sp-2) var(--sp-1) var(--sp-3); }
+.col-filter__heading { min-width: 0; }
+.col-filter__title { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-md); color: var(--color-primary); overflow-wrap: anywhere; }
+.col-filter__kind { display: flex; align-items: center; gap: var(--sp-1); font-size: var(--fs-xs); color: var(--color-text-subtle); }
+.col-filter__body { display: flex; flex-direction: column; gap: var(--sp-2); min-height: 0; padding: var(--sp-2) var(--sp-3); overflow: auto; }
+.col-filter__body .value-list { max-height: 320px; }
+.col-filter__foot { display: flex; justify-content: space-between; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); border-top: var(--bw) solid var(--color-border); background: var(--color-surface-alt); }
+
+.value-bulk { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); }
+.value-bulk[hidden] { display: none; }
+.check--value.is-checked .check__text { font-weight: var(--fw-bold); }
+
 /* ── 絞り込みのパネル ── */
 .filter-summary { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2); padding-bottom: var(--sp-3); }
 .filter-sections { display: flex; flex-direction: column; border-top: var(--bw) solid var(--color-border); }
@@ -187,6 +251,11 @@
 
 .filter-section.is-active .filter-section__label { color: var(--color-primary); }
 .filter-section__body { display: flex; flex-direction: column; gap: var(--sp-2); padding: 0 0 var(--sp-3) var(--sp-5); }
+.filter-section__kind { width: 14px; color: var(--color-text-subtle); }
+.filter-section:not(.is-active) .filter-section__state { color: var(--color-text-subtle); }
+.filter-sections[hidden] { display: none; }
+.filter-add { display: flex; align-items: center; gap: var(--sp-2); color: var(--color-text-subtle); }
+.filter-add .input { flex: 1; }
 
 .link-btn {
   display: inline-flex;

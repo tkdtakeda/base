@@ -1,18 +1,19 @@
 """動作確認用のダミー共有 SQLite と、それを指す上書き設定（config/dummy/）を作る。
 
   config/dummy/config.local.json … 共有 SQLite のパスだけ
-  config/dummy/schema.local.json … テーブル名と、役割のある列の DB の列名だけ
+  config/dummy/schema.local.json … テーブル名と、別名（論理名 → DB の列名）だけ
   config/dummy/view.local.json   … 隠す列（UPDATED_AT）だけ
 
 実データは使わない。列は python/tools/sample_columns.json（画面だけで試すモードと共通）の順に作る。
-役割のある列は日本語の列名、ほかの列は英字の列名にしてあり、DB の列名がそのまま表示されることと、
+別名のある列は日本語の列名、ほかの列は英字の列名にしてあり、DB の列名がそのまま表示されることと、
 schema の columns（論理名 → DB の列名）が効いていることを確かめられる。
 
 使い方:
     python python/tools/make_dummy_db.py                    … 正常なダミー（ロット 2,500 件・BOX 約 5,000 件）
     python python/tools/make_dummy_db.py --lots 50000       … 大量データ
     python python/tools/make_dummy_db.py --variant corrupt  … 壊れたファイル（異常系の確認）
-        variant: normal / missing-table / missing-column / corrupt
+        variant: normal / missing-table / missing-key / corrupt
+        missing-key … 1 件を決める列（BOX番号）がない似た DB。画面で列を選び直す流れを確かめる
     python python/tools/make_dummy_db.py --if-missing       … すでにあれば何もしない
 起動: python python/run_server.py --local-dir config/dummy
 """
@@ -35,8 +36,8 @@ SCHEMA_PATH = os.path.join(DUMMY_DIR, "schema.local.json")
 VIEW_PATH = os.path.join(DUMMY_DIR, "view.local.json")
 SEED = 20261011
 
-# missing-column の確認で消す論理項目
-DROP_FOR_MISSING = "cfStatus"
+# missing-key の確認で消す列（1 件を決める列の 2 つ目）
+DROP_FOR_MISSING = "boxNo"
 
 MATERIALS = ["A1100", "A3003", "A5052", "A6061", "A6063", "A7075"]
 TEMPERS = ["O", "H14", "H24", "H32", "T5", "T6", "T651"]
@@ -134,7 +135,7 @@ def write_database(path, rows, table, columns, variant):
             fp.write(b"this is not a sqlite database" * 100)
         return
 
-    kept = [c for c in columns if not (variant == "missing-column" and c[2] == DROP_FOR_MISSING)]
+    kept = [c for c in columns if not (variant == "missing-key" and c[2] == DROP_FOR_MISSING)]
     table_name = "t_other" if variant == "missing-table" else table
     names = [physical for _, physical, _ in kept] + ["UPDATED_AT"]
     lot_column = next(physical for _, physical, role in columns if role == "lotNo")
@@ -171,7 +172,7 @@ def write_config(table, columns):
 def main():
     parser = argparse.ArgumentParser(description="ダミーの共有 SQLite を作る")
     parser.add_argument("--lots", type=int, default=2500, help="ロットの数（1 ロットに BOX 1〜3 件）")
-    parser.add_argument("--variant", choices=["normal", "missing-table", "missing-column", "corrupt"], default="normal")
+    parser.add_argument("--variant", choices=["normal", "missing-table", "missing-key", "corrupt"], default="normal")
     parser.add_argument("--if-missing", action="store_true")
     args = parser.parse_args()
 

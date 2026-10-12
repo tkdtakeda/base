@@ -165,12 +165,6 @@
   box-shadow: var(--shadow-1);
 }
 
-.seg__kbd {
-  font-size: var(--fs-xs);
-  line-height: 1.2;
-  opacity: 0.8;
-}
-
 .seg--compact .seg__item {
   padding: 0 var(--sp-2);
   font-size: var(--fs-sm);
@@ -521,15 +515,42 @@
 .source-result__summary { margin: 0 0 var(--sp-1); font-weight: 600; font-size: var(--fs-sm); }
 .source-result__summary.is-ok { color: var(--color-success); }
 .source-result__summary.is-ng { color: var(--color-danger); }
+.source-result__summary.is-warn { color: var(--color-warning); }
 .source-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
 .source-step { display: grid; grid-template-columns: 1.4em 1fr; gap: var(--sp-1); font-size: var(--fs-sm); }
 .source-step__mark { line-height: 1.5; }
 .source-step--ok .source-step__mark { color: var(--color-success); }
 .source-step--ng .source-step__mark { color: var(--color-danger); }
+.source-step--warn .source-step__mark,
+.source-step--warn .source-step__action { color: var(--color-warning); }
 .source-step--skip { color: var(--color-text-muted); }
 .source-step__label { display: block; }
 .source-step__text, .source-step__action { margin: 0; }
 .source-step--ng .source-step__action { color: var(--color-danger); }
+
+/* ── 1 件を決める列（データ パネル） ── */
+.record-key { display: flex; flex-direction: column; gap: var(--sp-2); border-radius: var(--r-sm); }
+.record-key__current { display: flex; flex-direction: column; gap: var(--sp-1); }
+.record-key__missing { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0; color: var(--color-danger); font-size: var(--fs-sm); font-weight: var(--fw-bold); }
+.key-chips { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.key-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  max-width: 100%;
+  padding: 2px var(--sp-2);
+  border: var(--bw) solid var(--color-primary-border);
+  border-radius: var(--r-pill);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.record-key__slots { display: flex; flex-direction: column; gap: var(--sp-1); margin: 0; padding-left: var(--sp-5); }
+.record-key__slots .input { width: 100%; }
+.record-key__search { display: flex; flex-direction: column; gap: 2px; }
+.record-key__search .input { width: 100%; }
+.pane-section.is-alert { padding: var(--sp-2); border-left: var(--bw-bar) solid var(--color-danger); border-radius: var(--r-sm); background: var(--color-danger-bg); }
 ```
 
 `src/css/layout.css`
@@ -936,7 +957,6 @@
 
 /* ── 画面が狭いとき：説明の文字を省き、詳細を細くする ── */
 @media (max-width: 1440px) {
-  .seg__kbd { display: none; }
   .brand__version { display: none; }
   .chip__sub { display: none; }
 }
@@ -961,25 +981,25 @@
 .detail__group:not([open]) > summary { margin-bottom: 0; }
 .detail__count { margin-left: auto; padding: 0 var(--sp-2); border-radius: var(--r-pill); background: var(--color-surface-sunken); color: var(--color-text-muted); font-size: var(--fs-xs); font-weight: var(--fw-normal); }
 
-/* ── 番号の種類が多いときの選択欄 ── */
-.type-select__wrap { position: relative; display: inline-flex; flex-shrink: 0; align-items: center; }
-.type-select {
+/* ── 探す列（上部バーの左。押すと「1 件を決める列」で変えられる） ── */
+.search__column {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--sp-2);
+  max-width: 14em;
   height: var(--h-control-lg);
-  min-width: 150px;
-  padding: 0 calc(var(--sp-6) + var(--sp-1)) 0 calc(var(--sp-6) + var(--sp-1));
-  border: var(--bw) solid var(--color-border-strong);
+  padding: 0 var(--sp-3);
+  border: var(--bw) solid var(--color-primary-border);
   border-radius: var(--r-md);
   background: var(--color-primary-soft);
   color: var(--color-primary);
   font-weight: var(--fw-bold);
-  appearance: none;
-  cursor: pointer;
 }
-.type-select:focus { border-color: var(--color-focus); outline: none; box-shadow: 0 0 0 3px var(--color-primary-soft-strong); }
-.type-select__icon,
-.type-select__chevron { position: absolute; color: var(--color-primary); pointer-events: none; }
-.type-select__icon { left: var(--sp-3); }
-.type-select__chevron { right: var(--sp-3); font-size: var(--fs-sm); }
+.search__column:hover { background: var(--color-primary-soft-strong); }
+.search__column-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search__column.is-missing { border-color: var(--color-danger); background: var(--color-danger-bg); color: var(--color-danger); }
+.search__input:disabled { background: var(--color-surface-sunken); cursor: not-allowed; }
 
 /* ── 全列の一覧：道具・左端の固定・列幅・行の高さ ── */
 .grid-tools { display: flex; align-items: center; gap: var(--sp-2); margin-left: auto; }
@@ -1202,7 +1222,7 @@ body.is-resizing { cursor: col-resize; user-select: none; }
   <!-- 核 -->
   <script src="js/core/core.js"></script>
   <script src="js/core/util.js"></script>
-  <!-- 論理項目 -->
+  <!-- 列と絞り込みの決まり -->
   <script src="js/domain/fields.js"></script>
   <script src="js/domain/status-tones.js"></script>
   <script src="js/domain/filters.js"></script>
@@ -1218,11 +1238,15 @@ body.is-resizing { cursor: col-resize; user-select: none; }
   <script src="js/controllers/data-controller.js"></script>
   <script src="js/controllers/tag-controller.js"></script>
   <script src="js/controllers/source-controller.js"></script>
+  <script src="js/controllers/record-controller.js"></script>
   <!-- 画面の部品 -->
   <script src="js/views/toast.js"></script>
   <script src="js/views/status-chips.js"></script>
   <script src="js/views/side-panel.js"></script>
   <script src="js/views/source-editor.js"></script>
+  <script src="js/views/record-key-editor.js"></script>
+  <script src="js/views/filter-editors.js"></script>
+  <script src="js/views/column-filter.js"></script>
   <script src="js/panels/filter-panel.js"></script>
   <script src="js/panels/panels.js"></script>
   <script src="js/panels/columns-panel.js"></script>
@@ -1268,7 +1292,7 @@ body.is-resizing { cursor: col-resize; user-select: none; }
   }
 
   const COMMANDS = ['get_view_config', 'search_lots', 'list_lots', 'get_filter_values', 'get_lot_detail', 'refresh_cache', 'get_cache_status', 'get_application_info',
-    'get_data_source', 'test_data_source', 'update_data_source'];
+    'get_data_source', 'test_data_source', 'update_data_source', 'check_record_key', 'update_record_settings'];
 
   function createClient(adapter) {
     return {

@@ -1,7 +1,7 @@
 """検索・絞り込みの決まり（上限値など）。
 
-論理項目の名前・検索できる項目・絞り込みの種類・1 件を特定する鍵は、ここには書かない。
-config/sample の schema / view（とローカルの上書き）から settings.DataModel として組み立てる。
+列の名前・探す列・絞り込みの種類・1 件を特定する列は、ここには書かない。
+設定（settings.ModelSettings）とキャッシュのテーブルの列から column_model.ColumnModel として組み立てる。
 """
 
 FILTER_VALUES_MAX = 200      # 1 項目で選べる値の数の上限

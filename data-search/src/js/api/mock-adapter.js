@@ -8,8 +8,9 @@
 
   const DS = window.DS;
   const STORAGE_KEY = 'mock:samples';
-  const searchable = () => DS.domain.searchableFields().map((field) => field.id);
+  const RECORD_KEY = 'mock:record'; // このモードで選んだ「1 件を決める列」（ブラウザにだけ保存する）
   const KEYWORD_MAX = 100;
+  const RECORD_KEY_MAX = 3;
   const PAGE_SIZE = 100;
   const MAX_PAGE_SIZE = 500;
   const LATENCY_MS = 60;
@@ -22,6 +23,28 @@
     success: false,
     error: { code, userMessage, detailId: 'MOCK-' + Math.random().toString(16).slice(2, 8).toUpperCase() },
   });
+  const isBlank = (value) => value === null || value === undefined || String(value).trim() === '';
+  const textOf = (value) => (isBlank(value) ? null : String(value));
+
+  /**
+   * 表示定義に、このモードで選んだ「1 件を決める列」を重ねる（Python 版の column_model と同じ決まり：
+   * 1 件を決める列 → 探す列 を先頭に並べ、番号の列は text として扱う）
+   */
+  function viewWithRecord(base, record) {
+    const view = JSON.parse(JSON.stringify(base));
+    const ids = view.columns.map((column) => column.id);
+    if (!record || !Array.isArray(record.recordKey) || !record.recordKey.length || !record.recordKey.every((id) => ids.includes(id))) return view;
+    view.recordKey = record.recordKey.slice();
+    view.searchColumn = ids.includes(record.searchColumn) ? record.searchColumn : record.recordKey[0];
+    const lead = Array.from(new Set(view.recordKey.concat([view.searchColumn])));
+    const byId = new Map(view.columns.map((column) => [column.id, column]));
+    view.columns = lead.map((id) => Object.assign({}, byId.get(id), { role: true, kind: 'text' }))
+      .concat(view.columns.filter((column) => !lead.includes(column.id)));
+    view.columnsVersion = `${base.columnsVersion}-${lead.join('|')}`;
+    view.ready = true;
+    view.notices = [];
+    return view;
+  }
 
   function createMockAdapter() {
     // 読み込んだパターンの id と時刻だけを保存し、データは種から作り直す（保存量を小さくする）
@@ -47,14 +70,22 @@
     rebuild();
 
     // ── 一覧・検索・絞り込み（Python 版の lot_service と同じ決まり） ──
+    /** 絞り込みの列と種類を確かめる（どの列でも絞り込める。日付の列は日付の範囲、ほかは値から選ぶ） */
+    function badFilter(filters) {
+      return Object.entries(filters || {}).some(([fieldId, spec]) => {
+        const field = DS.domain.fields.get(fieldId);
+        return !field || !spec || spec.type !== field.filter;
+      });
+    }
+
     function filterRows(payload) {
       const keyword = DS.util.normalize(payload.keyword).toLowerCase();
-      const searchType = searchable().includes(payload.searchType) ? payload.searchType : null;
+      const searchField = DS.domain.searchField();
       const today = DS.domain.filters.todayIso();
       const filters = Object.entries(DS.domain.filters.compact(payload.filters));
       return rows.filter((row) => {
-        if (keyword && searchType) {
-          const value = String(row[searchType] == null ? '' : row[searchType]).toLowerCase();
+        if (keyword && searchField) {
+          const value = String(row[searchField.id] == null ? '' : row[searchField.id]).toLowerCase();
           if (payload.matchMode === 'exact' ? value !== keyword : !value.includes(keyword)) return false;
         }
         return filters.every(([fieldId, spec]) =>
@@ -66,15 +97,14 @@
       const started = performance.now();
       const keyword = DS.util.normalize(payload.keyword);
       if (keyword.length > KEYWORD_MAX) return fail('INVALID_REQUEST', `検索する番号は ${KEYWORD_MAX} 文字以内で入力してください。`);
-      if (keyword && !searchable().includes(payload.searchType)) return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
       if (rows.length === 0) return fail('CACHE_UNAVAILABLE', '検索できるデータがまだありません。左の「サンプル」から読み込んでください。');
+      if (badFilter(payload.filters)) return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
       const page = Math.max(1, Number(payload.page) || 1);
       const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(payload.pageSize) || PAGE_SIZE));
       const sortKey = DS.domain.fields.has(payload.sortKey) ? payload.sortKey : DS.domain.DEFAULT_SORT.key;
       const sortField = DS.domain.fields.get(sortKey);
       const direction = payload.sortOrder === 'desc' ? -1 : 1;
       const sortValue = (row) => (sortField.type === 'date' ? DS.domain.filters.normalizeDate(row[sortKey]) : row[sortKey]);
-      const isBlank = (value) => value === null || value === undefined || String(value).trim() === '';
       const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
       const hits = filterRows(payload);
@@ -137,7 +167,53 @@
       get_application_info: () => ({ id: 'data-search', name: 'Data Search', version: '0.1.0' }),
 
       // 表示定義：config/sample の view・schema と python/tools/sample_columns.json から自動生成した js/sample/sample-view.js
-      get_view_config: () => Object.assign({ success: true }, JSON.parse(JSON.stringify(DS.sampleView))),
+      // ＋ このモードで選んだ「1 件を決める列」
+      get_view_config: () => Object.assign({ success: true, recordSettingsFile: '（サンプルのモードではブラウザに保存）' },
+        viewWithRecord(DS.sampleView, DS.core.storage.read(RECORD_KEY, null))),
+
+      check_record_key(payload) {
+        if (rows.length === 0) return fail('CACHE_UNAVAILABLE', '検索できるデータがまだありません。左の「サンプル」から読み込んでください。');
+        const names = payload.recordKey;
+        if (!Array.isArray(names) || names.length < 1 || names.length > RECORD_KEY_MAX || new Set(names).size !== names.length ||
+          !names.every((id) => DS.domain.fields.has(id))) {
+          return fail('INVALID_REQUEST', `1 件を決める列は、一覧にある列から重ならないように 1〜${RECORD_KEY_MAX} 個選んでください。`);
+        }
+        const groups = new Map();
+        let blank = 0;
+        rows.forEach((row) => {
+          const values = names.map((id) => textOf(row[id]));
+          if (values.every((value) => value === null)) blank += 1;
+          const key = JSON.stringify(values);
+          const entry = groups.get(key) || { values, count: 0 };
+          entry.count += 1;
+          groups.set(key, entry);
+        });
+        const duplicated = Array.from(groups.values()).filter((entry) => entry.count > 1).sort((a, b) => b.count - a.count);
+        const top = duplicated[0];
+        return {
+          success: true,
+          recordKey: names,
+          rowCount: rows.length,
+          duplicateGroups: duplicated.length,
+          duplicateRows: duplicated.reduce((sum, entry) => sum + entry.count, 0),
+          blankRows: blank,
+          unique: duplicated.length === 0,
+          example: top ? { values: Object.fromEntries(names.map((id, index) => [id, top.values[index]])), count: top.count } : null,
+        };
+      },
+
+      update_record_settings(payload) {
+        const checked = commands.check_record_key(payload);
+        if (!checked.success) return checked;
+        const searchColumn = payload.searchColumn;
+        if (searchColumn != null && !DS.domain.fields.has(searchColumn)) return fail('INVALID_REQUEST', '番号で探す列は、一覧にある列から選んでください。');
+        const stored = DS.core.storage.write(RECORD_KEY, { recordKey: payload.recordKey.slice(), searchColumn: searchColumn || null });
+        if (!stored.ok) return fail('SETTINGS_WRITE_FAILED', `保存できませんでした：${stored.reason}`);
+        return {
+          success: true, saved: true, recordKey: payload.recordKey.slice(), searchColumn: searchColumn || payload.recordKey[0],
+          localFile: '（サンプルのモードではブラウザに保存）', message: '1 件を決める列を保存しました（サンプルのモードではブラウザにだけ保存します）。',
+        };
+      },
 
       get_cache_status() {
         const available = rows.length > 0;
@@ -159,7 +235,7 @@
           lastRefreshAt: saved.refreshedAt || saved.loadedAt,
           errorCode: failed ? 'SOURCE_UNAVAILABLE' : null,
           errorMessage: failed ? '共有データに接続できません。ネットワークと共有フォルダを確認してください。' : null,
-          columnsVersion: DS.sampleView.columnsVersion,
+          columnsVersion: viewWithRecord(DS.sampleView, DS.core.storage.read(RECORD_KEY, null)).columnsVersion,
         };
       },
 
@@ -192,20 +268,24 @@
         const field = DS.domain.fields.get(payload.field);
         if (!field || field.filter !== 'values') return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
         if (rows.length === 0) return fail('CACHE_UNAVAILABLE', '検索できるデータがまだありません。左の「サンプル」から読み込んでください。');
+        if (badFilter(payload.filters)) return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
+        // match：その文字を含む値だけ（大文字小文字・全角半角を区別しない）
+        const match = payload.match ? DS.util.normalize(payload.match).toLowerCase() : '';
         const others = Object.assign({}, payload.filters || {});
         delete others[field.id];
         const counts = new Map();
         filterRows(Object.assign({}, payload, { filters: others })).forEach((row) => {
-          const raw = row[field.id];
-          const value = raw === null || raw === undefined || String(raw).trim() === '' ? null : String(raw);
+          const value = textOf(row[field.id]);
+          if (match && (value === null || !value.toLowerCase().includes(match))) return;
           counts.set(value, (counts.get(value) || 0) + 1);
         });
         const values = Array.from(counts, ([value, count]) => ({ value, count }))
           .sort((a, b) => b.count - a.count || String(a.value).localeCompare(String(b.value)));
-        return { success: true, field: field.id, values: values.slice(0, VALUE_LIST_LIMIT), truncated: values.length > VALUE_LIST_LIMIT };
+        return { success: true, field: field.id, values: values.slice(0, VALUE_LIST_LIMIT), truncated: values.length > VALUE_LIST_LIMIT, match: match || null };
       },
 
       get_lot_detail(payload) {
+        if (!DS.domain.isReady()) return fail('KEY_NOT_READY', '1 件を決める列が決まっていません。画面左の「データ」→「1 件を決める列」で選んでください。');
         const keys = DS.domain.keyFields().map((field) => field.id);
         const found = rows.filter((row) => keys.every((id) => (row[id] || null) === (payload[id] || null)));
         if (found.length === 0) return fail('NOT_FOUND', '選んだデータが見つかりません。データが更新された可能性があります。もう一度検索してください。');

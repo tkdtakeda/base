@@ -160,12 +160,6 @@
   box-shadow: var(--shadow-1);
 }
 
-.seg__kbd {
-  font-size: var(--fs-xs);
-  line-height: 1.2;
-  opacity: 0.8;
-}
-
 .seg--compact .seg__item {
   padding: 0 var(--sp-2);
   font-size: var(--fs-sm);
@@ -516,12 +510,39 @@
 .source-result__summary { margin: 0 0 var(--sp-1); font-weight: 600; font-size: var(--fs-sm); }
 .source-result__summary.is-ok { color: var(--color-success); }
 .source-result__summary.is-ng { color: var(--color-danger); }
+.source-result__summary.is-warn { color: var(--color-warning); }
 .source-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
 .source-step { display: grid; grid-template-columns: 1.4em 1fr; gap: var(--sp-1); font-size: var(--fs-sm); }
 .source-step__mark { line-height: 1.5; }
 .source-step--ok .source-step__mark { color: var(--color-success); }
 .source-step--ng .source-step__mark { color: var(--color-danger); }
+.source-step--warn .source-step__mark,
+.source-step--warn .source-step__action { color: var(--color-warning); }
 .source-step--skip { color: var(--color-text-muted); }
 .source-step__label { display: block; }
 .source-step__text, .source-step__action { margin: 0; }
 .source-step--ng .source-step__action { color: var(--color-danger); }
+
+/* ── 1 件を決める列（データ パネル） ── */
+.record-key { display: flex; flex-direction: column; gap: var(--sp-2); border-radius: var(--r-sm); }
+.record-key__current { display: flex; flex-direction: column; gap: var(--sp-1); }
+.record-key__missing { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0; color: var(--color-danger); font-size: var(--fs-sm); font-weight: var(--fw-bold); }
+.key-chips { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.key-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  max-width: 100%;
+  padding: 2px var(--sp-2);
+  border: var(--bw) solid var(--color-primary-border);
+  border-radius: var(--r-pill);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.record-key__slots { display: flex; flex-direction: column; gap: var(--sp-1); margin: 0; padding-left: var(--sp-5); }
+.record-key__slots .input { width: 100%; }
+.record-key__search { display: flex; flex-direction: column; gap: 2px; }
+.record-key__search .input { width: 100%; }
+.pane-section.is-alert { padding: var(--sp-2); border-left: var(--bw-bar) solid var(--color-danger); border-radius: var(--r-sm); background: var(--color-danger-bg); }

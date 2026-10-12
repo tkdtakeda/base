@@ -22,6 +22,7 @@ from data_search.errors import AppError  # noqa: E402
 from data_search.http_server import AppContext, create_server  # noqa: E402
 from data_search.logging_setup import setup_logging  # noqa: E402
 from data_search.lot_service import LotService  # noqa: E402
+from data_search.record_service import RecordService  # noqa: E402
 from data_search.settings import SettingsError, load_settings  # noqa: E402
 from data_search.source_service import SourceService  # noqa: E402
 
@@ -53,12 +54,20 @@ def print_issues(issues):
 def print_source_check(result):
     """接続テストの結果を段階ごとに出す（パスは出さない）。"""
     print("  読み込み先の接続テスト:")
-    marks = {"ok": "○", "ng": "×", "skip": "－"}
+    marks = {"ok": "○", "warn": "△", "ng": "×", "skip": "－"}
     for step in result["steps"]:
         print(f"    {marks[step['status']]} {step['label']}：{step['message']}")
         if step["action"]:
             print(f"        対応：{step['action']}")
     print("    （画面左の「データ」→「読み込み先」から、パスを確かめて直せます）")
+
+
+def print_column_notices(model):
+    """DB と設定の食い違い（1 件を決める列がないなど）。止めずに知らせ、画面で選び直してもらう。"""
+    for notice in model.notices:
+        print()
+        print(f"[列の注意] {notice.path}：{notice.reason}")
+        print(f"  対応：{notice.action}")
 
 
 def bind(context, host, port):
@@ -95,10 +104,11 @@ def main():
     cache_service = CacheService(config, logger)
     context = AppContext(config, cache_service, LotService(config, cache_service, logger), logger)
     context.source_service = SourceService(context, APP_ROOT, local_dir)
+    context.record_service = RecordService(context, APP_ROOT, local_dir)
 
     has_cache = os.path.isfile(config.cache_path)
     if has_cache and not cache_service.verify_existing():
-        print("手元のキャッシュが今の設定（読み込み先・テーブル名・列名）と合わないため、作り直します…")
+        print("手元のキャッシュが今の設定（読み込み先・テーブル名）と合わないため、作り直します…")
     if not cache_service.cache_available():
         if not has_cache:
             print("初回のため、共有データからキャッシュを作成しています…")
@@ -108,6 +118,7 @@ def main():
         except AppError as error:
             print(f"  失敗：{error.user_message}（画面の「データ」から再度更新できます）")
             print_source_check(context.source_service.test({}))
+    print_column_notices(context.lot_service.model)
 
     try:
         server = bind(context, config.server_host, args.port or config.server_port)

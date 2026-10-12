@@ -6,8 +6,8 @@
     defaults.py   … sample に書かない運用項目の既定値
 """
 
-from .loader import AppConfig, DataModel, SettingsError, load_settings, public_view_of
+from .loader import AppConfig, ModelSettings, SettingsError, load_settings, model_settings_of
 from .merge import deep_merge
 from .validation import Issue
 
-__all__ = ["AppConfig", "DataModel", "Issue", "SettingsError", "deep_merge", "load_settings", "public_view_of"]
+__all__ = ["AppConfig", "Issue", "ModelSettings", "SettingsError", "deep_merge", "load_settings", "model_settings_of"]

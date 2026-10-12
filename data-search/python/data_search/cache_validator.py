@@ -7,8 +7,12 @@ from .errors import AppError
 from .query import quote_identifier
 
 
-def validate_cache_file(path, table_name, field_mappings):
-    """SQLite として開けること・表と列がそろっていることを確かめ、行数を返す。"""
+def validate_cache_file(path, table_name):
+    """SQLite として開けること・表があることを確かめ、行数を返す。
+
+    列は確かめない（1 件を決める列などが DB になくても、データは使えるようにして画面で選び直してもらう）。
+    検索では、このファイルから読み取った列（column_catalog）だけを使うため、ない列を参照することはない。
+    """
     try:
         conn = open_readonly(path)
     except sqlite3.Error as exc:
@@ -27,18 +31,6 @@ def validate_cache_file(path, table_name, field_mappings):
         ).fetchone()
         if not exists:
             raise AppError("CACHE_TABLE_MISSING", "required table not found")
-
-        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({quote_identifier(table_name)})")}
-        missing = [logical for logical, physical in field_mappings.items() if physical not in columns]
-        if missing:
-            raise AppError(
-                "CACHE_COLUMN_MISSING",
-                f"missing logical fields: {', '.join(missing)}",
-                user_message=(
-                    f"取得したデータに、schema.local.json の columns で指定した列（{', '.join('columns.' + name for name in missing)}）が"
-                    "ないため、使用しませんでした。列名を確認してください。"
-                ),
-            )
         return conn.execute(f"SELECT COUNT(*) FROM {quote_identifier(table_name)}").fetchone()[0]
     finally:
         conn.close()

@@ -30,7 +30,7 @@
     const bus = DS.core.createEventBus();
     const api = DS.api.createClient(DS.api.selectAdapter());
 
-    // 表示定義（項目・表示名・表示順・検索・絞り込み）を最初に読み込み、論理項目の登録簿を組み立てる
+    // 表示定義（DB の全列・種類・1 件を決める列・探す列）を最初に読み込み、列の登録簿を組み立てる
     try {
       DS.domain.applyView(await api.call('get_view_config'));
     } catch (error) {
@@ -56,11 +56,19 @@
     const samples = DS.controllers.createSampleController({ store, api, toast, search, cache });
     const source = DS.controllers.createSourceController({ store, api, toast, search, cache });
     const tags = DS.controllers.createTagController({ store, bus, toast, search });
+    const record = DS.controllers.createRecordController({ store, api, toast });
 
     const manual = DS.views.createManualView(document.getElementById('manual-host'));
     const openPanel = (id) => store.merge('ui', { panel: id });
     const refresh = () => cache.refresh();
-    const ctx = { store, bus, api, toast, search, cache, samples, tags, source };
+    // 「1 件を決める列を選ぶ」：データのパネルを開き、その場所で変更を始める
+    const chooseKey = () => {
+      openPanel('data');
+      bus.emit('record:edit');
+    };
+    bus.on('record:choose', chooseKey);
+    const ctx = { store, bus, api, toast, search, cache, samples, tags, source, record };
+    const columnFilter = DS.views.createColumnFilter({ store, bus, ctx });
 
     DS.views.createSidePanel({
       rail: document.getElementById('rail'),
@@ -68,10 +76,10 @@
       store, bus, ctx,
       openManual: manual.toggle,
     });
-    const searchBar = DS.views.createSearchBar(document.getElementById('search-host'), { store, bus, search, openPanel, refresh });
+    const searchBar = DS.views.createSearchBar(document.getElementById('search-host'), { store, bus, search, openPanel, refresh, chooseKey });
     DS.views.createStatusChips(document.getElementById('status-host'), { store, bus, openPanel });
     DS.views.createTagBar(document.getElementById('tagbar'), { store, bus, tags, openPanel });
-    DS.views.createResultsView(document.getElementById('results'), { store, bus, search, toast, openPanel, refresh });
+    const results = DS.views.createResultsView(document.getElementById('results'), { store, bus, search, toast, openPanel, refresh, columnFilter, chooseKey });
     DS.views.createDetailView(document.getElementById('detail'), { store, bus, search, toast });
 
     // Esc：開いているものを手前から順に閉じる（入力中の Esc は入力欄が受け持つ）
@@ -93,7 +101,7 @@
     await search.run({ page: 1 }); // 起動したらすぐ一覧を出す（入力は不要）
     searchBar.focus();
 
-    DS.app = { store, bus, api, search, cache, samples, tags, source, manual }; // 確認用スクリプト（tests/ui-check.js）から使う
+    DS.app = { store, bus, api, search, cache, samples, tags, source, record, manual, columnFilter, results }; // 確認用スクリプト（tests/ui-check.js）から使う
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);

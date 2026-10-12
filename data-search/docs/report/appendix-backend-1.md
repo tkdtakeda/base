@@ -40,12 +40,15 @@ data-search/config/
 |---|---|---|
 | `config.sample.json` | アプリ基本情報、データソースの有効/無効・識別子・読み取り専用、共有 SQLite パスの**プレースホルダー**、キャッシュのパスと動作、検索の初期値、ログ、開発用サーバー | テーブル名、列名、論理と物理の対応、表示項目・表示順 |
 | `config.local.json` | 実際の共有 SQLite のパスなど、環境で変わる値だけ | テーブル名、列名（schema へ） |
-| `schema.sample.json` | データソース識別子、テーブル名の**プレースホルダー**、**役割のある 14 列**の論理名と DB の列名（**プレースホルダー**）の対応、1 件を特定する項目（`recordKey`）、日付として扱う列（`types`） | 役割のない列（DB から自動で読み取る）、表示名（DB の列名を使う） |
-| `schema.local.json` | 実際のテーブル名と、役割のある列の実際の列名。日付の列（役割のない列は DB の列名で書ける） | 役割のない列の一覧（書くと「使っていない」と注意） |
-| `view.sample.json` | 番号で探せる列（`searchFields`）、最初は隠す列（`hiddenColumns`）、絞り込み（`filters`）、既定の並べ替え（`defaultSort`）。任意で列ごとの補助（`fields`：等幅・コピー・入力例・値の札） | 物理列名、表示名、表示順（DB の列名・DB の順を使う） |
+| `schema.sample.json` | データソース識別子、テーブル名の**プレースホルダー**、1 件を特定する列（`recordKey`）、番号で探す列（`searchColumn`。`null` なら recordKey の 1 つ目）、任意の別名（`columns`：論理名 → DB の列名の**プレースホルダー**） | 全列の一覧（DB から自動で読み取る）、表示名（DB の列名を使う）、絞り込める列（全列で絞り込める） |
+| `schema.local.json` | 実際のテーブル名。1 件を決める列・探す列（**DB の列名で書ける**。画面の「データ」→「1 件を決める列」で選ぶと、ここに保存される）。種類（`types`）は自動の判定を変えたいときだけ | 全列の一覧 |
+| `view.sample.json` | 最初は隠す列（`hiddenColumns`）、既定の並べ替え（`defaultSort`）。任意で列ごとの補助（`fields`：等幅・コピー・入力例・値の札） | 物理列名、表示名、表示順（DB の列名・DB の順を使う）、絞り込み（全列で使える） |
 | `view.local.json` | 社内環境だけの変更（なくてよい）。隠す列を DB の列名で書くのはここ | — |
 
-`recordKey` と `types` は依頼書に明記がなかったため、**DB の論理構造**として schema に置いた（「1 件を特定する列」「日付として比べる列」はデータの性質であり、表示の都合ではないため）。
+`recordKey`・`searchColumn`・`types` は依頼書に明記がなかったため、**DB の論理構造**として schema に置いた（「1 件を特定する列」「番号で探す列」「日付として比べる列」はデータの性質であり、表示の都合ではないため）。
+
+列名が DB にあるかは、**キャッシュのテーブルを読んだあと**に `column_model.py` が照らし合わせる（起動時の検証では書き方だけを確かめる）。
+DB にない名前があっても止めず、画面の「データ」パネルと起動時の黒いウィンドウに「列の注意」を出す。1 件を決める列がそろわないときは、画面で選び直すよう案内する（似た構成の別の DB も、設定ファイルを手で直さずに使えるようにするため）。
 
 ## 4. 起動時の読み込み順
 
@@ -59,8 +62,9 @@ data-search/config/
 8. `config/local/view.local.json` があれば読み込む
 9. ローカルをサンプルへマージする
 10. マージ後の config・schema・view を検証する（誤りはすべて集めてから止める）
-11. schema に従って共有 SQLite をコピーし、テーブルと列の存在を確かめてからキャッシュとして使う
-12. view に従って検索画面を組み立てる（画面は最初に `get_view_config` で表示定義を受け取る）
+11. schema に従って共有 SQLite をコピーし、テーブルの存在を確かめてからキャッシュとして使う
+12. キャッシュのテーブルの列を読み取り、値から日付の列を判定する（`column_catalog.py`）。設定と照らし合わせて列の決まり（並び・種類・1 件を決める列・探す列・注意）を作る（`column_model.py`）
+13. 画面は最初に `get_view_config` で表示定義を受け取って組み立てる
 
 `--local-dir` で `config/local` の代わりのフォルダを指定できる（ダミー用：`config/dummy`）。
 
@@ -70,10 +74,10 @@ data-search/config/
 |---|---|
 | キーがない | サンプルの値のまま（誤りにしない。例：`devServer` を書かなくてよい） |
 | 両方がオブジェクト `{ }` | キーごとに再帰的に重ねる |
-| 配列 `[ ]` | 要素ごとに重ねず、**配列全体を置き換える**（例：`view.searchFields`） |
+| 配列 `[ ]` | 要素ごとに重ねず、**配列全体を置き換える**（例：`schema.recordKey`・`view.hiddenColumns`） |
 | 型がサンプルと違う | 使わず、型の誤りとして止める（サンプルの値が `null` なら何でも受け入れる。整数は数値の代わりに使える） |
 | サンプルにないキー | **読み捨てない**。ファイル名と項目の道筋を示して「設定の注意」を出し、その値は使わない |
-| サンプルにないキー（論理項目を足せる場所） | `schema.columns`・`schema.types`・`view.fields` は新しいキーを受け入れて使う（社内だけの論理項目を足せるように） |
+| サンプルにないキー（列を足せる場所） | `schema.types`・`view.fields` は新しいキー（DB の列名）を受け入れて使う |
 
 - サンプル側のオブジェクトは変更しない（新しいオブジェクトを作る）。
 - サンプルを読んだ直後に、アプリ内の既定値（`settings/defaults.py` の `BUILTIN_DEFAULTS`）でサンプルにないキーを補う（`fill_defaults`）。
@@ -83,17 +87,18 @@ data-search/config/
 |---|---|
 | `config.cache` | `temporaryExtension: ".tmp"`・`keepPreviousOnFailure: true` |
 | `config.devServer` | `host: "127.0.0.1"`・`port: 8765`・`openBrowser: true` |
-| `schema.types` | `{}`（日付の項目なし） |
-| `view.detailGroups` / `view.fields` / `view.filters` | `[]` / `{}` / `[]` |
+| `schema.types` | `{}`（種類は値から判定） |
+| `schema.columns` / `schema.searchColumn` | `{}`（別名なし） / `null`（recordKey の 1 つ目で探す） |
+| `view.fields` / `view.hiddenColumns` | `{}` / `[]` |
 - ローカルのファイルがないときは、空の上書き `{}` として扱う。
 
 例（view）：
 
 ```jsonc
-// view.sample.json：searchFields 6 列・filters 8 列
-// view.local.json
-{ "searchFields": ["lotNo"] }
-// 結果：searchFields は 1 列だけ（配列は丸ごと置き換え）。hiddenColumns・filters はサンプルのまま
+// schema.sample.json：recordKey ["lotNo", "boxNo"]・searchColumn null
+// schema.local.json
+{ "tableName": "T_LOT", "recordKey": ["LOT_NO"] }
+// 結果：recordKey は 1 列だけ（配列は丸ごと置き換え）。searchColumn は null のまま（LOT_NO で探す）
 ```
 
 ## 6. 検証（`settings/validation.py`）
@@ -112,31 +117,40 @@ data-search/config/
 ### 6.2 schema
 
 - `tableName` が空でも仮の値でもない（**テーブル名・列名は schema で確かめる**）
-- `columns` がオブジェクトで、論理名・物理列名が空でも仮の値でもない
-- 同じキー（論理名）が重複していない（JSON の読み込み時に検出）
+- `recordKey` が 1〜3 個の空でない名前で、重複していない。`searchColumn` は `null` か空でない名前
+- `columns`（別名）は任意。値が文字列でないときだけ誤り。仮の値のままの別名は使わない（誤りにしない）
+- 同じキーが重複していない（JSON の読み込み時に検出）
 - `dataSourceId` が config の `dataSource.id` と同じ（別のデータソースの設定を組み合わせないため）
-- `recordKey` の論理名が `columns` にある。`types` は型が text / date（キーは役割のない列の DB の列名でもよいため、有無は確かめない）
-- 接続後（キャッシュ作成時）にテーブルと、役割のある列がすべてあること（`cache_validator.py`）。ほかの列はそのとき読み取る（`column_catalog.py`）
-- 以前の形で全列を書いた `columns` は、役割のない分を「使っていない」と 1 件の注意にまとめる（止めない）
+- `types` は型が text / date
+- 名前が DB にあるかは、ここでは確かめない（キャッシュを読んだあと `column_model.py` が照らし合わせ、ない名前は止めずに「列の注意」で知らせる）
+- 接続後（キャッシュ作成時）に確かめるのはテーブルがあることだけ（`cache_validator.py`）。列はそのとき読み取る（`column_catalog.py`）
+- 以前の形で全列を書いた `columns` は、サンプルにない分を「使っていない」と 1 件の注意にまとめる（止めない）
 
 ### 6.3 view
 
-- `searchFields`・`filters`・`defaultSort` が参照する論理名が、**マージ後の `schema.columns`** にある。重複していない。番号で探せる列が少なくとも 1 つある
-- `filters` の `type` が values / date。date は schema の `types` で date の列だけ
-- `hiddenColumns` は空でない文字列（論理名か DB の列名。DB にない名前は無視）
+- `defaultSort.order` が asc / desc。`field` は空でない名前（DB にない名前なら、1 件を決める列の順に並べて「列の注意」を出す）
+- `hiddenColumns` は空でない文字列（DB の列名か別名。DB にない名前は無視）
 - `fields.<列>` の `mono`・`copy` が真偽値、`badge` のパターンと色が正しい。`label`・`group` は「今は使わない」と注意
-- 以前の形の `listColumns`・`detailFields`・`detailGroups` は「今は使わない項目」と注意（止めない）
+- 以前の形の `searchFields`・`filters`・`listColumns`・`detailFields`・`detailGroups` は「今は使わない項目」と注意（止めない）
 
-### 6.4 誤りの表示
+### 6.4 列の注意（キャッシュを読んだあと。`column_model.py`）
+
+| 食い違い | 動き |
+|---|---|
+| 1 件を決める列が DB にない | 1 件を決める列を空にする（一部の列だけでは 1 件に決まらないため）。一覧・絞り込みは使える。1 つ目の列があれば番号でも探せる。画面は「1 件を決める列を選ぶ」へ案内 |
+| 番号で探す列が DB にない | 1 件を決める列の 1 つ目で探す |
+| 並べ替え・種類の指定の列が DB にない | その指定を使わない |
+
+### 6.5 誤りの表示
 
 誤りはすべて集め、1 件ごとに次の形で表示して止まる（注意は止めずに表示する）。
 
 ```text
 [設定エラー]
-対象: config/sample/view.sample.json
-項目: searchFields[2]
-理由: "productNo" はマージ後の schema.columns に定義されていません。
-対応: schema側へ論理項目を追加するか、view側のfieldを修正してください。
+対象: config/local/schema.local.json
+項目: recordKey
+理由: 1 件を特定する列が 4 個あります。
+対応: 3 個までにしてください。
 ```
 
 - 「対象」は、その値を直すべきファイル。仮の値が残っているときは、サンプルではなく**ローカルのファイル**を示す（サンプルに実際の値を書かせないため）。
@@ -166,11 +180,15 @@ flowchart TD
     E -- ある --> X[対象・項目・理由・対応をすべて表示して停止]
     E -- ない --> W[注意があれば表示して続ける]
     W --> Q{キャッシュがある?}
-    Q -- ない --> R[共有 SQLite をコピー → テーブル・列を確認 → キャッシュに置換]
-    Q -- ある --> M{今の schema と合う?}
+    Q -- ない --> R[共有 SQLite をコピー → テーブルを確認 → キャッシュに置換]
+    Q -- ある --> M{今の読み込み先・テーブル名と合う?}
     M -- 合わない --> R
-    M -- 合う --> U
-    R --> U[画面を開く]
+    M -- 合う --> L
+    R --> L[列を読み取り、日付の列を判定<br/>設定と照らし合わせて列の決まりを作る]
+    L --> N{列の注意がある?}
+    N -- ある --> NW[表示して続ける<br/>1 件を決める列がなければ画面で選ぶよう案内]
+    N -- ない --> U
+    NW --> U[画面を開く]
     U --> G[画面：get_view_config で表示定義を受け取り、一覧・詳細・検索・絞り込みを組み立てる]
 ```
 
@@ -184,8 +202,10 @@ flowchart TD
  ├─ 検証（config → schema → view）
  │    ├─ 誤りあり → 対象・項目・理由・対応をすべて表示して停止
  │    └─ 注意あり → 表示して続ける（未知のキーなど）
- ├─ キャッシュがない／今の schema（テーブル名・列名）と合わない → 作る（コピー → テーブル・列の確認 → 置換）
+ ├─ キャッシュがない／今の読み込み先・テーブル名と合わない → 作る（コピー → テーブルの確認 → 置換）
  │    └─ 作れなければ古いキャッシュは使わず、画面で「データを更新してください」と示す
+ ├─ 列を読み取り、日付の列を判定 → 設定と照らし合わせて列の決まりを作る
+ │    └─ 食い違いは「列の注意」として表示して続ける（1 件を決める列がなければ画面で選ぶ）
  └─ 画面：表示定義を受け取って組み立てる
 ```
 
@@ -200,28 +220,32 @@ flowchart TD
 | `dataSource.cachePath` | 基本はサンプル（`./data/cache/target-data.sqlite3`）。必要なときだけ `config.local.json` |
 | `dataSource.tableName` | `config/local/schema.local.json` の `tableName` |
 | `dataSource.readOnly` | 基本はサンプル |
-| `fieldMappings` | `config/local/schema.local.json` の `columns` |
+| `fieldMappings` | 不要（列名は DB と同じでよい）。1 件を決める列は `config/local/schema.local.json` の `recordKey` に DB の列名で書くか、画面で選ぶ。論理名で書きたいときだけ `columns`（別名） |
 | `cache` / `search` / `logging` / `devServer` | 基本はサンプル。必要なときだけ `config.local.json` |
-| （ソースコード内の表示名・表示順・検索対象・絞り込み・状態の色分け・既定の並べ替え） | `config/sample/view.sample.json`（社内だけの変更は `view.local.json`） |
-| （ソースコード内の 1 件を特定する項目・日付の項目） | `config/sample/schema.sample.json` の `recordKey`・`types` |
+| （ソースコード内の表示名・表示順・検索対象・絞り込み・状態の色分け・既定の並べ替え） | 表示名・表示順は DB のまま。検索対象は `schema.searchColumn`。絞り込みは全列。色分け・既定の並べ替えは `config/sample/view.sample.json`（社内だけの変更は `view.local.json`） |
+| （ソースコード内の 1 件を特定する項目・日付の項目） | `schema` の `recordKey`（画面でも選べる）。日付の列は値から判定（変えたいときだけ `types`） |
 
 旧 `config.local.json` の `dataSource.tableName` や `fieldMappings` を新しい `config.local.json` にそのまま残すと、
 サンプルにないキーとして「設定の注意」が出る（使われない）。`schema.local.json` へ移すこと。
 
-## 9. 列と表示名（column_catalog.py）
+## 9. 列と表示名（column_catalog.py・column_model.py）
 
-- 表示する列は、キャッシュのテーブルから読み取る（`PRAGMA table_info`）。設定には役割のある列だけを書く。
-- 表示名は DB の列名そのもの（詳細・一覧の見出し・検索の種類・絞り込みで共通）。表示名の設定はない。
-- 並び：役割のある列（`schema.columns` の順）→ ほかの列（DB の順）。列の id は役割のある列が論理名、ほかは DB の列名
-  （DB の列名が別の列の論理名と同じなら `名前#2` で区別）。
-- `get_view_config` は列の一覧（`columns`）と並びの印（`columnsVersion`）を返す。データの更新で印が変わると画面は読み込み直す。
+- 列は、キャッシュのテーブルから読み取る（`PRAGMA table_info`）。設定には役割（1 件を決める列・探す列など）だけを書く。
+- **列の id も表示名も DB の列名そのもの**（詳細・一覧の見出し・絞り込み・タグ・保存した表示の設定で共通）。表示名の設定はない。
+- 設定の名前の読み替え：DB に同じ名前の列があればその列、なければ別名（`schema.columns`）として DB の列名に読み替える。どちらもなければ使わない。
+- 種類：`schema.types` の指定が優先。指定がなければ値から判定する（空でない値がすべて `YYYY-MM-DD…`・`YYYY/MM/DD…`・`YYYYMMDD` なら日付。月・日の 1 桁目まで見て番号との取り違えを減らす。1 件を決める列・探す列は文字）。判定はキャッシュを作り直したときに 1 回だけ、表を列のまとまりごとに 1 回ずつ読んで行う。
+- 並び：1 件を決める列 → 番号で探す列 → 別名のある列（`schema.columns` の順）→ ほかの列（DB の順）。
+- `get_view_config` は列の一覧（`columns`）・1 件を決める列・探す列・別名・列の注意と、並びの印（`columnsVersion`）を返す。データの更新や 1 件を決める列の変更で印が変わると、画面は読み込み直す。
+- 画面は、以前の形（論理名）で保存したタグ・表示列・列幅・入力の履歴を、別名を使って DB の列名に読み替える。
 - テーブル名と読み込み先のパスは画面に渡さない。DB の列名は表示名として画面に渡す（ログには残さない）。
 
-## 9.1 画面からの書き込み（読み込み先）
+## 9.1 画面からの書き込み（読み込み先・1 件を決める列）
 
-- 画面から書き換えるのは `config.local.json` の `dataSource.sourcePath` だけ（`update_data_source`）。sample は書き換えない。
-- 接続テスト（`source_check.py`）がすべて ○ のときだけ書き込む。ほかのキーは残し、書き換え前を `.bak` に残し、一時ファイル → 置き換えで書く（`settings/local_writer.py`）。
-- 書き込み後に `load_settings` で読み直して検証し、誤りがあれば `.bak` に戻す。
+- 画面から書き換えるのは次の 2 つだけ。sample は書き換えない。
+  - `config.local.json` の `dataSource.sourcePath`（`update_data_source`）。接続テスト（`source_check.py`）で × がないときだけ書き込む（△＝1 件を決める列がない、は保存してから選び直せる）。
+  - `schema.local.json` の `recordKey`・`searchColumn`（`update_record_settings`）。DB にある列だけ。DB の列名で書く。探す列が 1 件を決める列の 1 つ目と同じなら `null`。
+- ほかのキーは残し、書き換え前を `.bak` に残し、一時ファイル → 置き換えで書く（`settings/local_writer.py`）。
+- 書き込み後に `load_settings` で読み直して検証し、誤りがあれば `.bak` に戻す。問題がなければ動いている設定を差し替える（`settings_updater.py`。読み込み先とで共通）。
 - キャッシュの状態ファイルに読み込み先の印（パスのハッシュ）を残し、前の読み込み先のキャッシュは使わない。
 
 ## 10. 設定項目を足すときの手順
@@ -240,12 +264,17 @@ flowchart TD
 Rust/Tauri 版へ移植しやすいよう、モジュール構成を src-tauri/src の構成に合わせている。
 
     settings/       ↔ config/（loader.rs・merge.rs・validation.rs）
+    settings_updater↔ config/updater.rs
     fields          ↔ models/lot.rs
+    column_catalog  ↔ models/catalog.rs（DB の列と、値から見た種類）
+    column_model    ↔ models/column_model.rs（設定と DB の列から、列の決まりを作る）
     cache_copier    ↔ cache/copier.rs
     cache_validator ↔ cache/validator.rs
     cache_service   ↔ cache/mod.rs
     query           ↔ db/query.rs
     lot_service     ↔ services/lot_service.rs
+    source_service  ↔ services/source_service.rs
+    record_service  ↔ services/record_service.rs
     commands        ↔ commands/*.rs
     errors          ↔ errors/mod.rs
     logging_setup   ↔ logging/mod.rs
@@ -345,7 +374,7 @@ from contextlib import contextmanager
 from datetime import datetime
 
 from . import cache_copier
-from .column_catalog import build_catalog, catalog_from_file, catalog_version
+from .column_catalog import catalog_from_file
 from .cache_validator import open_readonly, validate_cache_file
 from .errors import AppError
 
@@ -370,20 +399,20 @@ class CacheService:
         self.state_path = config.cache_path + ".status.json"
         # 置換中に検索が走らないよう、更新と読み取りを 1 本の鍵で順番にする
         self.lock = threading.RLock()
-        # 今の schema（テーブル名・列名）と合わないキャッシュは使わない。
-        # SQLite は存在しない列名を "..." で書くと文字列として扱うため、合わないまま検索すると誤った値が返る。
+        # 今の設定（読み込み先・テーブル名）と合わないキャッシュは使わない
         self.stale = False
-        self._catalog = None  # 表示する列の一覧（キャッシュから読み取る。キャッシュが変わったら作り直す）
+        self._catalog = None  # DB の列の一覧（キャッシュから読み取る。キャッシュが変わったら作り直す）
 
     # ── 列の一覧 ──
     def catalog(self):
-        """表示する列（column_catalog.Column の並び）。キャッシュがなければ役割のある列だけ。"""
+        """DB の列（column_catalog.DbColumn の並び）。キャッシュがなければ空。"""
         with self.lock:
             if not self.cache_available():
-                return build_catalog([], self.config.field_mappings)
+                return ()
             if self._catalog is None:
-                self._catalog = catalog_from_file(open_readonly, self.cache_path, self.config.table_name, self.config.field_mappings)
-                self.logger.info("column catalog columns=%d", len(self._catalog))  # 列名は残さない
+                self._catalog = catalog_from_file(open_readonly, self.cache_path, self.config.table_name)
+                self.logger.info("column catalog columns=%d dates=%d", len(self._catalog),
+                                 sum(1 for column in self._catalog if column.looks_date))  # 列名は残さない
             return self._catalog
 
     # ── 状態の読み書き ──
@@ -404,8 +433,10 @@ class CacheService:
     def use_config(self, config):
         """読み込み先の変更などで設定を差し替える。前の読み込み先から作ったキャッシュは使わない。"""
         with self.lock:
+            # 列の一覧は読み込み先とテーブル名だけで決まる（1 件を決める列の変更では読み直さない）
+            if (config.source_path, config.table_name) != (self.config.source_path, self.config.table_name):
+                self._catalog = None
             self.config = config
-            self._catalog = None
             if not self._same_source():
                 self.stale = True
 
@@ -418,7 +449,7 @@ class CacheService:
         return os.path.isfile(self.cache_path) and not self.stale
 
     def verify_existing(self):
-        """手元のキャッシュが今の schema と合うかを確かめる（起動時）。合わなければ使わない印を付けて False。"""
+        """手元のキャッシュが今の設定（読み込み先・テーブル名）と合うかを確かめる（起動時）。合わなければ使わない印を付けて False。"""
         if not os.path.isfile(self.cache_path):
             return False
         if not self._same_source():
@@ -426,7 +457,7 @@ class CacheService:
             self.logger.warning("existing cache was built from another source")
             return False
         try:
-            validate_cache_file(self.cache_path, self.config.table_name, self.config.field_mappings)
+            validate_cache_file(self.cache_path, self.config.table_name)
             self.stale = False
             return True
         except AppError as error:
@@ -441,7 +472,7 @@ class CacheService:
             state = self._read_state()
             try:
                 source_mtime = cache_copier.copy_to_temp(self.config.source_path, self.temp_path)
-                row_count = validate_cache_file(self.temp_path, self.config.table_name, self.config.field_mappings)
+                row_count = validate_cache_file(self.temp_path, self.config.table_name)
                 os.makedirs(os.path.dirname(self.cache_path) or ".", exist_ok=True)
                 os.replace(self.temp_path, self.cache_path)
                 self.stale = False
@@ -508,7 +539,7 @@ class CacheService:
         if not available and self.stale:
             message = ("手元のキャッシュは前の読み込み先から作ったため使っていません。データを更新してください。"
                        if not self._same_source() else
-                       "手元のキャッシュが今の設定（テーブル名・列名）と合わないため使っていません。データを更新してください。")
+                       "手元のキャッシュが今の設定（テーブル名）と合わないため使っていません。データを更新してください。")
         elif not available:
             message = "検索できるデータがまだありません。データを更新してください。"
         elif not succeeded:
@@ -531,8 +562,6 @@ class CacheService:
             "lastRefreshAt": state.get("lastRefreshAt"),
             "errorCode": None if succeeded else state.get("errorCode"),
             "errorMessage": None if succeeded else state.get("errorMessage"),
-            # 列の並びの印。変わったら画面は表示定義を読み直す
-            "columnsVersion": catalog_version(self.catalog()),
         })
 
     # ── 読み取り ──
@@ -554,69 +583,81 @@ class CacheService:
 `python/data_search/column_catalog.py`
 
 ```python
-"""表示する列の一覧（カタログ）。キャッシュのテーブルから列を読み取り、DB の列名をそのまま表示名にする。
+"""DB のテーブルから読み取る列の一覧（カタログ）。設定に関係なく、DB の事実だけを持つ。
 
-    並び順 … 役割のある列（schema.columns の順）を先に、残りは DB の列の順
-    id     … 役割のある列は論理名（検索・絞り込みなどで使う）。ほかの列は DB の列名
-             （DB の列名が、別の列の論理名と同じになったときは「名前#2」のように区別する）
-    label  … DB の列名（画面の見出し・詳細・絞り込みで共通）
-
-設定に書くのは役割のある列だけでよく、DB に列が増えれば自動で表示される。
+    name       … DB の列名（そのまま画面の列の id・見出しになる）
+    looks_date … 空でない値がすべて日付の書き方か（YYYY-MM-DD… / YYYY/MM/DD… / YYYYMMDD）
+                 1 つでも当てはまらない値があれば、または値がすべて空なら False
+並びは DB の順。どの列に役割（1 件を決める・番号で探す）を持たせるかは、column_model.py が設定から決める。
 """
 
-import hashlib
 import sqlite3
 from dataclasses import dataclass
 
-from .query import quote_identifier
+from .query import blank_expression, quote_identifier
+
+# 月・日の 1 桁目まで見て、ただの数字の並び（番号など）を日付と取り違えにくくする
+DATE_GLOBS = (
+    "[12][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]*",
+    "[12][0-9][0-9][0-9]/[01][0-9]/[0-3][0-9]*",
+)
+COMPACT_DATE_GLOB = "[12][0-9][0-9][0-9][01][0-9][0-3][0-9]"
+DETECT_CHUNK = 200  # 1 つの SQL で調べる列の数（SQLite の結果列数の上限より十分小さく）
 
 
 @dataclass(frozen=True)
-class Column:
-    id: str
-    physical: str
-    role: bool
-
-    def public(self):
-        return {"id": self.id, "label": self.physical, "role": self.role}
+class DbColumn:
+    name: str
+    looks_date: bool = False
 
 
-def build_catalog(table_columns, field_mappings):
-    """table_columns：DB の列名（DB の順）。field_mappings：役割のある列の 論理名 → DB の列名。"""
-    role_physical = set(field_mappings.values())
-    columns = [Column(name, physical, True) for name, physical in field_mappings.items()]
-    used = set(field_mappings)
-    for physical in table_columns:
-        if physical in role_physical:
-            continue
-        column_id, number = physical, 2
-        while column_id in used:
-            column_id, number = f"{physical}#{number}", number + 1
-        used.add(column_id)
-        columns.append(Column(column_id, physical, False))
-    return tuple(columns)
+def _date_test(column):
+    text = f"CAST({column} AS TEXT)"
+    parts = [f"{text} GLOB '{pattern}'" for pattern in DATE_GLOBS]
+    parts.append(f"(length({text}) = 8 AND {text} GLOB '{COMPACT_DATE_GLOB}')")
+    return "(" + " OR ".join(parts) + ")"
+
+
+def detect_date_columns(conn, table_name, names):
+    """値がすべて日付の書き方になっている列の名前を返す（表を列のまとまりごとに 1 回ずつ読む）。"""
+    found = set()
+    table = quote_identifier(table_name)
+    for start in range(0, len(names), DETECT_CHUNK):
+        chunk = names[start:start + DETECT_CHUNK]
+        terms = []
+        for name in chunk:
+            column = quote_identifier(name)
+            filled = f"NOT {blank_expression(column)}"
+            terms.append(f"SUM(CASE WHEN {filled} THEN 1 ELSE 0 END)")
+            terms.append(f"SUM(CASE WHEN {filled} AND NOT {_date_test(column)} THEN 1 ELSE 0 END)")
+        row = conn.execute(f"SELECT {', '.join(terms)} FROM {table}").fetchone()
+        for index, name in enumerate(chunk):
+            filled, others = row[index * 2] or 0, row[index * 2 + 1] or 0
+            if filled and not others:
+                found.add(name)
+    return found
 
 
 def read_table_columns(conn, table_name):
     return [row[1] for row in conn.execute(f"PRAGMA table_info({quote_identifier(table_name)})")]
 
 
-def catalog_from_file(open_connection, path, table_name, field_mappings):
-    """キャッシュのファイルから作る。読めなければ役割のある列だけ（画面はそれだけで動く）。"""
+def read_catalog(conn, table_name):
+    names = read_table_columns(conn, table_name)
+    dates = detect_date_columns(conn, table_name, names) if names else set()
+    return tuple(DbColumn(name, name in dates) for name in names)
+
+
+def catalog_from_file(open_connection, path, table_name):
+    """キャッシュのファイルから作る。読めなければ空（画面は「データを更新してください」と出す）。"""
     try:
         conn = open_connection(path)
         try:
-            return build_catalog(read_table_columns(conn, table_name), field_mappings)
+            return read_catalog(conn, table_name)
         finally:
             conn.close()
     except sqlite3.Error:
-        return build_catalog([], field_mappings)
-
-
-def catalog_version(columns):
-    """列の並びが変わったかを画面が見分けるための印。"""
-    text = "\u001f".join(f"{c.id}\u001e{c.physical}" for c in columns)
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+        return ()
 ```
 
 `python/data_search/commands.py`
@@ -627,7 +668,6 @@ def catalog_version(columns):
 命令を増やすときは @command("名前") を付けた関数を足すだけでよい（既存の処理は変えない）。
 """
 
-from .column_catalog import catalog_version
 from .errors import AppError
 
 _REGISTRY = {}
@@ -678,7 +718,8 @@ def refresh_cache(ctx, payload):
 
 @command("get_cache_status")
 def get_cache_status(ctx, payload):
-    return ctx.cache_service.status()
+    # 列の決まりの印。変わったら（DB の列が増えた・1 件を決める列を変えた）画面は表示定義を読み直す
+    return dict(ctx.cache_service.status(), columnsVersion=ctx.lot_service.model.version)
 
 
 @command("get_data_source")
@@ -701,10 +742,22 @@ def update_data_source(ctx, payload):
 
 @command("get_view_config")
 def get_view_config(ctx, payload):
-    """画面の表示定義（view と schema の論理情報）と、表示する列（DB の列名が表示名）。テーブル名・パスは含めない。"""
-    columns = ctx.cache_service.catalog()
-    return dict(ctx.config.public_view(), success=True,
-                columns=[column.public() for column in columns], columnsVersion=catalog_version(columns))
+    """画面の表示定義：DB の全列（DB の列名が id・表示名）と種類、1 件を決める列、番号で探す列、注意。
+    テーブル名・パスは含めない。"""
+    return dict(ctx.lot_service.model.public(), success=True,
+                recordSettingsFile=ctx.record_service.describe()["localFile"] if ctx.record_service else None)
+
+
+@command("check_record_key")
+def check_record_key(ctx, payload):
+    """選んだ列の組み合わせで 1 件に決まるかを数える（保存はしない）。"""
+    return ctx.record_service.check(payload)
+
+
+@command("update_record_settings")
+def update_record_settings(ctx, payload):
+    """1 件を決める列と番号で探す列を schema.local.json に保存し、列の決まりを差し替える。"""
+    return ctx.record_service.update(payload)
 
 
 @command("get_application_info")
@@ -735,9 +788,9 @@ USER_MESSAGES = {
     "CACHE_COPY_FAILED": "共有データをコピーできませんでした。少し待ってからもう一度更新してください。",
     "CACHE_INVALID": "取得したデータが壊れていたため、使用しませんでした。",
     "CACHE_TABLE_MISSING": "取得したデータに必要な表がないため、使用しませんでした。schema.local.json の tableName を確認してください。",
-    "CACHE_COLUMN_MISSING": "取得したデータに必要な列がないため、使用しませんでした。schema.local.json の columns を確認してください。",
     "CACHE_UNAVAILABLE": "検索できるデータがまだありません。データを更新してください。",
     "SETTINGS_WRITE_FAILED": "設定ファイルに書き込めませんでした。config/local フォルダの権限と、ほかのアプリで開いていないかを確認してください。",
+    "KEY_NOT_READY": "1 件を決める列が決まっていません。画面左の「データ」→「1 件を決める列」で選んでください。",
     "INVALID_REQUEST": "検索の条件が正しくありません。入力内容を確認してください。",
     "NOT_FOUND": "選んだデータが見つかりません。データが更新された可能性があります。もう一度検索してください。",
     "UNKNOWN_COMMAND": "この操作には対応していません。",
@@ -776,8 +829,8 @@ def error_response(error, detail_id):
 ```python
 """検索・絞り込みの決まり（上限値など）。
 
-論理項目の名前・検索できる項目・絞り込みの種類・1 件を特定する鍵は、ここには書かない。
-config/sample の schema / view（とローカルの上書き）から settings.DataModel として組み立てる。
+列の名前・探す列・絞り込みの種類・1 件を特定する列は、ここには書かない。
+設定（settings.ModelSettings）とキャッシュのテーブルの列から column_model.ColumnModel として組み立てる。
 """
 
 FILTER_VALUES_MAX = 200      # 1 項目で選べる値の数の上限
@@ -835,6 +888,7 @@ class AppContext:
     lot_service: object
     logger: object
     source_service: object = None   # 読み込み先の確認・変更（SourceService）。作成後に入れる
+    record_service: object = None   # 1 件を決める列の確認・変更（RecordService）。作成後に入れる
 
 
 class RequestHandler(SimpleHTTPRequestHandler):
@@ -970,8 +1024,9 @@ from .fields import (
     SORT_ORDERS,
     VALUE_LIST_LIMIT,
 )
-from .column_catalog import catalog_version
+from .column_model import ColumnModelProvider
 from .query import QueryBuilder
+from .settings.validation import RECORD_KEY_MAX
 
 
 def normalize_keyword(value):
@@ -1012,8 +1067,12 @@ def _require_object(payload):
 
 # ── 入力の読み取り ─────────────────────────────────────────
 
+def _not_ready():
+    return AppError("KEY_NOT_READY", "record key is not resolved")
+
+
 def parse_search(payload, required, model):
-    """(searchType, keyword, matchMode) か、検索なしなら None を返す。"""
+    """(番号で探す列, keyword, matchMode) か、検索なしなら None を返す。探す列は設定（model）で決まる。"""
     keyword = payload.get("keyword")
     if keyword is None and not required:
         return None
@@ -1026,13 +1085,12 @@ def parse_search(payload, required, model):
         return None
     if len(keyword) > KEYWORD_MAX_LENGTH:
         raise _invalid("keyword too long", f"検索する番号は {KEYWORD_MAX_LENGTH} 文字以内で入力してください。")
-    search_type = payload.get("searchType")
-    if search_type not in model.searchable:
-        raise _invalid("unknown searchType")
+    if model.search_column is None:
+        raise _not_ready()
     match_mode = payload.get("matchMode", "partial")
     if match_mode not in MATCH_MODES:
         raise _invalid("unknown matchMode")
-    return search_type, keyword, match_mode
+    return model.search_column, keyword, match_mode
 
 
 def _parse_relative_days(spec, name):
@@ -1056,16 +1114,24 @@ def _parse_iso_date(spec, name):
         raise _invalid("invalid date", "日付は 年（4 桁）・月・日 で正しく入力してください。") from exc
 
 
+def filter_kind(model, name):
+    """その列の絞り込みの種類。日付の列は日付の範囲、ほかは値から選ぶ。列がなければ None。"""
+    kind = model.kind_of(name)
+    if kind is None:
+        return None
+    return "date" if kind == "date" else "values"
+
+
 def parse_filters(payload, today, model):
-    """画面から来た絞り込みを、QueryBuilder が受け取る形に直す。空の条件は無視する。"""
+    """画面から来た絞り込みを、QueryBuilder が受け取る形に直す。空の条件は無視する。どの列でも絞り込める。"""
     raw = payload.get("filters") or {}
     if not isinstance(raw, dict):
         raise _invalid("filters must be an object")
     filters = []
     for name, spec in raw.items():
-        kind = model.filters.get(name)
+        kind = filter_kind(model, name)
         if kind is None or not isinstance(spec, dict) or spec.get("type") != kind:
-            raise _invalid(f"unknown filter: {name}")
+            raise _invalid("unknown filter")
         if kind == "values":
             values = spec.get("values")
             if not isinstance(values, list) or len(values) > FILTER_VALUES_MAX:
@@ -1092,6 +1158,16 @@ def parse_filters(payload, today, model):
     return filters
 
 
+def parse_key_columns(payload, model, name="recordKey"):
+    """1 件を決める列の候補（1〜3 個・重複なし・テーブルにある列）。"""
+    names = payload.get(name)
+    if not isinstance(names, list) or not 1 <= len(names) <= RECORD_KEY_MAX:
+        raise _invalid(f"{name} must be a list", f"1 件を決める列は 1〜{RECORD_KEY_MAX} 個選んでください。")
+    if len(set(map(str, names))) != len(names) or not all(isinstance(n, str) and model.has(n) for n in names):
+        raise _invalid(f"unknown column in {name}", "1 件を決める列は、一覧にある列から重ならないように選んでください。")
+    return names
+
+
 # ── 業務ロジック ─────────────────────────────────────────
 
 class LotService:
@@ -1099,24 +1175,35 @@ class LotService:
         self.config = config
         self.cache = cache_service
         self.logger = logger
-        self.model = config.model
+        # 列の決まり（設定とキャッシュの列から作る）。設定を差し替えたら self.config を変えるだけでよい
+        self.models = ColumnModelProvider(lambda: self.config, cache_service)
         self._query, self._query_key = None, None
         self._today = today  # テストで日付を固定するため
 
     @property
+    def model(self):
+        return self.models.get()
+
+    def _data_model(self):
+        """検索できるデータがあるときの列の決まり。なければ CACHE_UNAVAILABLE（列の決まりより先に知らせる）。"""
+        if not self.cache.cache_available():
+            raise AppError("CACHE_UNAVAILABLE", "cache file not found")
+        return self.model
+
+    @property
     def query(self):
-        """列の一覧（キャッシュのテーブル）か設定が変わったら、SQL の組み立て役を作り直す。"""
-        catalog = self.cache.catalog()
-        key = (catalog_version(catalog), self.config.table_name)
+        """列の決まりか設定が変わったら、SQL の組み立て役を作り直す。"""
+        model = self.model
+        key = (model.version, self.config.table_name)
         if key != self._query_key:
-            self._query = QueryBuilder(self.config.table_name, catalog, self.model)
+            self._query = QueryBuilder(self.config.table_name, model)
             self._query_key = key
         return self._query
 
     def today(self):
         return self._today() if self._today else date.today()
 
-    def _execute(self, sql, params, fetch):
+    def execute(self, sql, params, fetch):
         with self.cache.read_connection() as conn:
             try:
                 cursor = conn.execute(sql, params)
@@ -1135,13 +1222,15 @@ class LotService:
 
     def _list(self, payload, keyword_required):
         today = self.today()
-        search = parse_search(payload, keyword_required, self.model)
-        filters = parse_filters(payload, today, self.model)
+        model = self._data_model()
+        search = parse_search(payload, keyword_required, model)
+        filters = parse_filters(payload, today, model)
         query = self.query
-        sort_key = payload.get("sortKey") or self.model.default_sort[0]
+        default_key, default_order = model.default_sort
+        sort_key = payload.get("sortKey") or default_key
         if sort_key not in query.columns:
             raise _invalid("unknown sortKey")
-        sort_order = payload.get("sortOrder") or (self.model.default_sort[1] if sort_key == self.model.default_sort[0] else "asc")
+        sort_order = payload.get("sortOrder") or (default_order if sort_key == default_key else "asc")
         if sort_order not in SORT_ORDERS:
             raise _invalid("unknown sortOrder")
         page = _require_int(payload, "page", 1, 1, 10_000_000)
@@ -1150,16 +1239,14 @@ class LotService:
         started = time.perf_counter()
         count_sql, count_params = query.count(search, filters)
         rows_sql, rows_params = query.rows(search, filters, sort_key, sort_order, page_size, (page - 1) * page_size)
-        total = self._execute(count_sql, count_params, "one")[0]
-        rows = self._execute(rows_sql, rows_params, "all")
+        total = self.execute(count_sql, count_params, "one")[0]
+        rows = self.execute(rows_sql, rows_params, "all")
         elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
 
-        # 検索値・絞り込みの値そのものはログへ出さない（種類・件数だけ）
+        # 検索値・絞り込みの値・列名はログへ出さない（種類・件数だけ）
         self.logger.info(
-            "list search=%s filters=%s total=%d elapsed_ms=%s",
-            f"{search[0]}/{search[2]}/len{len(search[1])}" if search else "-",
-            ",".join(name for name, _, _ in filters) or "-",
-            total, elapsed_ms,
+            "list search=%s filters=%d total=%d elapsed_ms=%s",
+            f"{search[2]}/len{len(search[1])}" if search else "-", len(filters), total, elapsed_ms,
         )
         items = [_row_to_item(row, query.ids) for row in rows]
         return {
@@ -1175,41 +1262,79 @@ class LotService:
         }
 
     def filter_values(self, payload):
-        """絞り込みの候補（値と件数）。ほかの絞り込みと番号の検索を反映して数える"""
+        """絞り込みの候補（値と件数）。ほかの絞り込みと番号の検索を反映して数える。
+        match を渡すと、その文字を含む値だけを数える（値が多い列で、上位に出ない値を探すため）。"""
         payload = _require_object(payload)
+        model = self._data_model()
         name = payload.get("field")
-        if self.model.filters.get(name) != "values":
+        if filter_kind(model, name) != "values":
             raise _invalid("field is not a value filter")
-        search = parse_search(payload, False, self.model)
-        filters = parse_filters(payload, self.today(), self.model)
-        sql, params = self.query.values(name, search, filters, VALUE_LIST_LIMIT + 1)
-        rows = self._execute(sql, params, "all")
+        match = payload.get("match")
+        if match is not None:
+            if not isinstance(match, str):
+                raise _invalid("match must be a string")
+            match = normalize_keyword(match)
+            if len(match) > KEYWORD_MAX_LENGTH:
+                raise _invalid("match too long", f"探す文字は {KEYWORD_MAX_LENGTH} 文字以内で入力してください。")
+        search = parse_search(payload, False, model)
+        filters = parse_filters(payload, self.today(), model)
+        sql, params = self.query.values(name, search, filters, VALUE_LIST_LIMIT + 1, match or None)
+        rows = self.execute(sql, params, "all")
         return {
             "success": True,
             "field": name,
             "values": [{"value": row[0], "count": row[1]} for row in rows[:VALUE_LIST_LIMIT]],
             "truncated": len(rows) > VALUE_LIST_LIMIT,
+            "match": match or None,
         }
 
     def detail(self, payload):
+        """1 件の全項目。payload は 1 件を決める列の 列名 → 値（空欄は null）"""
         payload = _require_object(payload)
+        model = self._data_model()
+        if not model.ready:
+            raise _not_ready()
         key_values = {}
-        for name in self.model.record_key:
+        for name in model.record_key:
             value = payload.get(name)
             if value is not None and not isinstance(value, str):
-                raise _invalid(f"{name} must be a string or null")
+                raise _invalid("key value must be a string or null")
             key_values[name] = value
-        if not key_values[self.model.record_key[0]]:
-            raise _invalid(f"{self.model.record_key[0]} is required")
+        if not any(key_values.values()):
+            raise _invalid("key values are empty")
 
         query = self.query
         sql, params = query.detail(key_values)
-        rows = self._execute(sql, params, "all")
+        rows = self.execute(sql, params, "all")
         if not rows:
             raise AppError("NOT_FOUND", "record not found")
         if len(rows) > 1:
             self.logger.warning("detail key is not unique")
         return {"success": True, "item": _row_to_item(rows[0], query.ids), "duplicated": len(rows) > 1}
+
+    def check_record_key(self, payload):
+        """選んだ列の組み合わせで 1 件に決まるかを数える（保存はしない）。"""
+        payload = _require_object(payload)
+        names = parse_key_columns(payload, self._data_model())
+        query = self.query
+        total = self.execute(*query.count(None, []), "one")[0]
+        groups, rows = self.execute(*query.key_duplicates(names), "one")
+        example = None
+        if groups:
+            found = self.execute(*query.key_duplicate_example(names), "one")
+            example = {"values": dict(zip(names, (_to_text(v) for v in found[:-1]))), "count": found[-1]}
+        blank = self.execute(*query.key_blank_rows(names), "one")[0]
+        self.logger.info("record key check columns=%d rows=%d duplicate_groups=%d blank=%d", len(names), total, groups, blank)
+        return {
+            "success": True,
+            "recordKey": names,
+            "rowCount": total,
+            "duplicateGroups": groups,
+            "duplicateRows": rows,
+            "blankRows": blank,
+            "unique": groups == 0,
+            "example": example,
+        }
 ```
 
 `python/data_search/query.py`
@@ -1217,8 +1342,8 @@ class LotService:
 ```python
 """論理条件から SQL を組み立てる。値は必ずパラメーターで渡し、文字列連結しない。
 
-表名は設定ファイル、列名は設定ファイルとキャッシュのテーブルから来る値だけを使う。
-画面から受け取った列の id は、列の一覧（column_catalog）と照合してから使う。
+表名は設定ファイル、列名はキャッシュのテーブルから読み取った値だけを使う。
+画面から受け取った列の名前は、列の決まり（column_model）と照合してから使う。
 """
 
 
@@ -1257,23 +1382,23 @@ def blank_expression(column):
 
 class QueryBuilder:
     """
-    search  … None または (searchType, keyword, matchMode)
-    filters … [(論理名, "values", [値 or None, ...]) / (論理名, "date", (from, to))]
+    search  … None または (DB の列名, keyword, matchMode)
+    filters … [(DB の列名, "values", [値 or None, ...]) / (DB の列名, "date", (from, to))]
               date の from / to は 'YYYY-MM-DD' か None（日付は呼び出し側で確定させる）
     """
 
-    def __init__(self, table_name, catalog, model):
-        """catalog：表示する列（column_catalog.Column の並び。役割のある列を必ず含む）"""
+    def __init__(self, table_name, model):
+        """model：column_model.ColumnModel（列はすべてキャッシュのテーブルにある）"""
         self.model = model
         self.table = quote_identifier(table_name)
-        self.ids = tuple(column.id for column in catalog)
-        self.columns = {column.id: quote_identifier(column.physical) for column in catalog}
-        self.select_list = ", ".join(f"{self.columns[name]} AS {quote_identifier(name)}" for name in self.ids)
+        self.ids = model.ids
+        self.columns = {name: quote_identifier(name) for name in self.ids}
+        self.select_list = ", ".join(self.columns[name] for name in self.ids)
 
     # ── 条件 ──
     def _search_condition(self, search):
-        search_type, keyword, match_mode = search
-        column = self.columns[search_type]
+        name, keyword, match_mode = search
+        column = self.columns[name]
         if match_mode == "exact":
             return f"{column} = ? COLLATE NOCASE", [keyword]
         return f"{column} LIKE ? ESCAPE '{LIKE_ESCAPE}'", [f"%{escape_like(keyword)}%"]
@@ -1284,7 +1409,8 @@ class QueryBuilder:
             parts, params = [], []
             values = [value for value in data if value is not None]
             if values:
-                parts.append(f"{column} IN ({', '.join('?' for _ in values)})")
+                # 値は文字列で比べる（数値で入っている列でも、一覧に出した文字のまま選べるように）
+                parts.append(f"CAST({column} AS TEXT) IN ({', '.join('?' for _ in values)})")
                 params.extend(values)
             if any(value is None for value in data):
                 parts.append(blank_expression(column))
@@ -1301,7 +1427,7 @@ class QueryBuilder:
             params.append(end)
         return "(" + " AND ".join(parts) + ")", params
 
-    def _where(self, search, filters, exclude=None):
+    def _where(self, search, filters, exclude=None, extra=None):
         parts, params = [], []
         if search:
             sql, values = self._search_condition(search)
@@ -1313,10 +1439,13 @@ class QueryBuilder:
             sql, values = self._filter_condition(name, kind, data)
             parts.append(sql)
             params.extend(values)
+        if extra:
+            parts.append(extra[0])
+            params.extend(extra[1])
         return (" WHERE " + " AND ".join(parts)) if parts else "", params
 
     def _sort_expression(self, name):
-        return date_expression(self.columns[name]) if name in self.model.date_fields else self.columns[name]
+        return date_expression(self.columns[name]) if self.model.kind_of(name) == "date" else self.columns[name]
 
     # ── 文 ──
     def count(self, search, filters):
@@ -1338,10 +1467,14 @@ class QueryBuilder:
         )
         return sql, params + [limit, offset]
 
-    def values(self, name, search, filters, limit):
-        """項目の値の一覧と件数。自分自身の絞り込みは外して数える（選び直せるように）。"""
+    def values(self, name, search, filters, limit, match=None):
+        """項目の値の一覧と件数。自分自身の絞り込みは外して数える（選び直せるように）。
+        match を渡すと、その文字を含む値だけ（値が多い列で、上位に出ない値を探すため）。"""
         column = self.columns[name]
-        where, params = self._where(search, filters, exclude=name)
+        extra = None
+        if match:
+            extra = (f"CAST({column} AS TEXT) LIKE ? ESCAPE '{LIKE_ESCAPE}'", [f"%{escape_like(match)}%"])
+        where, params = self._where(search, filters, exclude=name, extra=extra)
         value = f"CASE WHEN {blank_expression(column)} THEN NULL ELSE CAST({column} AS TEXT) END"
         sql = (
             f"SELECT {value} AS v, COUNT(*) AS c FROM {self.table}{where} "
@@ -1354,5 +1487,24 @@ class QueryBuilder:
         where = " AND ".join(f"{self.columns[name]} IS ?" for name in self.model.record_key)
         sql = f"SELECT {self.select_list} FROM {self.table} WHERE {where} LIMIT 2"
         return sql, [key_values[name] for name in self.model.record_key]
+
+    # ── 1 件を決める列の確認 ──
+    def key_duplicates(self, names):
+        """同じ値の組み合わせが 2 行以上ある組の数と、その行の合計。"""
+        group = ", ".join(self.columns[name] for name in names)
+        return (f"SELECT COUNT(*), COALESCE(SUM(c), 0) FROM "
+                f"(SELECT COUNT(*) AS c FROM {self.table} GROUP BY {group} HAVING COUNT(*) > 1)"), []
+
+    def key_duplicate_example(self, names):
+        """重なっている組み合わせのうち、行がいちばん多いもの（例として見せる）。"""
+        group = ", ".join(self.columns[name] for name in names)
+        texts = ", ".join(f"CAST({self.columns[name]} AS TEXT)" for name in names)
+        return (f"SELECT {texts}, COUNT(*) AS c FROM {self.table} GROUP BY {group} "
+                f"HAVING COUNT(*) > 1 ORDER BY c DESC LIMIT 1"), []
+
+    def key_blank_rows(self, names):
+        """1 件を決める列がすべて空欄の行の数。"""
+        where = " AND ".join(blank_expression(self.columns[name]) for name in names)
+        return f"SELECT COUNT(*) FROM {self.table} WHERE {where}", []
 ```
 
