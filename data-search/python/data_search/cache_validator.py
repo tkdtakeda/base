@@ -34,7 +34,10 @@ def validate_cache_file(path, table_name, field_mappings):
             raise AppError(
                 "CACHE_COLUMN_MISSING",
                 f"missing logical fields: {', '.join(missing)}",
-                user_message=f"取得したデータに必要な項目（{', '.join(missing)}）がないため、使用しませんでした。",
+                user_message=(
+                    f"取得したデータに、schema.local.json の columns で指定した列（{', '.join('columns.' + name for name in missing)}）が"
+                    "ないため、使用しませんでした。列名を確認してください。"
+                ),
             )
         return conn.execute(f"SELECT COUNT(*) FROM {quote_identifier(table_name)}").fetchone()[0]
     finally:

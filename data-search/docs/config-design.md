@@ -1,120 +1,200 @@
-# 設定ファイルの読み込み設計
+# 設定ファイルの設計
 
-対象：`python/data_search/config_loader.py`（Rust 版では `src-tauri/src/config/loader.rs` に同じ決まりで移す）
+対象コード：`python/data_search/settings/`（`loader.py`・`merge.py`・`validation.py`）と `python/run_server.py`。
+Rust 版では `src-tauri/src/config/` に同じ決まりで移す。
 
-## 1. 役割
+## 1. 目的
 
-| ファイル | 役割 | Git | 外部 AI へ | 中身 |
-|---|---|---|---|---|
-| `config/config.sample.json` | **正式な設定スキーマ兼初期値** | 管理する | 渡してよい | すべてのキー。社内情報は含めない（データの場所・表名・列名は仮の値 `<...>`） |
-| `config/config.local.json` | 社内専用の上書き | 管理しない（.gitignore） | 渡さない | **変えたい項目だけ**。なくても起動できる |
-| `config/config.dummy.json` | ダミーデータ用の上書き | 管理しない（自動生成） | — | `make_dummy_db.py` が作る。local と同じく必要な項目だけ |
+- ハードコーディングを避ける（DB パス・テーブル名・列名・表示項目・表示順をソースコードに書かない）
+- 環境設定（config）・DB 定義（schema）・画面表示定義（view）を分ける
+- 外部提供できるファイル（`config/sample`）と社内専用ファイル（`config/local`）を**フォルダで**分ける
+- サンプルを初期値とし、ローカルは必要な項目だけを上書きする（全項目を重複して書かない）
 
-- `config.sample.json` を更新しても、`config.local.json` の修正は**必須ではない**（新しいキーは sample の値で動く）。
-- 新しいキーの値を社内の値にしたいときだけ、`config.local.json` にそのキーを書き足す。
+## 2. フォルダ構成
 
-## 2. 読み込みの流れ
-
-1. `config.sample.json` を読み込み、設定の初期値とする（ないときは起動しない。アプリのファイル不足のため）
-2. `config.local.json` が**ある場合だけ**読み込む（`--config` を指定したときは、そのファイルを代わりに使う）
-3. 同じキーは `config.local.json` の値で上書きする
-4. `config.local.json` にないキーは `config.sample.json` の値を使う
-5. 重ねた結果の値の範囲を確かめる
-6. 仮の値（`<...>`）が残っている設定を調べる
-   - データの場所・表名・列名に残っている → **「設定が未完了」で起動**（共有データ・キャッシュには触れない）
-   - それ以外に残っている → sample の作り方の誤りとして起動しない
-
-## 3. 重ね合わせ（マージ）の決まり
-
-`merge_settings(sample, local)` は、sample を壊さずに新しい設定を作る。
-
-| local の状態 | 結果 | 例 |
-|---|---|---|
-| キーがない | sample の値を使う（**エラーにしない**） | local に `devServer` がない → sample の `devServer` を使う |
-| キーがあり、型が同じ | local の値で置き換える | `"tableName": "実際の表名"` |
-| 両方がオブジェクト `{ }` | 中身をキーごとに重ねる（入れ子も同じ） | local の `fieldMappings` に `lotNo` だけ → ほかの 11 項目は sample の値 |
-| キーがあり、型が違う | 起動しない（違う箇所をすべて表示） | `"pageSize": "100"`（文字列）→ 整数にしてください |
-| sample にないキー | 使わない。起動はし、**書き間違いの可能性として表示** | `"table"`（正しくは `tableName`）、`"dataSources"` |
-
-- 型は「文字列／整数／数値／true・false／オブジェクト／配列／null」で比べる（`true` と `1` は別物）。
-- 配列は（今の sample にはないが）中身を重ねず、丸ごと置き換える。
-- 値の範囲（`pageSize ≤ maxPageSize`、`readOnly` は true など）は**重ねたあと**に確かめる。
-
-### 例
-
-```jsonc
-// config.sample.json（抜粋）
-{ "dataSource": { "sourcePath": "<SHARED_SQLITE_PATH>", "tableName": "<TARGET_TABLE_NAME>", "readOnly": true },
-  "devServer":  { "host": "127.0.0.1", "port": 8765, "openBrowser": true } }
-
-// config.local.json（必要な項目だけ）
-{ "dataSource": { "sourcePath": "Z:/shared/data.sqlite3", "tableName": "t_lot" } }
-
-// 重ねた結果
-{ "dataSource": { "sourcePath": "Z:/shared/data.sqlite3", "tableName": "t_lot", "readOnly": true },
-  "devServer":  { "host": "127.0.0.1", "port": 8765, "openBrowser": true } }
+```text
+data-search/config/
+├─ sample/                  外部提供可能（Git 管理対象・外部 AI へ渡してよい・社内情報を含めない）
+│  ├─ config.sample.json
+│  ├─ schema.sample.json
+│  └─ view.sample.json
+├─ local/                   社内専用（フォルダごと Git 管理対象外・外部へ出さない・なくても起動まで進む）
+│  ├─ config.local.json
+│  ├─ schema.local.json
+│  └─ view.local.json
+└─ dummy/                   ダミーデータ用の上書き（make_dummy_db.py が作る・Git 管理対象外）
+   ├─ config.local.json
+   └─ schema.local.json
 ```
 
-## 4. 起動フロー
+`.gitignore` で `config/local/` と `config/dummy/` をフォルダごと除外する（`.gitkeep` は置かない。誤って中身を追跡しないため）。
+
+## 3. 各ファイルの責務
+
+| ファイル | 持つもの | 持たないもの |
+|---|---|---|
+| `config.sample.json` | アプリ基本情報、データソースの有効/無効・識別子・読み取り専用、共有 SQLite パスの**プレースホルダー**、キャッシュのパスと動作、検索の初期値、ログ、開発用サーバー | テーブル名、列名、論理と物理の対応、表示項目・表示順 |
+| `config.local.json` | 実際の共有 SQLite のパスなど、環境で変わる値だけ | テーブル名、列名（schema へ） |
+| `schema.sample.json` | データソース識別子、テーブル名の**プレースホルダー**、論理項目と物理列名（**プレースホルダー**）の対応、1 件を特定する項目（`recordKey`）、日付として扱う項目（`types`） | 表示名、表示順、表示/非表示 |
+| `schema.local.json` | 実際のテーブル名・物理列名（DB 構造が変わったときの主な修正先）。社内だけの論理項目の追加 | 表示順、表示/非表示 |
+| `view.sample.json` | 一覧の列（`listColumns`：論理名・表示名・表示/非表示・検索対象・幅。配列順＝表示順）、詳細の項目（`detailFields`）、詳細のまとまり（`detailGroups`）、項目ごとの表示（`fields`：表示名・等幅・コピー・入力例・値の札）、絞り込み（`filters`）、既定の並べ替え（`defaultSort`） | 物理列名 |
+| `view.local.json` | 社内環境だけの表示変更（なくてよい） | 物理列名 |
+
+`recordKey` と `types` は依頼書に明記がなかったため、**DB の論理構造**として schema に置いた（「1 件を特定する列」「日付として比べる列」はデータの性質であり、表示の都合ではないため）。
+
+## 4. 起動時の読み込み順
+
+1. `config/sample/config.sample.json` を読み込む
+2. `config/local/config.local.json` があれば読み込む
+3. ローカルをサンプルへ再帰マージする
+4. `config/sample/schema.sample.json` を読み込む
+5. `config/local/schema.local.json` があれば読み込む
+6. ローカルをサンプルへ再帰マージする
+7. `config/sample/view.sample.json` を読み込む
+8. `config/local/view.local.json` があれば読み込む
+9. ローカルをサンプルへマージする
+10. マージ後の config・schema・view を検証する（誤りはすべて集めてから止める）
+11. schema に従って共有 SQLite をコピーし、テーブルと列の存在を確かめてからキャッシュとして使う
+12. view に従って検索画面を組み立てる（画面は最初に `get_view_config` で表示定義を受け取る）
+
+`--local-dir` で `config/local` の代わりのフォルダを指定できる（ダミー用：`config/dummy`）。
+
+## 5. マージ仕様（`settings/merge.py` の `deep_merge`）
+
+| ローカル側の状態 | 結果 |
+|---|---|
+| キーがない | サンプルの値のまま（誤りにしない。例：`devServer` を書かなくてよい） |
+| 両方がオブジェクト `{ }` | キーごとに再帰的に重ねる |
+| 配列 `[ ]` | 要素ごとに重ねず、**配列全体を置き換える**（例：`view.listColumns`） |
+| 型がサンプルと違う | 使わず、型の誤りとして止める（サンプルの値が `null` なら何でも受け入れる。整数は数値の代わりに使える） |
+| サンプルにないキー | **読み捨てない**。ファイル名と項目の道筋を示して「設定の注意」を出し、その値は使わない |
+| サンプルにないキー（論理項目を足せる場所） | `schema.columns`・`schema.types`・`view.fields` は新しいキーを受け入れて使う（社内だけの論理項目を足せるように） |
+
+- サンプル側のオブジェクトは変更しない（新しいオブジェクトを作る）。
+- ローカルのファイルがないときは、空の上書き `{}` として扱う。
+
+例（view）：
+
+```jsonc
+// view.sample.json：listColumns 12 列・detailFields 12 項目
+// view.local.json
+{ "listColumns": [ { "field": "lotNo", "label": "ロットNo.", "visible": true, "searchable": true } ] }
+// 結果：listColumns は 1 列だけ（配列は丸ごと置き換え）。detailFields・fields・filters はサンプルのまま
+```
+
+## 6. 検証（`settings/validation.py`）
+
+仮の値（`<...>` の形）の判定は役割ごとに行う。`config.local.json` にテーブル名や列名がないことは誤りにしない。
+
+### 6.1 config
+
+- 各 JSON が解析できる・同じキーが重複していない・全体がオブジェクト
+- `dataSource.sourcePath`・`cachePath` が仮の値でも空でもない（**接続先のパスは config で確かめる**）
+- `dataSource.enabled` が true、`readOnly` が true
+- `search.pageSize`・`maxPageSize` が正の整数で、`pageSize ≤ maxPageSize`
+- `devServer.port` が 1〜65535、`devServer.host` が 127.0.0.1 か localhost
+- `logging.level`・`search.defaultMatchMode`・`cache.temporaryExtension` の値
+
+### 6.2 schema
+
+- `tableName` が空でも仮の値でもない（**テーブル名・列名は schema で確かめる**）
+- `columns` がオブジェクトで、論理名・物理列名が空でも仮の値でもない
+- 同じキー（論理名）が重複していない（JSON の読み込み時に検出）
+- `dataSourceId` が config の `dataSource.id` と同じ（別のデータソースの設定を組み合わせないため）
+- `recordKey`・`types` の論理名が `columns` にある
+- 接続後（キャッシュ作成時）にテーブルと、使う物理列がすべてあること（`cache_validator.py`）
+
+### 6.3 view
+
+- `listColumns`・`detailFields`・`filters`・`fields`・`defaultSort` が参照する論理名が、**マージ後の `schema.columns`** にある
+- 同じ表示項目が重複していない（`listColumns`・`detailFields`・`filters`）
+- `visible`・`searchable` が真偽値。番号で探せる項目が少なくとも 1 つある
+- `filters` の `type` が values / date。date は schema の `types` で date の項目だけ
+- `fields.<項目>.group` が `detailGroups` にある、`badge` のパターンと色が正しい
+- 表示名がどこにもない項目は注意（画面に論理名が出てしまうため）
+- 表示順は配列の順、`visible: false` の列は一覧に出さない（画面側で守る）
+
+### 6.4 誤りの表示
+
+誤りはすべて集め、1 件ごとに次の形で表示して止まる（注意は止めずに表示する）。
+
+```text
+[設定エラー]
+対象: config/sample/view.sample.json
+項目: listColumns[2].field
+理由: "productNo" はマージ後の schema.columns に定義されていません。
+対応: schema側へ論理項目を追加するか、view側のfieldを修正してください。
+```
+
+- 「対象」は、その値を直すべきファイル。仮の値が残っているときは、サンプルではなく**ローカルのファイル**を示す（サンプルに実際の値を書かせないため）。
+- ローカルのファイルがないこと自体は誤りにしない。公開サンプルだけでも検証まで進み、ローカルに書くべき項目をファイル名つきで示して止まる。
+
+## 7. 起動フロー
 
 ```mermaid
 flowchart TD
-    A[起動] --> B{config.sample.json がある?}
-    B -- いいえ --> X1[起動しない<br/>アプリのファイル不足を表示]
-    B -- はい --> C[sample を読み込み<br/>設定の初期値にする]
-    C --> D{--config の指定?}
-    D -- あり --> E[指定のファイルを読み込む]
-    D -- なし --> F{config.local.json がある?}
-    F -- ない --> H[初期値だけで続ける]
-    F -- ある --> E2[config.local.json を読み込む]
-    E --> G[同じキーを上書き<br/>ないキーは sample の値<br/>sample にないキーは使わず記録]
-    E2 --> G
-    G --> T{型の違いがある?}
-    T -- ある --> X2[起動しない<br/>違う箇所をすべて表示]
-    T -- ない --> V{値の範囲は正しい?}
-    H --> V
-    V -- いいえ --> X3[起動しない<br/>理由を表示]
-    V -- はい --> P{データの場所・表名・列名に<br/>仮の値 &lt;...&gt; が残っている?}
-    P -- 残っている --> I[設定が未完了で起動<br/>共有データ・キャッシュに触れない<br/>画面とコンソールに直し方]
-    P -- 残っていない --> K{キャッシュがある?}
-    K -- ない --> R[共有データからキャッシュを作成]
-    K -- ある --> S
-    R --> S[画面を開いて通常どおり動く]
+    S[起動] --> C1[config.sample.json を読む]
+    C1 --> C2{config/local/config.local.json がある?}
+    C2 -- ある --> C3[読み込んで再帰マージ]
+    C2 -- ない --> C4[サンプルのまま]
+    C3 --> D1
+    C4 --> D1[schema.sample.json を読む]
+    D1 --> D2{schema.local.json がある?}
+    D2 -- ある --> D3[読み込んで再帰マージ]
+    D2 -- ない --> D4[サンプルのまま]
+    D3 --> V1
+    D4 --> V1[view.sample.json を読む]
+    V1 --> V2{view.local.json がある?}
+    V2 -- ある --> V3[読み込んでマージ<br/>配列は丸ごと置き換え]
+    V2 -- ない --> V4[サンプルのまま]
+    V3 --> K
+    V4 --> K[config → schema → view の順に検証<br/>誤りと注意をすべて集める]
+    K --> E{誤りがある?}
+    E -- ある --> X[対象・項目・理由・対応をすべて表示して停止]
+    E -- ない --> W[注意があれば表示して続ける]
+    W --> Q{キャッシュがある?}
+    Q -- ない --> R[共有 SQLite をコピー → テーブル・列を確認 → キャッシュに置換]
+    Q -- ある --> U
+    R --> U[画面を開く]
+    U --> G[画面：get_view_config で表示定義を受け取り、一覧・詳細・検索・絞り込みを組み立てる]
 ```
 
 文字だけで見る場合：
 
-```
+```text
 起動
- ├─ config.sample.json を読む ──（ない）→ 起動しない
- ├─ 上書きファイルを決める：--config ＞ config.local.json ＞ なし
- ├─ 上書き：同じキーは上書き / ないキーは sample の値 / sample にないキーは使わず記録
- │    └─（型が違う）→ 起動しない（違う箇所をすべて表示）
- ├─ 値の範囲を確かめる ──（誤り）→ 起動しない
- ├─ 仮の値が残っている？
- │    ├─ データの場所・表名・列名 → 「設定が未完了」で起動（データには触れない）
- │    └─ それ以外             → 起動しない
- └─ 通常どおり起動（キャッシュがなければ作成）
+ ├─ config：sample を読む → local があれば再帰マージ
+ ├─ schema：sample を読む → local があれば再帰マージ
+ ├─ view  ：sample を読む → local があればマージ（配列は丸ごと置き換え）
+ ├─ 検証（config → schema → view）
+ │    ├─ 誤りあり → 対象・項目・理由・対応をすべて表示して停止
+ │    └─ 注意あり → 表示して続ける（未知のキーなど）
+ ├─ キャッシュがなければ作る（コピー → テーブル・列の確認 → 置換）
+ └─ 画面：表示定義を受け取って組み立てる
 ```
 
-## 5. 起動時の表示
+## 8. 旧構成からの移行
 
-```
-設定の初期値: …\config\config.sample.json
-上書き      : …\config\config.local.json        ← ないときは「なし（初期値だけで起動）」
-  上書きした項目: 15 個
-  [注意] 次の項目は config.sample.json にないため使いませんでした（書き間違いの可能性）:
-    ・dataSource.table
-[設定が未完了] 次の項目が仮の値（<...>）のままのため、データは表示できません。
-  ・dataSource.tableName
-```
+| 旧（`config/config.local.json`） | 新 |
+|---|---|
+| `application` | `config/local/config.local.json`（変える項目だけ） |
+| `dataSource.id` | `config/local/config.local.json`（変えるときは `schema.local.json` の `dataSourceId` も同じ値に） |
+| `dataSource.enabled` | 基本はサンプル。必要なときだけ `config.local.json` |
+| `dataSource.sourcePath` | `config/local/config.local.json` |
+| `dataSource.cachePath` | 基本はサンプル（`./data/cache/target-data.sqlite3`）。必要なときだけ `config.local.json` |
+| `dataSource.tableName` | `config/local/schema.local.json` の `tableName` |
+| `dataSource.readOnly` | 基本はサンプル |
+| `fieldMappings` | `config/local/schema.local.json` の `columns` |
+| `cache` / `search` / `logging` / `devServer` | 基本はサンプル。必要なときだけ `config.local.json` |
+| （ソースコード内の表示名・表示順・検索対象・絞り込み・状態の色分け・既定の並べ替え） | `config/sample/view.sample.json`（社内だけの変更は `view.local.json`） |
+| （ソースコード内の 1 件を特定する項目・日付の項目） | `config/sample/schema.sample.json` の `recordKey`・`types` |
 
-画面では、上部バー右の札（設定が未完了）と、左の「データ」パネルに同じ内容を出す。
-ログには上書きした項目の**数**と、使わなかったキーの**名前**だけを残す（値は残さない）。
+旧 `config.local.json` の `dataSource.tableName` や `fieldMappings` を新しい `config.local.json` にそのまま残すと、
+サンプルにないキーとして「設定の注意」が出る（使われない）。`schema.local.json` へ移すこと。
 
-## 6. 設定項目を足すときの手順
+## 9. 設定項目を足すときの手順
 
-1. `config.sample.json` にキーを足す（社内情報でない既定値、または仮の値 `<...>`）
-2. `config_loader.py` の `AppConfig` と `load_config()` で受け取り、必要なら値の範囲を `_check_values()` に足す
-3. 仮の値のままでは動けない項目なら `REQUIRED_SETTINGS` に足す
-4. 社内の値が必要な環境だけ、`config.local.json` にそのキーを書き足す（不要なら何もしない）
+1. `config/sample/` の該当ファイルにキーを足す（社内情報でない既定値、または `<...>` の仮の値）
+2. `settings/loader.py` で受け取り、`settings/validation.py` で値を確かめる
+3. view / schema を変えたら `python python/tools/sync_sample_view.py`（画面だけで試すモード用の表示定義を作り直す）
+4. 社内の値が必要な環境だけ、`config/local/` の該当ファイルに書き足す（不要なら何もしない）

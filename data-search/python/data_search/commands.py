@@ -56,6 +56,12 @@ def get_cache_status(ctx, payload):
     return ctx.cache_service.status()
 
 
+@command("get_view_config")
+def get_view_config(ctx, payload):
+    """画面の表示定義（view と、schema の論理情報）。物理名は含めない。"""
+    return dict(ctx.config.public_view(), success=True)
+
+
 @command("get_application_info")
 def get_application_info(ctx, payload):
     return {

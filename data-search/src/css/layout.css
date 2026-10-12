@@ -408,3 +408,9 @@
   :root { --w-detail: 320px; --w-sidepanel: 280px; }
   .brand__name { display: none; }
 }
+
+/* ── 起動できないとき ── */
+.fatal { max-width: 640px; margin: 15vh auto 0; padding: var(--sp-6); text-align: center; }
+.fatal__title { margin-bottom: var(--sp-3); font-size: var(--fs-xl); color: var(--color-danger); }
+.fatal__text { color: var(--color-text-muted); }
+.fatal__id { margin-top: var(--sp-2); font-size: var(--fs-xs); color: var(--color-text-subtle); }

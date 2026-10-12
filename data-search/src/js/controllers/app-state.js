@@ -11,7 +11,7 @@
   const HISTORY_MAX = 8;
 
   function defaultVisibleColumns() {
-    return DS.domain.fields.list().map((field) => field.id);
+    return DS.domain.listFields().map((field) => field.id);
   }
 
   function createInitialState(mode) {

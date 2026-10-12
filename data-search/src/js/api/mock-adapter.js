@@ -8,7 +8,7 @@
 
   const DS = window.DS;
   const STORAGE_KEY = 'mock:samples';
-  const SEARCHABLE = ['lotNo', 'inspectionNo', 'castingNo', 'orderNo'];
+  const searchable = () => DS.domain.searchableFields().map((field) => field.id);
   const KEYWORD_MAX = 100;
   const PAGE_SIZE = 100;
   const MAX_PAGE_SIZE = 500;
@@ -49,7 +49,7 @@
     // ── 一覧・検索・絞り込み（Python 版の lot_service と同じ決まり） ──
     function filterRows(payload) {
       const keyword = DS.util.normalize(payload.keyword).toLowerCase();
-      const searchType = SEARCHABLE.includes(payload.searchType) ? payload.searchType : null;
+      const searchType = searchable().includes(payload.searchType) ? payload.searchType : null;
       const today = DS.domain.filters.todayIso();
       const filters = Object.entries(DS.domain.filters.compact(payload.filters));
       return rows.filter((row) => {
@@ -66,7 +66,7 @@
       const started = performance.now();
       const keyword = DS.util.normalize(payload.keyword);
       if (keyword.length > KEYWORD_MAX) return fail('INVALID_REQUEST', `検索する番号は ${KEYWORD_MAX} 文字以内で入力してください。`);
-      if (keyword && !SEARCHABLE.includes(payload.searchType)) return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
+      if (keyword && !searchable().includes(payload.searchType)) return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
       if (rows.length === 0) return fail('CACHE_UNAVAILABLE', '検索できるデータがまだありません。左の「サンプル」から読み込んでください。');
       const page = Math.max(1, Number(payload.page) || 1);
       const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(payload.pageSize) || PAGE_SIZE));
@@ -84,8 +84,7 @@
         // 空欄は昇順・降順どちらでも最後
         return compare(isBlank(va), isBlank(vb)) ||
           compare(va || '', vb || '') * direction ||
-          compare(a.lotNo, b.lotNo) ||
-          compare(a.castingNo || '', b.castingNo || '');
+          DS.domain.keyFields().reduce((result, field) => result || compare(a[field.id] || '', b[field.id] || ''), 0);
       });
       const items = hits.slice((page - 1) * pageSize, page * pageSize).map((row) => Object.assign({}, row));
       return {
@@ -104,6 +103,9 @@
     // ── 命令 ──
     const commands = {
       get_application_info: () => ({ id: 'data-search', name: 'Data Search', version: '0.1.0' }),
+
+      // 表示定義：config/sample/view.sample.json から自動生成した js/sample/sample-view.js
+      get_view_config: () => Object.assign({ success: true }, JSON.parse(JSON.stringify(DS.sampleView))),
 
       get_cache_status() {
         const available = rows.length > 0;
@@ -171,7 +173,8 @@
       },
 
       get_lot_detail(payload) {
-        const found = rows.filter((row) => row.lotNo === payload.lotNo && (row.castingNo || null) === (payload.castingNo || null));
+        const keys = DS.domain.keyFields().map((field) => field.id);
+        const found = rows.filter((row) => keys.every((id) => (row[id] || null) === (payload[id] || null)));
         if (found.length === 0) return fail('NOT_FOUND', '選んだデータが見つかりません。データが更新された可能性があります。もう一度検索してください。');
         return { success: true, item: Object.assign({}, found[0]), duplicated: found.length > 1 };
       },

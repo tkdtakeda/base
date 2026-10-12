@@ -17,7 +17,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data_search.cache_service import CacheService  # noqa: E402
-from data_search.config_loader import load_config, merge_settings, resolve_override_path  # noqa: E402
+from data_search.settings import SettingsError, deep_merge, load_settings  # noqa: E402
 from data_search.errors import AppError  # noqa: E402
 from data_search.http_server import AppContext, create_server  # noqa: E402
 from data_search.lot_service import LotService  # noqa: E402
@@ -35,7 +35,8 @@ ROWS = [
     ("LOT-DUP", "INS-005", "CST-005", "ORD-4", "A3003", "H24", "t1×1000×2000", "例示精工", "2026-10-05", "検査", "QC-02", "検査待ち"),
     ("LOT-DUP", "INS-006", "CST-006", "ORD-4", "A3003", "H24", "t1×1000×2000", "例示精工", "2026-10-05", "検査", "QC-02", "出荷済み"),
 ]
-SAMPLE_CONFIG = os.path.join(os.path.dirname(__file__), "..", "..", "config", "config.sample.json")
+APP_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+SAMPLE_DIR = os.path.join(APP_ROOT, "config", "sample")
 SILENT = logging.getLogger("test-silent")
 SILENT.addHandler(logging.NullHandler())
 SILENT.propagate = False
@@ -64,126 +65,198 @@ def make_db(path, variant="normal"):
 
 
 class BackendTestCase(unittest.TestCase):
+    """一時フォルダにアプリのルートを作り、公開サンプル（config/sample）をそのまま置く。
+    ローカルの上書き（config/local）は、実際の運用と同じく必要な項目だけを書く。"""
+
     def setUp(self):
         self.root = tempfile.mkdtemp()
-        os.makedirs(os.path.join(self.root, "config"))
-        # 正式なスキーマ（config.sample.json）をテスト用のフォルダへ置く
-        shutil.copyfile(SAMPLE_CONFIG, os.path.join(self.root, "config", "config.sample.json"))
+        shutil.copytree(SAMPLE_DIR, os.path.join(self.root, "config", "sample"))
+        self.local_dir = os.path.join(self.root, "config", "local")
+        os.makedirs(self.local_dir)
         self.source = os.path.join(self.root, "shared", "source.sqlite3")
         make_db(self.source)
-        self.config_dir = os.path.join(self.root, "config")
-        self.config_path = self.write_config()
-        self.config = load_config(self.config_dir, resolve_override_path(self.config_dir))
+        self.write_local("config", {"dataSource": {"sourcePath": "./shared/source.sqlite3"}})
+        self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS)})
+        self.config = load_settings(self.root)
         self.cache = CacheService(self.config, SILENT)
         self.service = LotService(self.config, self.cache, SILENT)
 
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
 
-    def write_config(self, name="config.local.json", data=None):
-        """config.local.json と同じく、変えたい項目だけを書いた設定を置く（devServer などは書かない）。"""
-        if data is None:
-            data = {
-                "dataSource": {"sourcePath": "./shared/source.sqlite3", "cachePath": "./data/cache/cache.sqlite3", "tableName": "t_lot"},
-                "fieldMappings": dict(COLUMNS),
-            }
-        path = os.path.join(self.root, "config", name)
+    def write_local(self, kind, data):
+        path = os.path.join(self.local_dir, f"{kind}.local.json")
         with open(path, "w", encoding="utf-8") as fp:
-            json.dump(data, fp, ensure_ascii=False)
+            if isinstance(data, str):
+                fp.write(data)
+            else:
+                json.dump(data, fp, ensure_ascii=False)
         return path
+
+    def remove_local(self, kind):
+        os.remove(os.path.join(self.local_dir, f"{kind}.local.json"))
 
     def search(self, keyword, search_type="lotNo", match_mode="partial", **extra):
         return self.service.search({"searchType": search_type, "keyword": keyword, "matchMode": match_mode, **extra})
 
 
 class ConfigTest(BackendTestCase):
-    def load(self, data):
-        self.write_config(data=data)
-        return load_config(self.config_dir, resolve_override_path(self.config_dir))
+    def errors_of(self):
+        with self.assertRaises(SettingsError) as ctx:
+            load_settings(self.root)
+        return ctx.exception.issues
 
-    def assert_invalid(self, data, expected):
-        with self.assertRaises(AppError) as ctx:
-            self.load(data)
-        self.assertEqual(ctx.exception.code, "CONFIG_INVALID")
-        self.assertIn(expected, ctx.exception.detail)
+    def assert_error(self, file, path, reason_part):
+        issues = self.errors_of()
+        found = [i for i in issues if i.file == file and i.path == path and reason_part in i.reason]
+        self.assertTrue(found, f"見つからない: {file} {path} {reason_part}\n" + "\n".join(i.format() for i in issues))
+        self.assertTrue(all(i.action for i in issues))
 
+    # ── マージ ──
     def test_local_with_only_needed_keys_works(self):
-        # setUp の config.local.json は dataSource の 3 項目と fieldMappings だけ。devServer などは書いていない
-        self.assertEqual(self.config.config_source, "local")
-        self.assertFalse(self.config.incomplete)
-        self.assertEqual(self.config.server_port, 8765)          # sample の値
-        self.assertEqual(self.config.page_size, 100)             # sample の値
-        self.assertTrue(self.config.keep_previous_on_failure)    # sample の値
-        self.assertEqual(self.config.table_name, "t_lot")        # local の値
+        self.assertEqual(self.config.server_port, 8765)          # config.sample の値（local に devServer はない）
+        self.assertEqual(self.config.page_size, 100)             # config.sample の値
+        self.assertEqual(self.config.table_name, "t_lot")        # schema.local の値
         self.assertEqual(self.config.source_path, os.path.normpath(self.source))
-        self.assertIn("dataSource.tableName", self.config.overridden_keys)
-        self.assertEqual(self.config.ignored_keys, ())
+        self.assertEqual(self.config.cache_path, os.path.join(self.root, "data", "cache", "target-data.sqlite3"))
+        self.assertEqual(self.config.model.record_key, ("lotNo", "castingNo"))
+        self.assertEqual(self.config.model.searchable, ("lotNo", "inspectionNo", "castingNo", "orderNo"))
+        self.assertEqual(self.config.model.filters["deliveryDate"], "date")
+        self.assertEqual(self.config.warnings, ())
+        self.assertEqual([s[2] is not None for s in self.config.sources], [True, True, False])  # view.local はない
 
-    def test_without_local_starts_with_sample_values(self):
-        os.remove(self.config_path)
-        self.assertIsNone(resolve_override_path(self.config_dir))
-        config = load_config(self.config_dir, None)
-        self.assertEqual(config.config_source, "sample")
-        self.assertIn("dataSource.sourcePath", config.incomplete_settings)
-        self.assertIn("fieldMappings.lotNo", config.incomplete_settings)
-        cache = CacheService(config, SILENT)
-        status = cache.status()
-        self.assertTrue(status["configIncomplete"])
-        self.assertFalse(status["available"])
-        with self.assertRaises(AppError) as ctx:
-            cache.refresh()
-        self.assertEqual(ctx.exception.code, "CONFIG_INCOMPLETE")
-        with self.assertRaises(AppError) as ctx:
-            LotService(config, cache, SILENT).list({})
-        self.assertEqual(ctx.exception.code, "CONFIG_INCOMPLETE")
+    def test_deep_merge_rules(self):
+        base = {"a": {"b": 1, "c": 2}, "list": [1, 2, 3], "d": "x", "map": {"k": "v"}}
+        merged = deep_merge(base, {"a": {"c": 3}, "list": [9], "e": 1, "map": {"new": "w"}}, open_maps=("map",))
+        self.assertEqual(merged.value, {"a": {"b": 1, "c": 3}, "list": [9], "d": "x", "map": {"k": "v", "new": "w"}})
+        self.assertEqual(merged.overridden, ["a.c", "list"])
+        self.assertEqual(merged.added, ["map.new"])
+        self.assertEqual(merged.unknown, ["e"])
+        self.assertEqual(base["list"], [1, 2, 3])  # サンプル側は変わらない
 
-    def test_partial_mappings_leave_rest_incomplete(self):
-        config = self.load({"dataSource": {"sourcePath": "./s.sqlite3", "cachePath": "./c.sqlite3", "tableName": "t"},
-                            "fieldMappings": {"lotNo": "LOT"}})
-        self.assertEqual(config.field_mappings["lotNo"], "LOT")
-        self.assertNotIn("fieldMappings.lotNo", config.incomplete_settings)
-        self.assertIn("fieldMappings.status", config.incomplete_settings)
+    def test_view_array_is_replaced_whole(self):
+        self.write_local("view", {"listColumns": [
+            {"field": "lotNo", "label": "ロット", "visible": True, "searchable": True},
+            {"field": "status", "label": "状態", "visible": True, "searchable": False},
+        ]})
+        config = load_settings(self.root)
+        self.assertEqual([c["field"] for c in config.view["listColumns"]], ["lotNo", "status"])
+        self.assertEqual(len(config.view["detailFields"]), 12)  # 上書きしていない配列はサンプルのまま
+        self.assertEqual(config.model.searchable, ("lotNo",))
 
-    def test_missing_keys_never_error(self):
-        config = self.load({})
-        self.assertEqual(config.config_source, "local")
-        self.assertTrue(config.incomplete)
-        self.assertEqual(config.app_name, "Data Search")
+    def test_schema_can_add_logical_field(self):
+        conn = sqlite3.connect(self.source)
+        conn.execute('ALTER TABLE "t_lot" ADD COLUMN "SAGYOBI" TEXT')
+        conn.commit()
+        conn.close()
+        self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS, workDate="SAGYOBI"), "types": {"workDate": "date"}})
+        self.write_local("view", {"filters": [{"field": "workDate", "type": "date"}], "fields": {"workDate": {"label": "作業日"}}})
+        config = load_settings(self.root)
+        self.assertIn("workDate", config.model.fields)
+        self.assertEqual(config.model.filters, {"workDate": "date"})
+        self.assertEqual(config.warnings, ())
 
-    def test_unknown_keys_are_ignored_and_reported(self):
-        data = {"dataSource": {"sourcePath": "./s.sqlite3", "cachePath": "./c.sqlite3", "tableName": "t", "table": "typo"},
-                "fieldMappings": dict(COLUMNS), "dataSources": []}
-        config = self.load(data)
-        self.assertEqual(set(config.ignored_keys), {"dataSource.table", "dataSources"})
-        self.assertEqual(config.table_name, "t")
+    def test_unknown_keys_are_warned_with_file_and_path(self):
+        self.write_local("config", {"dataSource": {"sourcePath": "./shared/source.sqlite3", "tableName": "x"}, "dataSources": []})
+        config = load_settings(self.root)
+        self.assertEqual({(w.file, w.path) for w in config.warnings},
+                         {("config/local/config.local.json", "dataSource.tableName"), ("config/local/config.local.json", "dataSources")})
 
-    def test_type_mismatch_is_rejected(self):
-        self.assert_invalid({"search": {"pageSize": "100"}}, "search.pageSize は 整数 にしてください")
-        self.assert_invalid({"dataSource": {"readOnly": 1}}, "dataSource.readOnly は true/false にしてください")
-        self.assert_invalid({"fieldMappings": "LOT"}, "fieldMappings は オブジェクト { } にしてください")
+    # ── ローカルがない ──
+    def test_without_local_files_validation_runs_and_stops_on_placeholders(self):
+        for kind in ("config", "schema"):
+            self.remove_local(kind)
+        issues = self.errors_of()
+        places = {(i.file, i.path) for i in issues}
+        self.assertIn(("config/local/config.local.json", "dataSource.sourcePath"), places)
+        self.assertIn(("config/local/schema.local.json", "tableName"), places)
+        self.assertIn(("config/local/schema.local.json", "columns.lotNo"), places)
+        self.assertFalse(any(i.path == "(ファイル)" for i in issues))  # ローカルがないこと自体は誤りにしない
 
-    def test_value_range_is_checked_after_merge(self):
-        self.assert_invalid({"search": {"pageSize": 600}}, "search.pageSize は 1 以上 maxPageSize 以下")
-        self.assert_invalid({"dataSource": {"readOnly": False}}, "dataSource.readOnly は true にしてください")
+    def test_table_and_columns_are_not_required_in_config_local(self):
+        # config.local.json にテーブル名・列名がないことは誤りではない（schema 側で確かめる）
+        self.assertFalse(any(i.file.endswith("config.local.json") for i in self.config.warnings))
 
-    def test_broken_local_is_reported(self):
-        with open(self.config_path, "w", encoding="utf-8") as fp:
-            fp.write("{ broken")
-        with self.assertRaises(AppError) as ctx:
-            load_config(self.config_dir, self.config_path)
-        self.assertIn("JSON として読めません", ctx.exception.detail)
+    # ── 検証：config ──
+    def test_type_mismatch(self):
+        self.write_local("config", {"dataSource": {"sourcePath": "./s.sqlite3"}, "search": {"pageSize": "100"}})
+        self.assert_error("config/local/config.local.json", "search.pageSize", "整数")
 
-    def test_merge_is_deep_and_does_not_touch_sample(self):
-        base = {"a": {"b": 1, "c": 2}, "d": "x"}
-        merged, overridden, ignored, errors = merge_settings(base, {"a": {"c": 3}, "e": 1})
-        self.assertEqual(merged, {"a": {"b": 1, "c": 3}, "d": "x"})
-        self.assertEqual((overridden, ignored, errors), (["a.c"], ["e"], []))
-        self.assertEqual(base, {"a": {"b": 1, "c": 2}, "d": "x"})
+    def test_page_size_rules(self):
+        self.write_local("config", {"dataSource": {"sourcePath": "./s.sqlite3"}, "search": {"pageSize": 600}})
+        self.assert_error("config/local/config.local.json", "search.pageSize", "maxPageSize")
+        self.write_local("config", {"dataSource": {"sourcePath": "./s.sqlite3"}, "search": {"maxPageSize": 0}})
+        self.assert_error("config/local/config.local.json", "search.maxPageSize", "正の整数")
 
-    def test_missing_explicit_config(self):
-        with self.assertRaises(AppError) as ctx:
-            load_config(self.config_dir, os.path.join(self.config_dir, "nothing.json"))
-        self.assertEqual(ctx.exception.code, "CONFIG_NOT_FOUND")
+    def test_dev_server_port(self):
+        self.write_local("config", {"dataSource": {"sourcePath": "./s.sqlite3"}, "devServer": {"port": 70000}})
+        self.assert_error("config/local/config.local.json", "devServer.port", "ポート番号")
+
+    def test_broken_json_and_duplicate_keys(self):
+        self.write_local("config", "{ broken")
+        self.assert_error("config/local/config.local.json", "1 行目", "JSON")
+        self.write_local("schema", '{"tableName": "t_lot", "tableName": "t2", "columns": {}}')
+        self.write_local("config", {"dataSource": {"sourcePath": "./s.sqlite3"}})
+        self.assert_error("config/local/schema.local.json", "tableName", "重複")
+
+    # ── 検証：schema ──
+    def test_schema_rules(self):
+        self.write_local("schema", {"tableName": " ", "columns": dict(COLUMNS, status="")})
+        self.assert_error("config/local/schema.local.json", "tableName", "空")
+        self.assert_error("config/local/schema.local.json", "columns.status", "空")
+
+    def test_data_source_id_must_match(self):
+        self.write_local("schema", {"dataSourceId": "other", "tableName": "t_lot", "columns": dict(COLUMNS)})
+        self.assert_error("config/local/schema.local.json", "dataSourceId", "一致しません")
+
+    # ── 検証：view ──
+    def test_view_field_must_exist_in_schema(self):
+        self.write_local("view", {"listColumns": [
+            {"field": "lotNo", "label": "ロット", "visible": True, "searchable": True},
+            {"field": "lotNo", "label": "ロット", "visible": True, "searchable": True},
+            {"field": "productNo", "label": "製品", "visible": "yes", "searchable": False},
+        ]})
+        self.assert_error("config/local/view.local.json", "listColumns[2].field", "schema.columns に定義されていません")
+        self.assert_error("config/local/view.local.json", "listColumns[1].field", "重複")
+        self.assert_error("config/local/view.local.json", "listColumns[2].visible", "真偽値")
+
+    def test_date_filter_needs_date_type(self):
+        self.write_local("view", {"filters": [{"field": "status", "type": "date"}]})
+        self.assert_error("config/local/view.local.json", "filters[0].type", "date になっていません")
+
+    def test_labels_survive_replacing_list_columns(self):
+        self.write_local("view", {"listColumns": [{"field": "lotNo", "label": "ロットNo.", "visible": True, "searchable": True}]})
+        config = load_settings(self.root)
+        self.assertEqual(config.view["fields"]["inspectionNo"]["label"], "検査番号")  # fields はサンプルの表示名のまま
+        self.assertEqual(config.warnings, ())
+
+    def test_missing_label_is_warned(self):
+        self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS, workDate="SAGYOBI")})
+        self.write_local("view", {"detailFields": ["lotNo", "workDate"]})
+        config = load_settings(self.root)
+        self.assertEqual([(w.path, w.level) for w in config.warnings], [("fields.workDate.label", "warning")])
+
+    def test_error_format(self):
+        self.write_local("view", {"defaultSort": {"field": "productNo", "order": "asc"}})
+        text = self.errors_of()[0].format()
+        self.assertEqual(text.splitlines()[0], "[設定エラー]")
+        self.assertIn("対象: config/local/view.local.json", text)
+        self.assertIn("項目: defaultSort.field", text)
+        self.assertIn("理由: ", text)
+        self.assertIn("対応: ", text)
+
+    def test_public_view_has_no_physical_names(self):
+        text = json.dumps(self.config.public_view(), ensure_ascii=False)
+        for physical in list(COLUMNS.values()) + ["t_lot"]:
+            self.assertNotIn(f'"{physical}"', text)
+
+    def test_mock_view_matches_sample(self):
+        # 画面だけで試すモード（file://）の表示定義が、公開サンプルと同じであること
+        path = os.path.join(APP_ROOT, "src", "js", "sample", "sample-view.js")
+        with open(path, encoding="utf-8") as fp:
+            text = fp.read()
+        embedded = json.loads(text.split("/*VIEW_JSON_START*/", 1)[1].split("/*VIEW_JSON_END*/", 1)[0])
+        self.assertEqual(embedded, self.config.public_view())
 
 
 class CacheTest(BackendTestCase):

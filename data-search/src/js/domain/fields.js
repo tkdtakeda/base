@@ -1,51 +1,83 @@
 /* =========================================================
-   論理項目の登録簿。画面に出す名前・まとまり・幅・並びはここで決める。
-   項目を増やすときは register() を 1 つ足すだけでよい（表・詳細・表示列の設定に自動で反映）。
+   論理項目の登録簿。中身はソースコードに書かず、表示定義（view）から組み立てる。
+
+     表示定義の出どころ
+       Python 版・デスクトップ版 … get_view_config 命令（config/sample/view.sample.json ＋ config/local/view.local.json）
+       画面だけで試すモード     … js/sample/sample-view.js（view.sample.json から自動生成）
+
+   項目・表示名・表示順・検索できる項目・絞り込み・既定の並べ替えを変えるときは、view の JSON を直す。
    ========================================================= */
 (function () {
   'use strict';
 
   const DS = window.DS;
-  const groups = DS.core.createRegistry('fieldGroups');
-  const fields = DS.core.createRegistry('fields');
-
-  [
-    { id: 'id', label: '識別番号', icon: 'fa-hashtag', order: 10 },
-    { id: 'product', label: '製品', icon: 'fa-cube', order: 20 },
-    { id: 'trade', label: '取引', icon: 'fa-handshake', order: 30 },
-    { id: 'mfg', label: '製造', icon: 'fa-industry', order: 40 },
-  ].forEach((group) => groups.register(group));
-
-  // searchable: 検索の種類に出す / key: 1 件を特定する鍵 / mono: 等幅で表示（0 と O などを見分けやすく）
-  // filter: 絞り込みの種類（values＝値から選ぶ / date＝日付の範囲）。Python の fields.py の FILTER_FIELDS とそろえる。
-  // 日付の項目（作業日など）を足すときは type: 'date', filter: 'date' を付けるだけで同じ絞り込みが使える。
-  [
-    { id: 'lotNo', label: 'ロット番号', short: 'ロット', group: 'id', order: 10, searchable: true, key: true, mono: true, copy: true, width: 170, example: 'LOT-2026-00012' },
-    { id: 'inspectionNo', label: '検査番号', short: '検査', group: 'id', order: 20, searchable: true, mono: true, copy: true, width: 150, example: 'INS-26-000012' },
-    { id: 'castingNo', label: '鋳造番号', short: '鋳造', group: 'id', order: 30, searchable: true, key: true, mono: true, copy: true, width: 150, example: 'CST-41000012' },
-    { id: 'orderNo', label: '受注番号', short: '受注', group: 'id', order: 40, searchable: true, mono: true, copy: true, width: 120, example: 'ORD-00003' },
-    { id: 'material', label: '材質', group: 'product', order: 50, width: 90, filter: 'values' },
-    { id: 'temper', label: '質別', group: 'product', order: 60, width: 70, filter: 'values' },
-    { id: 'size', label: '寸法', group: 'product', order: 70, width: 150, mono: true },
-    { id: 'customer', label: '得意先', group: 'trade', order: 80, width: 130, filter: 'values' },
-    { id: 'deliveryDate', label: '納期', group: 'trade', order: 90, width: 110, mono: true, type: 'date', filter: 'date' },
-    { id: 'process', label: '工程', group: 'mfg', order: 100, width: 100, filter: 'values' },
-    { id: 'equipment', label: '設備', group: 'mfg', order: 110, width: 90, mono: true, filter: 'values' },
-    { id: 'status', label: '状態', group: 'mfg', order: 120, width: 110, render: 'status', filter: 'values' },
-  ].forEach((field) => fields.register(field));
-
   DS.domain = DS.domain || {};
-  DS.domain.fieldGroups = groups;
-  DS.domain.fields = fields;
-  DS.domain.searchableFields = () => fields.list().filter((field) => field.searchable);
-  DS.domain.keyFields = () => fields.list().filter((field) => field.key);
-  DS.domain.filterFields = () => fields.list().filter((field) => field.filter);
-  DS.domain.DEFAULT_SORT = { key: 'deliveryDate', order: 'asc' };
 
-  /** 1 件を特定する鍵（ロット番号＋鋳造番号）を文字列にする */
+  const OTHER_GROUP = { id: '__other', label: 'その他', icon: 'fa-ellipsis', order: 9999 };
+
+  let lists = { list: [], detail: [], searchable: [], key: [], filter: [] };
+
+  /** 表示定義を当てはめる。起動時に 1 回、画面の部品を作る前に呼ぶ */
+  function applyView(view) {
+    const groups = DS.core.createRegistry('fieldGroups');
+    const fields = DS.core.createRegistry('fields');
+    (view.detailGroups || []).forEach((group, index) => groups.register(Object.assign({ order: (index + 1) * 10 }, group)));
+
+    const columns = new Map((view.listColumns || []).map((column, index) => [column.field, Object.assign({ index }, column)]));
+    const filters = new Map((view.filters || []).map((filter) => [filter.field, filter.type]));
+    const options = view.fields || {};
+    const recordKey = view.recordKey || [];
+    let usesOther = false;
+
+    view.logicalFields.forEach((id, index) => {
+      const column = columns.get(id) || {};
+      const option = options[id] || {};
+      const group = option.group && groups.has(option.group) ? option.group : OTHER_GROUP.id;
+      if (group === OTHER_GROUP.id) usesOther = true;
+      fields.register({
+        id,
+        order: (index + 1) * 10,
+        // label：詳細・絞り込みなどで使う名前（fields.<項目>.label）。listLabel：一覧の見出し・検索の種類（listColumns の label）
+        label: option.label || column.label || id,
+        listLabel: column.label || option.label || id,
+        short: option.short || null,
+        group,
+        mono: Boolean(option.mono),
+        copy: Boolean(option.copy),
+        example: option.example || '',
+        width: column.width || 120,
+        badge: (option.badge || []).map((rule) => ({ pattern: new RegExp(rule.match), tone: rule.tone })),
+        filter: filters.get(id) || null,
+        type: (view.types || {})[id] || 'text',
+        searchable: column.searchable === true,
+        key: recordKey.includes(id),
+      });
+    });
+    if (usesOther) groups.register(OTHER_GROUP);
+
+    const pick = (ids) => ids.map((id) => fields.get(id)).filter(Boolean);
+    lists = {
+      // 一覧に出す列：listColumns の順。visible: false の列は一覧に出さない
+      list: pick((view.listColumns || []).filter((column) => column.visible).map((column) => column.field)),
+      detail: pick(view.detailFields || []),
+      searchable: pick((view.listColumns || []).filter((column) => column.searchable).map((column) => column.field)),
+      key: pick(recordKey),
+      filter: pick((view.filters || []).map((filter) => filter.field)),
+    };
+
+    DS.domain.fieldGroups = groups;
+    DS.domain.fields = fields;
+    DS.domain.DEFAULT_SORT = { key: view.defaultSort.field, order: view.defaultSort.order };
+  }
+
+  DS.domain.applyView = applyView;
+  DS.domain.listFields = () => lists.list;
+  DS.domain.detailFields = () => lists.detail;
+  DS.domain.searchableFields = () => lists.searchable;
+  DS.domain.keyFields = () => lists.key;
+  DS.domain.filterFields = () => lists.filter;
+
+  /** 1 件を特定する鍵（schema の recordKey。例：ロット番号＋鋳造番号）を文字列にする */
   DS.domain.recordKey = (item) =>
-    DS.domain
-      .keyFields()
-      .map((field) => (item[field.id] == null ? '' : item[field.id]))
-      .join('\u001f');
+    lists.key.map((field) => (item[field.id] == null ? '' : item[field.id])).join('\u001f');
 })();

@@ -18,8 +18,8 @@
         className: 'seg__item',
         role: 'radio',
         dataset: { type: field.id },
-        title: `${field.label}で検索（Alt+${index + 1}）`,
-      }, [el('span', { text: field.label }), el('kbd', { className: 'seg__kbd', text: String(index + 1) })]));
+        title: `${field.listLabel}で検索（Alt+${index + 1}）`,
+      }, [el('span', { text: field.listLabel }), el('kbd', { className: 'seg__kbd', text: String(index + 1) })]));
     const typeGroup = el('div', { className: 'seg', role: 'radiogroup', 'aria-label': '番号の種類' }, typeButtons);
 
     // ── 入力欄 ──
@@ -139,7 +139,7 @@
       matchButtons.forEach((button) => button.setAttribute('aria-checked', String(button.dataset.match === state.query.matchMode)));
       if (input.value !== state.query.keyword) input.value = state.query.keyword;
       input.placeholder = `例：${field.example}`;
-      inputLabel.textContent = field.label;
+      inputLabel.textContent = field.listLabel;
       clearButton.hidden = !state.query.keyword;
 
       const items = (state.history[state.query.searchType] || []);

@@ -2,7 +2,7 @@
 
 Rust/Tauri 版へ移植しやすいよう、モジュール構成を src-tauri/src の構成に合わせている。
 
-    config_loader   ↔ config/loader.rs
+    settings/       ↔ config/（loader.rs・merge.rs・validation.rs）
     fields          ↔ models/lot.rs
     cache_copier    ↔ cache/copier.rs
     cache_validator ↔ cache/validator.rs

@@ -21,9 +21,6 @@
     function readiness() {
       const state = store.get();
       const cacheStatus = state.cache.status;
-      if (cacheStatus && cacheStatus.configIncomplete) {
-        return { ok: false, reason: '設定が未完了のため、データを表示できません（左の「データ」に直し方）' };
-      }
       if (cacheStatus && !cacheStatus.available) {
         if (state.mode.capabilities.sampleData) {
           return { ok: false, reason: 'サンプルデータを読み込むと一覧が出ます', action: 'open-samples', actionLabel: 'サンプルを読み込む' };
@@ -36,7 +33,7 @@
         // 番号で探している途中に入力を空にしたら、番号の検索を外して一覧に戻せる
         if (searching) return { ok: true, label: '一覧に戻す', icon: 'fa-list' };
         const field = DS.domain.fields.get(state.query.searchType);
-        return { ok: false, quiet: true, reason: `${field.label}を入れると、一覧の中から探せます` };
+        return { ok: false, quiet: true, reason: `${field.listLabel}を入れると、一覧の中から探せます` };
       }
       return { ok: true };
     }

@@ -8,16 +8,13 @@ import uuid
 
 # code → 利用者向けメッセージ（次に取る行動が分かる文にする）
 USER_MESSAGES = {
-    "CONFIG_NOT_FOUND": "指定した設定ファイルが見つかりません。",
-    "CONFIG_SCHEMA_NOT_FOUND": "設定の定義（config/config.sample.json）が見つかりません。アプリのファイルがそろっているか確認してください。",
-    "CONFIG_INVALID": "設定の値に誤りがあります。表示された項目を直してください。",
-    "CONFIG_INCOMPLETE": "設定が未完了です。config/config.local.json に、データの場所と表・列の名前を書いてから起動し直してください。",
+    "CONFIG_INVALID": "設定に誤りがあります。表示された「対象・項目・理由・対応」に沿って直してください。",
     "SOURCE_UNAVAILABLE": "共有データに接続できません。ネットワークと共有フォルダを確認してください。",
     "SOURCE_BUSY": "共有データが更新中のため取得できませんでした。少し待ってからもう一度更新してください。",
     "CACHE_COPY_FAILED": "共有データをコピーできませんでした。少し待ってからもう一度更新してください。",
     "CACHE_INVALID": "取得したデータが壊れていたため、使用しませんでした。",
-    "CACHE_TABLE_MISSING": "取得したデータに必要な表がないため、使用しませんでした。",
-    "CACHE_COLUMN_MISSING": "取得したデータに必要な項目がないため、使用しませんでした。",
+    "CACHE_TABLE_MISSING": "取得したデータに必要な表がないため、使用しませんでした。schema.local.json の tableName を確認してください。",
+    "CACHE_COLUMN_MISSING": "取得したデータに必要な列がないため、使用しませんでした。schema.local.json の columns を確認してください。",
     "CACHE_UNAVAILABLE": "検索できるデータがまだありません。データを更新してください。",
     "INVALID_REQUEST": "検索の条件が正しくありません。入力内容を確認してください。",
     "NOT_FOUND": "選んだデータが見つかりません。データが更新された可能性があります。もう一度検索してください。",

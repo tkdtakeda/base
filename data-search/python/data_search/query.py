@@ -3,7 +3,6 @@
 表名・列名は設定ファイルから来る値だけを使い、画面から受け取った値は論理名の一覧と照合してから使う。
 """
 
-from .fields import DATE_FIELDS, DISPLAY_FIELDS, RECORD_KEY_FIELDS
 
 LIKE_ESCAPE = "\\"
 
@@ -45,10 +44,11 @@ class QueryBuilder:
               date の from / to は 'YYYY-MM-DD' か None（日付は呼び出し側で確定させる）
     """
 
-    def __init__(self, table_name, field_mappings):
+    def __init__(self, table_name, field_mappings, model):
+        self.model = model
         self.table = quote_identifier(table_name)
-        self.columns = {name: quote_identifier(field_mappings[name]) for name in DISPLAY_FIELDS}
-        self.select_list = ", ".join(f"{self.columns[name]} AS {quote_identifier(name)}" for name in DISPLAY_FIELDS)
+        self.columns = {name: quote_identifier(field_mappings[name]) for name in model.fields}
+        self.select_list = ", ".join(f"{self.columns[name]} AS {quote_identifier(name)}" for name in model.fields)
 
     # ── 条件 ──
     def _search_condition(self, search):
@@ -96,7 +96,7 @@ class QueryBuilder:
         return (" WHERE " + " AND ".join(parts)) if parts else "", params
 
     def _sort_expression(self, name):
-        return date_expression(self.columns[name]) if name in DATE_FIELDS else self.columns[name]
+        return date_expression(self.columns[name]) if name in self.model.date_fields else self.columns[name]
 
     # ── 文 ──
     def count(self, search, filters):
@@ -111,7 +111,7 @@ class QueryBuilder:
             f"{blank_expression(self.columns[sort_key])} ASC",
             f"{self._sort_expression(sort_key)} {direction}",
         ]
-        order_terms += [f"{self.columns[name]} ASC" for name in RECORD_KEY_FIELDS if name != sort_key]
+        order_terms += [f"{self.columns[name]} ASC" for name in self.model.record_key if name != sort_key]
         sql = (
             f"SELECT {self.select_list} FROM {self.table}{where} "
             f"ORDER BY {', '.join(order_terms)} LIMIT ? OFFSET ?"
@@ -131,6 +131,6 @@ class QueryBuilder:
 
     def detail(self, key_values):
         # IS は NULL 同士も一致とみなす（鋳造番号が空の行にも対応する）
-        where = " AND ".join(f"{self.columns[name]} IS ?" for name in RECORD_KEY_FIELDS)
+        where = " AND ".join(f"{self.columns[name]} IS ?" for name in self.model.record_key)
         sql = f"SELECT {self.select_list} FROM {self.table} WHERE {where} LIMIT 2"
-        return sql, [key_values[name] for name in RECORD_KEY_FIELDS]
+        return sql, [key_values[name] for name in self.model.record_key]

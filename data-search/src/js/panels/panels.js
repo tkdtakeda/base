@@ -96,33 +96,15 @@
           if (refreshing) timer = window.setInterval(() => tick(ctx.store.get()), 1000);
           sourceNote.textContent = state.mode.description;
 
-          // 設定が未完了のとき・使わなかった項目があるときは、どこを直せばよいかを出す
-          const ignored = status.ignoredSettings || [];
-          configBox.hidden = !status.configIncomplete && ignored.length === 0;
-          if (!status.configIncomplete && ignored.length) {
-            configBox.replaceChildren(section('設定の確認', [
-              el('p', { className: 'pane-note', text: `config/${status.configFile} の次の項目は config.sample.json にないため使っていません。書き間違いがないか確認してください。` }),
-              el('ul', { className: 'config-help__list mono' }, ignored.map((path) => el('li', { text: path }))),
-            ]));
-          }
-          refreshButton.disabled = refreshing || Boolean(status.configIncomplete);
-          if (status.configIncomplete) {
-            configBox.replaceChildren(
-              section('設定の直し方', [
-                el('p', { className: 'pane-note', text: status.configSource === 'sample'
-                  ? 'config.local.json がないため、config.sample.json の初期値だけで起動しています。'
-                  : `config.sample.json の初期値を config/${status.configFile} で上書きしています。` }),
-                el('p', { className: 'pane-note', text: '次の項目が仮の値（<...>）のままです：' }),
-                el('ul', { className: 'config-help__list mono' }, (status.incompleteSettings || []).map((path) => el('li', { text: path }))),
-                el('ol', { className: 'config-help__steps' }, [
-                  el('li', { text: 'config フォルダに config.local.json を作る（なければ）' }),
-                  el('li', { text: '上の項目だけ実際の値を書く。ほかの項目は書かなくてよい（config.sample.json の値を使う）' }),
-                  el('li', { text: 'start.bat を起動し直す' }),
-                ]),
-                el('p', { className: 'pane-note', text: '実データなしで試すときは start-dummy.bat を使ってください。' }),
-              ]),
-            );
-          }
+          // 設定の注意（ローカルの設定にある未知のキーなど）は、ファイル名と項目を出す
+          const warnings = status.settingsWarnings || [];
+          configBox.hidden = warnings.length === 0;
+          configBox.replaceChildren(...(warnings.length ? [section('設定の注意', warnings.map((w) =>
+            el('div', { className: 'config-help__item' }, [
+              el('p', { className: 'config-help__where mono', text: `${w.file} ／ ${w.path}` }),
+              el('p', { className: 'pane-note', text: w.reason }),
+              el('p', { className: 'pane-note', text: `対応：${w.action}` }),
+            ])))] : []));
         },
       };
     },
@@ -136,20 +118,21 @@
     label: '表示列',
     title: '一覧に表示する列',
     badge(state) {
-      const hidden = DS.domain.fields.list().length - state.columns.visible.length;
+      const hidden = DS.domain.listFields().length - state.columns.visible.length;
       return hidden > 0 ? { tone: 'info', text: String(hidden), title: `${hidden} 列を隠しています` } : null;
     },
     mount(container, ctx) {
       const checks = new Map();
+      // 選べるのは view の listColumns で visible: true の列だけ（visible: false の列は一覧に出さない）
       const groups = DS.domain.fieldGroups.list().map((group) => {
-        const items = DS.domain.fields.list().filter((field) => field.group === group.id).map((field) => {
+        const items = DS.domain.listFields().filter((field) => field.group === group.id).map((field) => {
           const box = el('input', { type: 'checkbox', value: field.id });
           box.addEventListener('change', () => toggle(field.id, box.checked, box.parentElement));
           checks.set(field.id, box);
           return el('label', { className: 'check' }, [box, el('span', { text: field.label })]);
         });
-        return section(group.label, [el('div', { className: 'check-list' }, items)]);
-      });
+        return items.length ? section(group.label, [el('div', { className: 'check-list' }, items)]) : null;
+      }).filter(Boolean);
       const reset = el('button', { type: 'button', className: 'btn btn--ghost btn--block' }, [icon('fa-arrow-rotate-left', ''), el('span', { text: 'すべて表示する（既定に戻す）' })]);
       reset.addEventListener('click', () => {
         ctx.store.set({ columns: { visible: DS.controllers.defaultVisibleColumns() } });
@@ -162,7 +145,7 @@
       );
 
       function toggle(id, checked, row) {
-        const order = DS.domain.fields.list().map((field) => field.id);
+        const order = DS.domain.listFields().map((field) => field.id);
         const current = new Set(ctx.store.get().columns.visible);
         if (checked) current.add(id);
         else current.delete(id);

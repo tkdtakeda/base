@@ -1,7 +1,12 @@
-"""動作確認用のダミー共有 SQLite と、それを指す config/config.dummy.json を作る。
+"""動作確認用のダミー共有 SQLite と、それを指す上書き設定（config/dummy/）を作る。
+
+  config/dummy/config.local.json … 共有 SQLite・キャッシュのパスだけ
+  config/dummy/schema.local.json … テーブル名と列名だけ
+  （view は上書きしない。config/sample/view.sample.json をそのまま使う）
 
 実データは使わない。物理名はわざと論理名と違う名前（日本語の列名を含む）にして、
-設定ファイルの対応付け（fieldMappings）が効いていることを確かめられるようにしている。
+schema の columns（論理名 → 物理列名）が効いていることを確かめられるようにしている。
+起動: python python/run_server.py --local-dir config/dummy
 
 使い方:
     python python/tools/make_dummy_db.py                    … 正常なダミー（5,000 件）
@@ -20,7 +25,9 @@ from datetime import date, timedelta
 
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SHARED_PATH = os.path.join(APP_ROOT, "data", "dummy", "shared", "dummy_shared.sqlite3")
-CONFIG_PATH = os.path.join(APP_ROOT, "config", "config.dummy.json")
+DUMMY_DIR = os.path.join(APP_ROOT, "config", "dummy")
+CONFIG_PATH = os.path.join(DUMMY_DIR, "config.local.json")
+SCHEMA_PATH = os.path.join(DUMMY_DIR, "schema.local.json")
 TABLE = "t_dummy_lot"
 SEED = 20261011
 
@@ -107,18 +114,19 @@ def write_database(path, rows, variant):
 
 
 def write_config():
-    # config.local.json と同じく、config.sample.json から変えたい項目だけを書く
+    # config/local と同じく、サンプルから変えたい項目だけを書く
+    os.makedirs(DUMMY_DIR, exist_ok=True)
     config = {
         "application": {"name": "Data Search (Dummy)"},
         "dataSource": {
             "sourcePath": "./data/dummy/shared/dummy_shared.sqlite3",
             "cachePath": "./data/cache/dummy_cache.sqlite3",
-            "tableName": TABLE,
         },
-        "fieldMappings": dict(COLUMNS),
     }
-    with open(CONFIG_PATH, "w", encoding="utf-8") as fp:
-        json.dump(config, fp, ensure_ascii=False, indent=2)
+    schema = {"tableName": TABLE, "columns": dict(COLUMNS)}
+    for path, data in ((CONFIG_PATH, config), (SCHEMA_PATH, schema)):
+        with open(path, "w", encoding="utf-8") as fp:
+            json.dump(data, fp, ensure_ascii=False, indent=2)
 
 
 def main():
@@ -128,14 +136,14 @@ def main():
     parser.add_argument("--if-missing", action="store_true")
     args = parser.parse_args()
 
-    if args.if_missing and os.path.isfile(SHARED_PATH) and os.path.isfile(CONFIG_PATH):
+    if args.if_missing and all(os.path.isfile(p) for p in (SHARED_PATH, CONFIG_PATH, SCHEMA_PATH)):
         print("ダミーデータはすでにあります。")
         return
     rows = build_rows(args.rows, random.Random(SEED))
     write_database(SHARED_PATH, rows, args.variant)
     write_config()
     print(f"ダミーの共有データを作成しました（{args.variant}・{len(rows):,} 件）: {SHARED_PATH}")
-    print(f"設定ファイル: {CONFIG_PATH}")
+    print(f"上書き設定: {DUMMY_DIR}（config.local.json / schema.local.json）")
 
 
 if __name__ == "__main__":

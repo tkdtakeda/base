@@ -5,5 +5,5 @@ cd /d "%~dp0"
 set "PY=python"
 where py > nul 2> nul && set "PY=py -3"
 %PY% python\tools\make_dummy_db.py --if-missing
-%PY% python\run_server.py --config config\config.dummy.json
+%PY% python\run_server.py --local-dir config\dummy
 if errorlevel 1 pause

@@ -13,7 +13,7 @@ from datetime import datetime
 
 from . import cache_copier
 from .cache_validator import open_readonly, validate_cache_file
-from .errors import USER_MESSAGES, AppError
+from .errors import AppError
 
 
 def to_iso(timestamp):
@@ -48,16 +48,10 @@ class CacheService:
         os.replace(temp, self.state_path)
 
     def cache_available(self):
-        # 設定が未完了のときは、仮の値のパスに触れない
-        return not self.config.incomplete and os.path.isfile(self.cache_path)
-
-    def _require_complete(self):
-        if self.config.incomplete:
-            raise AppError("CONFIG_INCOMPLETE", f"placeholders: {', '.join(self.config.incomplete_settings)}")
+        return os.path.isfile(self.cache_path)
 
     # ── 更新 ──
     def refresh(self):
-        self._require_complete()
         with self.lock:
             self.logger.info("cache refresh started")
             state = self._read_state()
@@ -111,28 +105,12 @@ class CacheService:
 
     # ── 状態 ──
     def status(self):
+        # 設定の注意（未知のキーなど）は画面の「データ」パネルにも出す。値は含めない
         config_info = {
-            "configSource": self.config.config_source,
-            "configFile": self.config.config_file,
-            "configIncomplete": self.config.incomplete,
-            "incompleteSettings": list(self.config.incomplete_settings),
-            "ignoredSettings": list(self.config.ignored_keys),
+            "settingsWarnings": [
+                {"file": w.file, "path": w.path, "reason": w.reason, "action": w.action} for w in self.config.warnings
+            ],
         }
-        if self.config.incomplete:
-            return dict(config_info, **{
-                "available": False,
-                "lastRefreshSucceeded": False,
-                "sourceModifiedAt": None,
-                "cacheUpdatedAt": None,
-                "usingPreviousCache": False,
-                "message": USER_MESSAGES["CONFIG_INCOMPLETE"],
-                "rowCount": None,
-                "sourceReachable": None,
-                "sourceHasUpdate": False,
-                "lastRefreshAt": None,
-                "errorCode": "CONFIG_INCOMPLETE",
-                "errorMessage": USER_MESSAGES["CONFIG_INCOMPLETE"],
-            })
         state = self._read_state()
         available = self.cache_available()
         current_source = cache_copier.source_modified_at(self.config.source_path)
@@ -167,7 +145,6 @@ class CacheService:
     # ── 読み取り ──
     @contextmanager
     def read_connection(self):
-        self._require_complete()
         with self.lock:
             if not self.cache_available():
                 raise AppError("CACHE_UNAVAILABLE", "cache file not found")

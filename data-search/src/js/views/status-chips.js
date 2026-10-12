@@ -12,7 +12,6 @@
     const status = cacheState.status;
     if (cacheState.refreshing) return { tone: 'info', icon: 'fa-rotate', spin: true, fallback: '…', text: '更新しています' };
     if (!status) return { tone: 'neutral', icon: 'fa-circle-notch', spin: true, fallback: '…', text: '確認しています' };
-    if (status.configIncomplete) return { tone: 'danger', icon: 'fa-gear', fallback: '×', text: '設定が未完了' };
     if (!status.available) return { tone: 'danger', icon: 'fa-database', fallback: '×', text: 'データなし' };
     if (status.usingPreviousCache) return { tone: 'warning', icon: 'fa-triangle-exclamation', fallback: '!', text: '前回のデータを使用中' };
     if (status.sourceHasUpdate) return { tone: 'warning', icon: 'fa-cloud-arrow-down', fallback: '!', text: '新しい更新があります' };

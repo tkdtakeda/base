@@ -500,6 +500,6 @@
 .manual-table th { background: var(--color-surface-alt); }
 .manual-icon { font-family: var(--font-mono); color: var(--color-primary); }
 
-/* ── 設定の直し方（データのパネル） ── */
-.config-help__list { padding-left: var(--sp-5); list-style: disc; font-size: var(--fs-sm); color: var(--color-danger); }
-.config-help__steps { margin: 0; padding-left: var(--sp-5); font-size: var(--fs-sm); line-height: var(--lh-base); }
+/* ── 設定の注意（データのパネル） ── */
+.config-help__item { padding: var(--sp-2); border-left: var(--bw-bar) solid var(--color-warning); border-radius: var(--r-sm); background: var(--color-warning-bg); }
+.config-help__where { font-size: var(--fs-xs); font-weight: var(--fw-bold); color: var(--color-warning); overflow-wrap: anywhere; }

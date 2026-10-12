@@ -50,7 +50,7 @@
     }
 
     function valueNode(field, value) {
-      if (field.render === 'status') return DS.domain.statusBadge(value);
+      if (DS.domain.hasBadge(field)) return DS.domain.badge(field, value);
       if (value === null || value === undefined || value === '') return el('span', { className: 'muted', text: '—' });
       return el('span', { className: field.mono ? 'mono' : '', text: String(value) });
     }
@@ -61,10 +61,13 @@
       if (!selection.key) return;
       const item = selection.item;
 
+      // 見出し：1 件を特定する鍵の最初の項目（例：ロット番号）と、札を持つ項目（例：状態）
+      const headField = DS.domain.keyFields()[0];
+      const badgeField = DS.domain.detailFields().find((field) => DS.domain.hasBadge(field));
       title.replaceChildren(
-        el('span', { className: 'detail__label', text: 'ロット番号' }),
-        el('strong', { className: 'detail__lot mono', text: item.lotNo || '—' }),
-        DS.domain.statusBadge(item.status),
+        el('span', { className: 'detail__label', text: headField.label }),
+        el('strong', { className: 'detail__lot mono', text: item[headField.id] || '—' }),
+        badgeField ? DS.domain.badge(badgeField, item[badgeField.id]) : null,
       );
 
       const notices = [];
@@ -73,8 +76,9 @@
       if (selection.duplicated) notices.push(el('p', { className: 'inline-note inline-note--warning' }, [icon('fa-triangle-exclamation', '!'), el('span', { text: ' 同じロット番号・鋳造番号のデータが複数あります。最初の 1 件を表示しています。' })]));
       notice.replaceChildren(...notices);
 
-      body.replaceChildren(...DS.domain.fieldGroups.list().map((group) => {
-        const rows = DS.domain.fields.list().filter((field) => field.group === group.id).flatMap((field) => {
+      // 詳細に出す項目と順番は view の detailFields。まとまりは fields.<項目>.group
+      body.replaceChildren(...DS.domain.fieldGroups.list().flatMap((group) => {
+        const rows = DS.domain.detailFields().filter((field) => field.group === group.id).flatMap((field) => {
           const value = item[field.id];
           const copyButton = field.copy && value
             ? el('button', { type: 'button', className: 'copy-btn', title: `${field.label}をコピー`, 'aria-label': `${field.label}をコピー` }, [icon('fa-copy', '⧉')])
@@ -85,6 +89,7 @@
             el('dd', {}, [valueNode(field, value), copyButton]),
           ];
         });
+        if (rows.length === 0) return null;
         return el('section', { className: 'detail__group' }, [
           el('h3', { className: 'detail__group-title' }, [icon(group.icon, ''), el('span', { text: group.label })]),
           el('dl', { className: 'facts facts--detail' }, rows),

@@ -1,0 +1,22 @@
+{
+  "dataSourceId": "target-data",
+  "tableName": "<TARGET_TABLE_NAME>",
+  "recordKey": ["lotNo", "castingNo"],
+  "types": {
+    "deliveryDate": "date"
+  },
+  "columns": {
+    "lotNo": "<LOT_NUMBER_COLUMN>",
+    "inspectionNo": "<INSPECTION_NUMBER_COLUMN>",
+    "castingNo": "<CASTING_NUMBER_COLUMN>",
+    "orderNo": "<ORDER_NUMBER_COLUMN>",
+    "material": "<MATERIAL_COLUMN>",
+    "temper": "<TEMPER_COLUMN>",
+    "size": "<SIZE_COLUMN>",
+    "customer": "<CUSTOMER_COLUMN>",
+    "deliveryDate": "<DELIVERY_DATE_COLUMN>",
+    "process": "<PROCESS_COLUMN>",
+    "equipment": "<EQUIPMENT_COLUMN>",
+    "status": "<STATUS_COLUMN>"
+  }
+}

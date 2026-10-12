@@ -15,10 +15,29 @@
     }).catch(() => document.documentElement.classList.add('no-icons'));
   }
 
+  /** 表示定義を読めないときは、画面の部品を作らずに理由だけを出す */
+  function showFatal(message, detailId) {
+    const box = document.createElement('div');
+    box.className = 'fatal';
+    box.innerHTML = '<h1 class="fatal__title">画面を準備できませんでした</h1><p class="fatal__text"></p><p class="fatal__id mono"></p>';
+    box.querySelector('.fatal__text').textContent = message;
+    box.querySelector('.fatal__id').textContent = detailId ? `問い合わせ番号 ${detailId}` : '';
+    document.body.replaceChildren(box);
+  }
+
   async function start() {
     watchIconFont();
     const bus = DS.core.createEventBus();
     const api = DS.api.createClient(DS.api.selectAdapter());
+
+    // 表示定義（項目・表示名・表示順・検索・絞り込み）を最初に読み込み、論理項目の登録簿を組み立てる
+    try {
+      DS.domain.applyView(await api.call('get_view_config'));
+    } catch (error) {
+      showFatal(error.userMessage || String(error), error.detailId);
+      return;
+    }
+
     const mode = {
       mode: api.mode,
       label: api.adapter.label,

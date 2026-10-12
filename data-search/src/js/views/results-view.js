@@ -21,7 +21,7 @@
 
     // ── 一覧 ──
     function visibleFields(state) {
-      return DS.domain.fields.list().filter((field) => state.columns.visible.includes(field.id));
+      return DS.domain.listFields().filter((field) => state.columns.visible.includes(field.id));
     }
 
     function headerCell(field, state) {
@@ -30,13 +30,13 @@
       const ariaSort = !active ? 'none' : state.sort.order === 'asc' ? 'ascending' : 'descending';
       const searched = state.search.request && state.search.request.searchType === field.id;
       return `<th scope="col" aria-sort="${ariaSort}" style="min-width:${field.width}px" class="${searched ? 'is-searched' : ''}">` +
-        `<button type="button" class="th-btn" data-sort="${field.id}" title="${escapeHtml(field.label)}で並べ替え">` +
-        `<span>${escapeHtml(field.label)}</span><i class="fa-solid ${sortIcon} th-btn__icon${active ? ' is-active' : ''}" aria-hidden="true"></i></button></th>`;
+        `<button type="button" class="th-btn" data-sort="${field.id}" title="${escapeHtml(field.listLabel)}で並べ替え">` +
+        `<span>${escapeHtml(field.listLabel)}</span><i class="fa-solid ${sortIcon} th-btn__icon${active ? ' is-active' : ''}" aria-hidden="true"></i></button></th>`;
     }
 
     function cell(field, item, request) {
       const value = item[field.id];
-      if (field.render === 'status') return `<td>${DS.domain.statusBadge(value).outerHTML}</td>`;
+      if (DS.domain.hasBadge(field)) return `<td>${DS.domain.badge(field, value).outerHTML}</td>`;
       const text = value === null || value === undefined || value === '' ? '<span class="muted">—</span>'
         : request && request.searchType === field.id ? highlight(value, request.keyword) : escapeHtml(value);
       return `<td class="${field.mono ? 'mono' : ''}${request && request.searchType === field.id ? ' is-searched' : ''}">${text}</td>`;
@@ -98,7 +98,7 @@
       const count = el('strong', { className: 'results__count mono', text: `${formatNumber(result.totalCount)} 件` });
       const title = request.keyword
         ? el('span', { className: 'results__title' }, [
-          el('span', { text: `${DS.domain.fields.get(request.searchType).label}が「` }),
+          el('span', { text: `${DS.domain.fields.get(request.searchType).listLabel}が「` }),
           el('span', { className: 'mono', text: request.keyword }),
           el('span', { text: `」${request.matchMode === 'exact' ? 'と同じ' : 'を含む'}ロット` }),
         ])
@@ -157,11 +157,7 @@
       const cacheStatus = state.cache.status;
       let card = null;
 
-      if (cacheStatus && cacheStatus.configIncomplete) {
-        card = emptyCard('fa-gear', '設定が未完了です',
-          `データの場所や表・列の名前が、まだ仮の値（<...>）のままです（${cacheStatus.configSource === 'sample' ? 'config.local.json がありません' : cacheStatus.configFile + ' に書かれていない項目があります'}）。`,
-          [actionButton('直し方を見る', 'fa-circle-info', () => openPanel('data'), false)]);
-      } else if (cacheStatus && !cacheStatus.available) {
+      if (cacheStatus && !cacheStatus.available) {
         card = state.mode.capabilities.sampleData
           ? emptyCard('fa-flask', 'まずはサンプルデータを読み込みます', '左の「サンプル」から目的に合うデータを選ぶと、そのまま検索を試せます。',
             [actionButton('サンプルを選ぶ', 'fa-flask', () => openPanel('samples'), false)])
@@ -196,13 +192,13 @@
           }, false));
         }
         DS.domain.searchableFields().filter((other) => other.id !== request.searchType).forEach((other) => {
-          actions.push(actionButton(`${other.label}として探す`, 'fa-arrow-right-arrow-left', () => {
+          actions.push(actionButton(`${other.listLabel}として探す`, 'fa-arrow-right-arrow-left', () => {
             search.setQuery({ searchType: other.id });
             search.run({ page: 1 });
           }, false));
         });
         card = emptyCard('fa-circle-question', '一致するロットはありません',
-          `${field.label}が「${request.keyword}」${request.matchMode === 'exact' ? 'と同じ' : 'を含む'}ロットは${filterCount ? '、今の絞り込みの中に' : ''}ありません。番号の種類や一致のしかたを確かめてください。`,
+          `${field.listLabel}が「${request.keyword}」${request.matchMode === 'exact' ? 'と同じ' : 'を含む'}ロットは${filterCount ? '、今の絞り込みの中に' : ''}ありません。番号の種類や一致のしかたを確かめてください。`,
           actions);
       }
       empty.replaceChildren(...(card ? [card] : []));

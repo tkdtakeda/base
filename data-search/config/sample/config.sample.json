@@ -1,0 +1,32 @@
+{
+  "application": {
+    "id": "data-search",
+    "name": "Data Search",
+    "version": "0.1.0"
+  },
+  "dataSource": {
+    "id": "target-data",
+    "enabled": true,
+    "sourcePath": "<SHARED_SQLITE_PATH>",
+    "cachePath": "./data/cache/target-data.sqlite3",
+    "readOnly": true
+  },
+  "cache": {
+    "temporaryExtension": ".tmp",
+    "keepPreviousOnFailure": true
+  },
+  "search": {
+    "defaultMatchMode": "partial",
+    "pageSize": 100,
+    "maxPageSize": 500
+  },
+  "logging": {
+    "directory": "./logs",
+    "level": "info"
+  },
+  "devServer": {
+    "host": "127.0.0.1",
+    "port": 8765,
+    "openBrowser": true
+  }
+}

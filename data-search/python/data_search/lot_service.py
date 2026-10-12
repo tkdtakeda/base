@@ -7,16 +7,11 @@ from datetime import date, timedelta
 
 from .errors import AppError
 from .fields import (
-    DEFAULT_SORT_KEY,
-    DISPLAY_FIELDS,
-    FILTER_FIELDS,
     FILTER_VALUE_LENGTH_MAX,
     FILTER_VALUES_MAX,
     KEYWORD_MAX_LENGTH,
     MATCH_MODES,
-    RECORD_KEY_FIELDS,
     RELATIVE_DAYS_MAX,
-    SEARCHABLE_FIELDS,
     SORT_ORDERS,
     VALUE_LIST_LIMIT,
 )
@@ -38,8 +33,8 @@ def _to_text(value):
     return str(value)
 
 
-def _row_to_item(row):
-    return {name: _to_text(row[index]) for index, name in enumerate(DISPLAY_FIELDS)}
+def _row_to_item(row, model):
+    return {name: _to_text(row[index]) for index, name in enumerate(model.fields)}
 
 
 def _invalid(detail, user_message=None):
@@ -61,7 +56,7 @@ def _require_object(payload):
 
 # ── 入力の読み取り ─────────────────────────────────────────
 
-def parse_search(payload, required):
+def parse_search(payload, required, model):
     """(searchType, keyword, matchMode) か、検索なしなら None を返す。"""
     keyword = payload.get("keyword")
     if keyword is None and not required:
@@ -76,7 +71,7 @@ def parse_search(payload, required):
     if len(keyword) > KEYWORD_MAX_LENGTH:
         raise _invalid("keyword too long", f"検索する番号は {KEYWORD_MAX_LENGTH} 文字以内で入力してください。")
     search_type = payload.get("searchType")
-    if search_type not in SEARCHABLE_FIELDS:
+    if search_type not in model.searchable:
         raise _invalid("unknown searchType")
     match_mode = payload.get("matchMode", "partial")
     if match_mode not in MATCH_MODES:
@@ -105,14 +100,14 @@ def _parse_iso_date(spec, name):
         raise _invalid("invalid date", "日付は 年（4 桁）・月・日 で正しく入力してください。") from exc
 
 
-def parse_filters(payload, today):
+def parse_filters(payload, today, model):
     """画面から来た絞り込みを、QueryBuilder が受け取る形に直す。空の条件は無視する。"""
     raw = payload.get("filters") or {}
     if not isinstance(raw, dict):
         raise _invalid("filters must be an object")
     filters = []
     for name, spec in raw.items():
-        kind = FILTER_FIELDS.get(name)
+        kind = model.filters.get(name)
         if kind is None or not isinstance(spec, dict) or spec.get("type") != kind:
             raise _invalid(f"unknown filter: {name}")
         if kind == "values":
@@ -148,7 +143,8 @@ class LotService:
         self.config = config
         self.cache = cache_service
         self.logger = logger
-        self.query = QueryBuilder(config.table_name, config.field_mappings)
+        self.model = config.model
+        self.query = QueryBuilder(config.table_name, config.field_mappings, config.model)
         self._today = today  # テストで日付を固定するため
 
     def today(self):
@@ -172,12 +168,12 @@ class LotService:
 
     def _list(self, payload, keyword_required):
         today = self.today()
-        search = parse_search(payload, keyword_required)
-        filters = parse_filters(payload, today)
-        sort_key = payload.get("sortKey") or DEFAULT_SORT_KEY
-        if sort_key not in DISPLAY_FIELDS:
+        search = parse_search(payload, keyword_required, self.model)
+        filters = parse_filters(payload, today, self.model)
+        sort_key = payload.get("sortKey") or self.model.default_sort[0]
+        if sort_key not in self.model.fields:
             raise _invalid("unknown sortKey")
-        sort_order = payload.get("sortOrder") or "asc"
+        sort_order = payload.get("sortOrder") or (self.model.default_sort[1] if sort_key == self.model.default_sort[0] else "asc")
         if sort_order not in SORT_ORDERS:
             raise _invalid("unknown sortOrder")
         page = _require_int(payload, "page", 1, 1, 10_000_000)
@@ -197,7 +193,7 @@ class LotService:
             ",".join(name for name, _, _ in filters) or "-",
             total, elapsed_ms,
         )
-        items = [_row_to_item(row) for row in rows]
+        items = [_row_to_item(row, self.model) for row in rows]
         return {
             "success": True,
             "count": len(items),
@@ -214,10 +210,10 @@ class LotService:
         """絞り込みの候補（値と件数）。ほかの絞り込みと番号の検索を反映して数える"""
         payload = _require_object(payload)
         name = payload.get("field")
-        if FILTER_FIELDS.get(name) != "values":
+        if self.model.filters.get(name) != "values":
             raise _invalid("field is not a value filter")
-        search = parse_search(payload, required=False)
-        filters = parse_filters(payload, self.today())
+        search = parse_search(payload, False, self.model)
+        filters = parse_filters(payload, self.today(), self.model)
         sql, params = self.query.values(name, search, filters, VALUE_LIST_LIMIT + 1)
         rows = self._execute(sql, params, "all")
         return {
@@ -230,13 +226,13 @@ class LotService:
     def detail(self, payload):
         payload = _require_object(payload)
         key_values = {}
-        for name in RECORD_KEY_FIELDS:
+        for name in self.model.record_key:
             value = payload.get(name)
             if value is not None and not isinstance(value, str):
                 raise _invalid(f"{name} must be a string or null")
             key_values[name] = value
-        if not key_values["lotNo"]:
-            raise _invalid("lotNo is required")
+        if not key_values[self.model.record_key[0]]:
+            raise _invalid(f"{self.model.record_key[0]} is required")
 
         sql, params = self.query.detail(key_values)
         rows = self._execute(sql, params, "all")
@@ -244,4 +240,4 @@ class LotService:
             raise AppError("NOT_FOUND", "record not found")
         if len(rows) > 1:
             self.logger.warning("detail key is not unique")
-        return {"success": True, "item": _row_to_item(rows[0]), "duplicated": len(rows) > 1}
+        return {"success": True, "item": _row_to_item(rows[0], self.model), "duplicated": len(rows) > 1}
