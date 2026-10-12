@@ -159,7 +159,7 @@
 
       if (cacheStatus && cacheStatus.configIncomplete) {
         card = emptyCard('fa-gear', '設定が未完了です',
-          `${cacheStatus.configFile} を読み込みましたが、データの場所や表・列の名前が仮の値（<...>）のままです。`,
+          `データの場所や表・列の名前が、まだ仮の値（<...>）のままです（${cacheStatus.configSource === 'sample' ? 'config.local.json がありません' : cacheStatus.configFile + ' に書かれていない項目があります'}）。`,
           [actionButton('直し方を見る', 'fa-circle-info', () => openPanel('data'), false)]);
       } else if (cacheStatus && !cacheStatus.available) {
         card = state.mode.capabilities.sampleData

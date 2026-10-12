@@ -17,7 +17,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data_search.cache_service import CacheService  # noqa: E402
-from data_search.config_loader import load_config, resolve_config_path  # noqa: E402
+from data_search.config_loader import load_config, merge_settings, resolve_override_path  # noqa: E402
 from data_search.errors import AppError  # noqa: E402
 from data_search.http_server import AppContext, create_server  # noqa: E402
 from data_search.lot_service import LotService  # noqa: E402
@@ -71,33 +71,25 @@ class BackendTestCase(unittest.TestCase):
         shutil.copyfile(SAMPLE_CONFIG, os.path.join(self.root, "config", "config.sample.json"))
         self.source = os.path.join(self.root, "shared", "source.sqlite3")
         make_db(self.source)
+        self.config_dir = os.path.join(self.root, "config")
         self.config_path = self.write_config()
-        self.config = load_config(self.config_path)
+        self.config = load_config(self.config_dir, resolve_override_path(self.config_dir))
         self.cache = CacheService(self.config, SILENT)
         self.service = LotService(self.config, self.cache, SILENT)
 
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
 
-    def write_config(self, name="config.local.json", **overrides):
-        """config.sample.json と同じ形で、値だけを差し替えた設定を書く。"""
-        with open(SAMPLE_CONFIG, encoding="utf-8") as fp:
-            config = json.load(fp)
-        config["dataSource"].update({
-            "sourcePath": "./shared/source.sqlite3",
-            "cachePath": "./data/cache/cache.sqlite3",
-            "tableName": "t_lot",
-        })
-        config["fieldMappings"] = dict(COLUMNS)
-        for path, value in overrides.items():
-            node = config
-            keys = path.split(".")
-            for key in keys[:-1]:
-                node = node[key]
-            node[keys[-1]] = value
+    def write_config(self, name="config.local.json", data=None):
+        """config.local.json と同じく、変えたい項目だけを書いた設定を置く（devServer などは書かない）。"""
+        if data is None:
+            data = {
+                "dataSource": {"sourcePath": "./shared/source.sqlite3", "cachePath": "./data/cache/cache.sqlite3", "tableName": "t_lot"},
+                "fieldMappings": dict(COLUMNS),
+            }
         path = os.path.join(self.root, "config", name)
         with open(path, "w", encoding="utf-8") as fp:
-            json.dump(config, fp, ensure_ascii=False)
+            json.dump(data, fp, ensure_ascii=False)
         return path
 
     def search(self, keyword, search_type="lotNo", match_mode="partial", **extra):
@@ -105,20 +97,32 @@ class BackendTestCase(unittest.TestCase):
 
 
 class ConfigTest(BackendTestCase):
-    def test_relative_paths_resolve_from_app_root(self):
-        self.assertEqual(self.config.source_path, os.path.normpath(self.source))
+    def load(self, data):
+        self.write_config(data=data)
+        return load_config(self.config_dir, resolve_override_path(self.config_dir))
 
-    def test_local_is_preferred_then_sample(self):
-        config_dir = os.path.join(self.root, "config")
-        self.assertTrue(resolve_config_path(config_dir).endswith("config.local.json"))
+    def assert_invalid(self, data, expected):
+        with self.assertRaises(AppError) as ctx:
+            self.load(data)
+        self.assertEqual(ctx.exception.code, "CONFIG_INVALID")
+        self.assertIn(expected, ctx.exception.detail)
+
+    def test_local_with_only_needed_keys_works(self):
+        # setUp の config.local.json は dataSource の 3 項目と fieldMappings だけ。devServer などは書いていない
         self.assertEqual(self.config.config_source, "local")
         self.assertFalse(self.config.incomplete)
-        os.remove(self.config_path)
-        self.assertTrue(resolve_config_path(config_dir).endswith("config.sample.json"))
+        self.assertEqual(self.config.server_port, 8765)          # sample の値
+        self.assertEqual(self.config.page_size, 100)             # sample の値
+        self.assertTrue(self.config.keep_previous_on_failure)    # sample の値
+        self.assertEqual(self.config.table_name, "t_lot")        # local の値
+        self.assertEqual(self.config.source_path, os.path.normpath(self.source))
+        self.assertIn("dataSource.tableName", self.config.overridden_keys)
+        self.assertEqual(self.config.ignored_keys, ())
 
-    def test_sample_fallback_starts_as_incomplete(self):
+    def test_without_local_starts_with_sample_values(self):
         os.remove(self.config_path)
-        config = load_config(resolve_config_path(os.path.join(self.root, "config")))
+        self.assertIsNone(resolve_override_path(self.config_dir))
+        config = load_config(self.config_dir, None)
         self.assertEqual(config.config_source, "sample")
         self.assertIn("dataSource.sourcePath", config.incomplete_settings)
         self.assertIn("fieldMappings.lotNo", config.incomplete_settings)
@@ -133,40 +137,52 @@ class ConfigTest(BackendTestCase):
             LotService(config, cache, SILENT).list({})
         self.assertEqual(ctx.exception.code, "CONFIG_INCOMPLETE")
 
-    def test_placeholder_left_in_local_is_incomplete(self):
-        path = self.write_config(**{"dataSource.tableName": "<TARGET_TABLE_NAME>"})
-        config = load_config(path)
-        self.assertEqual(config.incomplete_settings, ("dataSource.tableName",))
+    def test_partial_mappings_leave_rest_incomplete(self):
+        config = self.load({"dataSource": {"sourcePath": "./s.sqlite3", "cachePath": "./c.sqlite3", "tableName": "t"},
+                            "fieldMappings": {"lotNo": "LOT"}})
+        self.assertEqual(config.field_mappings["lotNo"], "LOT")
+        self.assertNotIn("fieldMappings.lotNo", config.incomplete_settings)
+        self.assertIn("fieldMappings.status", config.incomplete_settings)
 
-    def assert_structure_error(self, mutate, expected):
-        with open(self.config_path, encoding="utf-8") as fp:
-            data = json.load(fp)
-        mutate(data)
-        with open(self.config_path, "w", encoding="utf-8") as fp:
-            json.dump(data, fp, ensure_ascii=False)
-        with self.assertRaises(AppError) as ctx:
-            load_config(self.config_path)
-        self.assertEqual(ctx.exception.code, "CONFIG_INVALID")
-        self.assertIn(expected, ctx.exception.detail)
+    def test_missing_keys_never_error(self):
+        config = self.load({})
+        self.assertEqual(config.config_source, "local")
+        self.assertTrue(config.incomplete)
+        self.assertEqual(config.app_name, "Data Search")
 
-    def test_missing_key_is_rejected(self):
-        self.assert_structure_error(lambda d: d["dataSource"].pop("tableName"), "dataSource.tableName がありません")
-
-    def test_extra_key_is_rejected(self):
-        self.assert_structure_error(lambda d: d["dataSource"].update({"table": "x"}), "dataSource.table は config.sample.json にないキーです")
-
-    def test_old_structure_is_rejected(self):
-        def to_old(d):
-            d["dataSources"] = [d.pop("dataSource")]
-        self.assert_structure_error(to_old, "dataSource がありません")
+    def test_unknown_keys_are_ignored_and_reported(self):
+        data = {"dataSource": {"sourcePath": "./s.sqlite3", "cachePath": "./c.sqlite3", "tableName": "t", "table": "typo"},
+                "fieldMappings": dict(COLUMNS), "dataSources": []}
+        config = self.load(data)
+        self.assertEqual(set(config.ignored_keys), {"dataSource.table", "dataSources"})
+        self.assertEqual(config.table_name, "t")
 
     def test_type_mismatch_is_rejected(self):
-        self.assert_structure_error(lambda d: d["search"].update({"pageSize": "100"}), "search.pageSize は 整数 にしてください")
-        self.assert_structure_error(lambda d: d["dataSource"].update({"readOnly": 1}), "dataSource.readOnly は true/false にしてください")
+        self.assert_invalid({"search": {"pageSize": "100"}}, "search.pageSize は 整数 にしてください")
+        self.assert_invalid({"dataSource": {"readOnly": 1}}, "dataSource.readOnly は true/false にしてください")
+        self.assert_invalid({"fieldMappings": "LOT"}, "fieldMappings は オブジェクト { } にしてください")
+
+    def test_value_range_is_checked_after_merge(self):
+        self.assert_invalid({"search": {"pageSize": 600}}, "search.pageSize は 1 以上 maxPageSize 以下")
+        self.assert_invalid({"dataSource": {"readOnly": False}}, "dataSource.readOnly は true にしてください")
+
+    def test_broken_local_is_reported(self):
+        with open(self.config_path, "w", encoding="utf-8") as fp:
+            fp.write("{ broken")
+        with self.assertRaises(AppError) as ctx:
+            load_config(self.config_dir, self.config_path)
+        self.assertIn("JSON として読めません", ctx.exception.detail)
+
+    def test_merge_is_deep_and_does_not_touch_sample(self):
+        base = {"a": {"b": 1, "c": 2}, "d": "x"}
+        merged, overridden, ignored, errors = merge_settings(base, {"a": {"c": 3}, "e": 1})
+        self.assertEqual(merged, {"a": {"b": 1, "c": 3}, "d": "x"})
+        self.assertEqual((overridden, ignored, errors), (["a.c"], ["e"], []))
+        self.assertEqual(base, {"a": {"b": 1, "c": 2}, "d": "x"})
 
     def test_missing_explicit_config(self):
         with self.assertRaises(AppError) as ctx:
-            load_config(os.path.join(self.root, "config", "nothing.json"))
+            load_config(self.config_dir, os.path.join(self.config_dir, "nothing.json"))
         self.assertEqual(ctx.exception.code, "CONFIG_NOT_FOUND")
 
 

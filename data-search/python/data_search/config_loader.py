@@ -1,20 +1,22 @@
-"""設定ファイルの読み込みと検証。
+"""設定ファイルの読み込み（config.sample.json を初期値とし、config.local.json で上書きする）。
 
-方針
-  1. config/config.sample.json がシステムの正式な設定スキーマ（キーの構造と値の型）である
-  2. アプリは config.sample.json のスキーマを基準に動く
-  3. config.local.json は同じスキーマで、値だけを持つ
-  4. sample と local のキー構造の違いは許さない（足りないキー・余分なキー・型の違いは起動を止める）
-  5. 読み込む順は config.local.json → なければ config.sample.json
-  6. 設定項目を足すときは sample と local の両方に足す
+  config.sample.json … 正式な設定スキーマ兼初期値。Git 管理対象。外部 AI へ渡してよい（社内情報を含まない）
+  config.local.json  … 社内専用の値。Git 管理対象外。必要な項目だけを書けばよい。なくても起動できる
 
-config.sample.json の値は仮の値（<...>）なので、sample で起動したときは「設定が未完了」の状態になる。
-そのときは共有データにもキャッシュにも触れず、画面とコンソールで理由と次にすることを知らせる。
+読み込みの流れ
+  1. config.sample.json を読み込み、設定の初期値とする
+  2. config.local.json があれば読み込み、同じキーの値を上書きする（入れ子のオブジェクトはキーごとに重ねる）
+  3. config.local.json にないキーは config.sample.json の値をそのまま使う
+  4. 重ねた結果の型と値の範囲を確かめる
+
+上書きしたあとも仮の値（<...>）が残る設定（データの場所・表名・列名）があるときは「設定が未完了」とし、
+共有データにもキャッシュにも触れずに起動する（画面とコンソールで、残っている項目と直し方を知らせる）。
 
 物理情報（パス・表名・列名）はここで読み込み、画面には渡さない。
 相対パスは「設定ファイルのあるフォルダの 1 つ上」（＝アプリのルート）を基準に解決する。
 """
 
+import copy
 import json
 import os
 import re
@@ -28,7 +30,7 @@ LOCAL_FILE_NAME = "config.local.json"
 PLACEHOLDER_PATTERN = re.compile(r"<[^<>]+>")
 LOG_LEVELS = ("debug", "info", "warning", "error")
 
-# 仮の値のままだと動けない設定（データの場所と、表・列の対応）
+# 仮の値のままだと動けない設定（データの場所と、表・列の対応）。末尾の "." はその下すべて
 REQUIRED_SETTINGS = ("dataSource.sourcePath", "dataSource.cachePath", "dataSource.tableName", "fieldMappings.")
 
 
@@ -51,37 +53,47 @@ class AppConfig:
     server_host: str
     server_port: int
     open_browser: bool
-    config_path: str
-    config_source: str          # "local" / "sample" / "other"（--config で指定したとき）
+    schema_path: str             # config.sample.json の場所
+    override_path: str           # 上書きに使ったファイル（なければ空）
+    config_source: str           # "local" / "sample"（上書きなし） / "other"（--config で指定）
     base_dir: str
-    incomplete_settings: tuple  # 仮の値のままの設定（キーの道筋。値は含めない）
+    overridden_keys: tuple       # 上書きした設定のキー（値は含めない）
+    ignored_keys: tuple          # sample にないため使わなかったキー（書き間違いの可能性）
+    incomplete_settings: tuple   # 仮の値のまま残っている設定のキー
 
     @property
     def incomplete(self):
         return bool(self.incomplete_settings)
 
+    @property
+    def config_file(self):
+        return os.path.basename(self.override_path or self.schema_path)
 
-# ── ファイルの選び方 ─────────────────────────────────────────
 
-def resolve_config_path(config_dir, explicit_path=None):
-    """読み込む設定ファイルを決める。--config の指定があればそれ、なければ local → sample の順。"""
+# ── ファイル ─────────────────────────────────────────────
+
+def resolve_override_path(config_dir, explicit_path=None):
+    """上書きに使うファイル。--config の指定があればそれ、なければ config.local.json（なければ None）。"""
     if explicit_path:
         return os.path.abspath(explicit_path)
     local = os.path.join(config_dir, LOCAL_FILE_NAME)
-    return local if os.path.isfile(local) else os.path.join(config_dir, SCHEMA_FILE_NAME)
+    return local if os.path.isfile(local) else None
 
 
 def _read_json(path, missing_code):
     if not os.path.isfile(path):
-        raise AppError(missing_code, f"not found: {path}")
+        raise AppError(missing_code, f"{path} が見つかりません")
     try:
         with open(path, encoding="utf-8-sig") as fp:
-            return json.load(fp)
+            data = json.load(fp)
     except (OSError, ValueError) as exc:
         raise AppError("CONFIG_INVALID", f"{os.path.basename(path)} を JSON として読めません: {exc}") from exc
+    if not isinstance(data, dict):
+        raise AppError("CONFIG_INVALID", f"{os.path.basename(path)} は {{ }} で囲んだオブジェクトにしてください")
+    return data
 
 
-# ── スキーマとの照合 ─────────────────────────────────────────
+# ── 重ね合わせ ───────────────────────────────────────────
 
 def _type_name(value):
     if isinstance(value, bool):
@@ -99,30 +111,38 @@ def _type_name(value):
     return "null"
 
 
-def compare_structure(schema, data, path=""):
-    """schema（config.sample.json）と data のキー構造・値の型の違いを、すべて挙げる。"""
-    problems = []
-    if isinstance(schema, dict):
-        if not isinstance(data, dict):
-            return [f"{path or '(全体)'} は {_type_name(schema)} にしてください（今は {_type_name(data)}）"]
-        for key in schema:
-            child = f"{path}.{key}" if path else key
-            if key not in data:
-                problems.append(f"{child} がありません")
-            else:
-                problems.extend(compare_structure(schema[key], data[key], child))
-        for key in data:
-            if key not in schema:
-                child = f"{path}.{key}" if path else key
-                problems.append(f"{child} は {SCHEMA_FILE_NAME} にないキーです")
-        return problems
-    if _type_name(schema) != _type_name(data):
-        return [f"{path} は {_type_name(schema)} にしてください（今は {_type_name(data)}）"]
-    return []
+def merge_settings(base, override, path=""):
+    """base（sample）に override（local）を重ねた新しい設定を返す。
+
+    戻り値: (merged, overridden, ignored, type_errors)
+      ・両方がオブジェクトのキーは、中身をキーごとに重ねる
+      ・それ以外は override の値で置き換える（型は base と同じであること）
+      ・override にないキーは base の値のまま
+      ・base にないキーは使わず ignored に入れる
+    """
+    merged = copy.deepcopy(base)
+    overridden, ignored, type_errors = [], [], []
+    for key, value in override.items():
+        child = f"{path}.{key}" if path else key
+        if key not in base:
+            ignored.append(child)
+            continue
+        if isinstance(base[key], dict) and isinstance(value, dict):
+            sub, sub_overridden, sub_ignored, sub_errors = merge_settings(base[key], value, child)
+            merged[key] = sub
+            overridden += sub_overridden
+            ignored += sub_ignored
+            type_errors += sub_errors
+        elif _type_name(base[key]) != _type_name(value):
+            type_errors.append(f"{child} は {_type_name(base[key])} にしてください（今は {_type_name(value)}）")
+        else:
+            merged[key] = value
+            overridden.append(child)
+    return merged, overridden, ignored, type_errors
 
 
 def find_placeholders(data, path=""):
-    """仮の値（<...>）のままの設定のキーの道筋を挙げる。"""
+    """仮の値（<...>）のままの設定のキーを挙げる。"""
     found = []
     if isinstance(data, dict):
         for key, value in data.items():
@@ -132,11 +152,8 @@ def find_placeholders(data, path=""):
     return found
 
 
-def _get(data, path):
-    node = data
-    for key in path.split("."):
-        node = node[key]
-    return node
+def _is_required(path):
+    return any(path == item or (item.endswith(".") and path.startswith(item)) for item in REQUIRED_SETTINGS)
 
 
 def _resolve(base_dir, path):
@@ -145,36 +162,9 @@ def _resolve(base_dir, path):
     return path if os.path.isabs(path) or path.startswith("\\\\") else os.path.normpath(os.path.join(base_dir, path))
 
 
-# ── 読み込み ─────────────────────────────────────────────
+# ── 値の確認 ─────────────────────────────────────────────
 
-def load_config(config_path, schema_path=None):
-    """設定を読み込み、スキーマ（config.sample.json）と照合する。
-
-    キー構造・型・値の範囲に問題があれば AppError（CONFIG_INVALID）。
-    仮の値が残っているだけなら止めずに incomplete_settings に入れて返す。
-    """
-    config_path = os.path.abspath(config_path)
-    config_dir = os.path.dirname(config_path)
-    schema_path = os.path.abspath(schema_path or os.path.join(config_dir, SCHEMA_FILE_NAME))
-
-    schema = _read_json(schema_path, "CONFIG_SCHEMA_NOT_FOUND")
-    data = schema if config_path == schema_path else _read_json(config_path, "CONFIG_NOT_FOUND")
-    file_name = os.path.basename(config_path)
-
-    # スキーマとプログラムの論理項目がずれていないか（開発時の取り違えを防ぐ）
-    schema_fields = set(schema.get("fieldMappings", {})) if isinstance(schema.get("fieldMappings"), dict) else set()
-    if schema_fields != set(DISPLAY_FIELDS):
-        raise AppError(
-            "CONFIG_INVALID",
-            f"{SCHEMA_FILE_NAME} の fieldMappings がプログラムの論理項目と一致しません"
-            f"（不足: {sorted(set(DISPLAY_FIELDS) - schema_fields)} / 余分: {sorted(schema_fields - set(DISPLAY_FIELDS))}）",
-        )
-
-    problems = compare_structure(schema, data)
-    if problems:
-        raise AppError("CONFIG_INVALID", "\n".join(f"{file_name}: {p}" for p in problems))
-
-    # 値の範囲（キーと型はスキーマで確認済み）
+def _check_values(data):
     problems = []
     if data["dataSource"]["readOnly"] is not True:
         problems.append("dataSource.readOnly は true にしてください（共有データは読み取り専用）")
@@ -193,23 +183,57 @@ def load_config(config_path, schema_path=None):
     for name, value in data["fieldMappings"].items():
         if not value.strip():
             problems.append(f"fieldMappings.{name} が空です")
-    for path in ("dataSource.sourcePath", "dataSource.cachePath", "dataSource.tableName"):
-        if not _get(data, path).strip():
-            problems.append(f"{path} が空です")
+    for key in ("sourcePath", "cachePath", "tableName"):
+        if not data["dataSource"][key].strip():
+            problems.append(f"dataSource.{key} が空です")
+    return problems
+
+
+# ── 読み込み ─────────────────────────────────────────────
+
+def load_config(config_dir, override_path=None):
+    """config.sample.json を初期値にし、override_path（通常は config.local.json）で上書きした設定を返す。
+
+    override_path が None なら sample の値だけで起動する（config.local.json がない場合）。
+    型や値の範囲に誤りがあれば AppError（CONFIG_INVALID）。キーが足りないことはエラーにしない。
+    """
+    config_dir = os.path.abspath(config_dir)
+    schema_path = os.path.join(config_dir, SCHEMA_FILE_NAME)
+    schema = _read_json(schema_path, "CONFIG_SCHEMA_NOT_FOUND")
+
+    # スキーマとプログラムの論理項目がずれていないか（開発時の取り違えを防ぐ）
+    schema_fields = set(schema.get("fieldMappings", {})) if isinstance(schema.get("fieldMappings"), dict) else set()
+    if schema_fields != set(DISPLAY_FIELDS):
+        raise AppError(
+            "CONFIG_INVALID",
+            f"{SCHEMA_FILE_NAME} の fieldMappings がプログラムの論理項目と一致しません"
+            f"（不足: {sorted(set(DISPLAY_FIELDS) - schema_fields)} / 余分: {sorted(schema_fields - set(DISPLAY_FIELDS))}）",
+        )
+
+    overridden, ignored = [], []
+    data = copy.deepcopy(schema)
+    if override_path:
+        override_path = os.path.abspath(override_path)
+        override = _read_json(override_path, "CONFIG_NOT_FOUND")
+        data, overridden, ignored, type_errors = merge_settings(schema, override)
+        if type_errors:
+            name = os.path.basename(override_path)
+            raise AppError("CONFIG_INVALID", "\n".join(f"{name}: {line}" for line in type_errors))
+
+    problems = _check_values(data)
     if problems:
-        raise AppError("CONFIG_INVALID", "\n".join(f"{file_name}: {p}" for p in problems))
+        raise AppError("CONFIG_INVALID", "\n".join(problems))
 
     placeholders = find_placeholders(data)
-    incomplete = tuple(path for path in placeholders if any(
-        path == required or (required.endswith(".") and path.startswith(required)) for required in REQUIRED_SETTINGS))
-    other = [path for path in placeholders if path not in incomplete]
+    incomplete = tuple(path for path in placeholders if _is_required(path))
+    other = [path for path in placeholders if not _is_required(path)]
     if other:
-        # データの場所以外（アプリ名など）に仮の値が残っているのは、書き換え漏れとして止める
-        raise AppError("CONFIG_INVALID", "\n".join(f"{file_name}: {p} が仮の値（<...>）のままです" for p in other))
+        # データの場所以外（アプリ名など）に仮の値があるのは sample の作り方の誤り
+        raise AppError("CONFIG_INVALID", "\n".join(f"{path} が仮の値（<...>）のままです" for path in other))
 
-    if config_path == schema_path:
+    if not override_path:
         source = "sample"
-    elif os.path.basename(config_path) == LOCAL_FILE_NAME:
+    elif os.path.basename(override_path) == LOCAL_FILE_NAME:
         source = "local"
     else:
         source = "other"
@@ -233,8 +257,11 @@ def load_config(config_path, schema_path=None):
         server_host=data["devServer"]["host"],
         server_port=data["devServer"]["port"],
         open_browser=data["devServer"]["openBrowser"],
-        config_path=config_path,
+        schema_path=schema_path,
+        override_path=override_path or "",
         config_source=source,
         base_dir=base_dir,
+        overridden_keys=tuple(overridden),
+        ignored_keys=tuple(ignored),
         incomplete_settings=incomplete,
     )

@@ -10,8 +10,8 @@ import uuid
 USER_MESSAGES = {
     "CONFIG_NOT_FOUND": "指定した設定ファイルが見つかりません。",
     "CONFIG_SCHEMA_NOT_FOUND": "設定の定義（config/config.sample.json）が見つかりません。アプリのファイルがそろっているか確認してください。",
-    "CONFIG_INVALID": "設定ファイルの内容が config.sample.json の形と合いません。表示された項目を直してください。",
-    "CONFIG_INCOMPLETE": "設定が未完了です。config/config.local.json を作成し、仮の値（<...>）を実際の値に書き換えてから起動し直してください。",
+    "CONFIG_INVALID": "設定の値に誤りがあります。表示された項目を直してください。",
+    "CONFIG_INCOMPLETE": "設定が未完了です。config/config.local.json に、データの場所と表・列の名前を書いてから起動し直してください。",
     "SOURCE_UNAVAILABLE": "共有データに接続できません。ネットワークと共有フォルダを確認してください。",
     "SOURCE_BUSY": "共有データが更新中のため取得できませんでした。少し待ってからもう一度更新してください。",
     "CACHE_COPY_FAILED": "共有データをコピーできませんでした。少し待ってからもう一度更新してください。",

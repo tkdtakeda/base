@@ -107,13 +107,16 @@ def write_database(path, rows, variant):
 
 
 def write_config():
-    with open(os.path.join(APP_ROOT, "config", "config.sample.json"), encoding="utf-8") as fp:
-        config = json.load(fp)
-    config["application"]["name"] = "Data Search (Dummy)"
-    config["dataSource"]["sourcePath"] = "./data/dummy/shared/dummy_shared.sqlite3"
-    config["dataSource"]["cachePath"] = "./data/cache/dummy_cache.sqlite3"
-    config["dataSource"]["tableName"] = TABLE
-    config["fieldMappings"] = dict(COLUMNS)
+    # config.local.json と同じく、config.sample.json から変えたい項目だけを書く
+    config = {
+        "application": {"name": "Data Search (Dummy)"},
+        "dataSource": {
+            "sourcePath": "./data/dummy/shared/dummy_shared.sqlite3",
+            "cachePath": "./data/cache/dummy_cache.sqlite3",
+            "tableName": TABLE,
+        },
+        "fieldMappings": dict(COLUMNS),
+    }
     with open(CONFIG_PATH, "w", encoding="utf-8") as fp:
         json.dump(config, fp, ensure_ascii=False, indent=2)
 

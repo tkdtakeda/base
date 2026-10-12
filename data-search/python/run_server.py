@@ -1,10 +1,10 @@
 """Python 版の起動口。画面を Edge などのブラウザで開き、実データ（SQLite）を検索できるようにする。
 
 使い方:
-    python python/run_server.py                       … config/config.local.json、なければ config/config.sample.json
-    python python/run_server.py --config config/config.dummy.json
+    python python/run_server.py                       … config.sample.json を初期値に、config.local.json（あれば）で上書き
+    python python/run_server.py --config config/config.dummy.json   … config.local.json の代わりに指定のファイルで上書き
 
-設定ファイルは config/config.sample.json の形（キーの構造と型）と一致している必要がある。
+config.local.json には、変えたい項目だけを書けばよい（書いていない項目は config.sample.json の値を使う）。
 """
 
 import argparse
@@ -16,7 +16,7 @@ import webbrowser
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data_search.cache_service import CacheService  # noqa: E402
-from data_search.config_loader import LOCAL_FILE_NAME, SCHEMA_FILE_NAME, load_config, resolve_config_path  # noqa: E402
+from data_search.config_loader import LOCAL_FILE_NAME, SCHEMA_FILE_NAME, load_config, resolve_override_path  # noqa: E402
 from data_search.errors import AppError  # noqa: E402
 from data_search.http_server import AppContext, create_server  # noqa: E402
 from data_search.logging_setup import setup_logging  # noqa: E402
@@ -28,7 +28,7 @@ PORT_TRIES = 10
 
 def parse_args():
     parser = argparse.ArgumentParser(description="対象データ検索（Python 版）")
-    parser.add_argument("--config", help="使う設定ファイル（省略時は config.local.json → config.sample.json の順）")
+    parser.add_argument("--config", help=f"{LOCAL_FILE_NAME} の代わりに上書きに使う設定ファイル")
     parser.add_argument("--port", type=int, help="待ち受けるポート（設定ファイルより優先）")
     parser.add_argument("--no-browser", action="store_true", help="ブラウザを自動で開かない")
     return parser.parse_args()
@@ -46,20 +46,28 @@ def bind(context, host, port):
 def main():
     args = parse_args()
     config_dir = os.path.join(APP_ROOT, "config")
-    config_path = resolve_config_path(config_dir, args.config)
-    print(f"設定ファイル: {config_path}")
+    override_path = resolve_override_path(config_dir, args.config)
+    print(f"設定の初期値: {os.path.join(config_dir, SCHEMA_FILE_NAME)}")
+    print(f"上書き      : {override_path or f'なし（{LOCAL_FILE_NAME} がないため初期値だけで起動）'}")
     try:
-        config = load_config(config_path, os.path.join(config_dir, SCHEMA_FILE_NAME))
+        config = load_config(config_dir, override_path)
     except AppError as error:
         print(f"[起動できません] {error.user_message}")
         for line in str(error.detail).splitlines():
             print(f"  ・{line}")
         return 1
-    if config.config_source == "sample":
-        print(f"  （{LOCAL_FILE_NAME} がないため、{SCHEMA_FILE_NAME} を読み込みました）")
+    if override_path:
+        print(f"  上書きした項目: {len(config.overridden_keys)} 個")
+    if config.ignored_keys:
+        print(f"  [注意] 次の項目は {SCHEMA_FILE_NAME} にないため使いませんでした（書き間違いの可能性）:")
+        for key in config.ignored_keys:
+            print(f"    ・{key}")
 
     logger = setup_logging(config.log_directory, config.log_level)
-    logger.info("application start id=%s version=%s", config.app_id, config.app_version)
+    logger.info(
+        "application start id=%s version=%s source=%s overridden=%d ignored=%s",
+        config.app_id, config.app_version, config.config_source, len(config.overridden_keys), ",".join(config.ignored_keys) or "-",
+    )
     cache_service = CacheService(config, logger)
     context = AppContext(config, cache_service, LotService(config, cache_service, logger), logger)
 
@@ -68,7 +76,7 @@ def main():
         print("[設定が未完了] 次の項目が仮の値（<...>）のままのため、データは表示できません。")
         for path in config.incomplete_settings:
             print(f"  ・{path}")
-        print(f"  → config/{LOCAL_FILE_NAME} を {SCHEMA_FILE_NAME} と同じ形で作成し、値を書き換えてから起動し直してください。")
+        print(f"  → config/{LOCAL_FILE_NAME} に上の項目の実際の値を書いてから起動し直してください（ほかの項目は書かなくてよい）。")
         print("  → 実データなしで試すときは start-dummy.bat を使ってください。")
     elif not cache_service.cache_available():
         print("初回のため、共有データからキャッシュを作成しています…")

@@ -113,9 +113,10 @@ class CacheService:
     def status(self):
         config_info = {
             "configSource": self.config.config_source,
-            "configFile": os.path.basename(self.config.config_path),
+            "configFile": self.config.config_file,
             "configIncomplete": self.config.incomplete,
             "incompleteSettings": list(self.config.incomplete_settings),
+            "ignoredSettings": list(self.config.ignored_keys),
         }
         if self.config.incomplete:
             return dict(config_info, **{

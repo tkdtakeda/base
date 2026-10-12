@@ -28,8 +28,8 @@
 
 前提：Python 3.12（標準ライブラリだけで動きます。pip での追加は不要）。
 
-1. `config/config.sample.json` をコピーして `config/config.local.json` を作る。
-2. `<...>` の仮の値を実際の値に書き換える（共有 SQLite のパス・表名・列名）。**キーの名前と構造は変えない。**
+1. `config/config.local.json` を作り、共有 SQLite のパス・表名・列名だけを書く（下の「設定ファイルの決まり」の例を参照）。
+2. ほかの項目は書かなくてよい（`config.sample.json` の値が使われる）。
 3. `start.bat` をダブルクリック。黒いウィンドウが開き、Edge で画面が開きます。
    - 初回はキャッシュを自動で作成します。以後は画面左の「データ」→「データを更新する」で更新します。
    - 終了は黒いウィンドウを閉じます。
@@ -39,33 +39,24 @@
 
 ## 設定ファイルの決まり
 
-| # | 決まり |
-|---|---|
-| 1 | `config/config.sample.json` がシステムの**正式な設定スキーマ**（キーの構造と値の型の定義） |
-| 2 | アプリは `config.sample.json` のスキーマを基準に動く（読み込んだ設定は必ずスキーマと照合する） |
-| 3 | `config.local.json` は同じスキーマで、**値だけ**を実環境のものにする（社内情報を含むため外部に出さない・Git 管理外） |
-| 4 | sample と local の**キー構造の違いは許さない**。足りないキー・余分なキー・型の違い（文字列／整数／true・false／{ }）があれば起動を止め、違う箇所をすべて表示する |
-| 5 | 読み込む順は `config.local.json` → なければ `config.sample.json`（`--config` で明示したときはそのファイル） |
-| 6 | 設定項目を足すときは **sample と local の両方**に足す（sample だけに足すと、local は「キーがありません」で起動しない） |
+詳しくは [docs/config-design.md](docs/config-design.md)（設計・マージの決まり・起動フロー図）。
 
-`config.sample.json` で起動したとき（`config.local.json` がないとき）は、データの場所と表・列の名前が仮の値のままなので
-**「設定が未完了」の状態で起動**します。共有データにもキャッシュにも触れず、黒いウィンドウと画面（上部バー右の札・左の「データ」）に、
-読み込んだファイル・仮の値のままの項目・直し方を表示します。
+- `config/config.sample.json` … 正式な設定スキーマ兼**初期値**。Git 管理対象。外部 AI へ渡してよい（社内情報を含まない）。
+- `config/config.local.json` … 社内専用。Git 管理対象外。**変えたい項目だけ**書けばよく、なくても起動できる。
+- 起動時は sample を初期値にし、local があれば同じキーを上書きする。local にないキーは sample の値を使う（エラーにしない）。
+- local に sample にないキーがあれば使わず、書き間違いの可能性として表示する。値の型が sample と違うときだけ起動を止める。
+- データの場所・表名・列名が仮の値（`<...>`）のままなら「設定が未完了」として起動し、データには触れずに直し方を表示する。
 
-| 状態 | 起動 | 表示 |
-|---|---|---|
-| local がスキーマどおりで値も入っている | する | 通常どおり |
-| local がない（sample で起動） | する | 設定が未完了（直し方を表示） |
-| local に仮の値が残っている（データの場所・表名・列名） | する | 設定が未完了（残っている項目を表示） |
-| local のキー構造・型がスキーマと違う | しない | 違う箇所をすべて表示 |
-| 値の範囲がおかしい（例：pageSize が maxPageSize より大きい） | しない | 理由を表示 |
+`config.local.json` の最小の例（ほかの項目は sample の値が使われる）：
 
-### 設定項目を足すときの手順
-
-1. `config.sample.json` に、仮の値（または既定値）でキーを足す
-2. 各環境の `config.local.json` に、同じキーを実際の値で足す
-3. `python/data_search/config_loader.py` の `AppConfig` と `load_config()` で値を受け取る（値の範囲の確認もここ）
-4. `config.dummy.json` は `make_dummy_db.py` が sample から作るので、作り直すだけでよい
+```json
+{
+  "dataSource": { "sourcePath": "Z:/共有/データ.sqlite3", "cachePath": "./data/cache/local.sqlite3", "tableName": "実際の表名" },
+  "fieldMappings": { "lotNo": "実際の列名", "inspectionNo": "…", "castingNo": "…", "orderNo": "…",
+                     "material": "…", "temper": "…", "size": "…", "customer": "…",
+                     "deliveryDate": "…", "process": "…", "equipment": "…", "status": "…" }
+}
+```
 
 ---
 
@@ -101,6 +92,7 @@
 ```text
 data-search/
 ├─ README.md
+├─ docs/config-design.md         … 設定ファイルの読み込み設計
 ├─ start.bat / start-dummy.bat    … Python 版の起動（Windows）
 ├─ config/
 │  ├─ config.sample.json          … 外部提示用（プレースホルダー）
@@ -181,8 +173,8 @@ Tauri 版の画面側は `js/api/remote-adapters.js` の `tauri` アダプター
 | `get_lot_detail` | 入力を `{ lotNo, castingNo }` に変更。戻り値は `{ success, item, duplicated }` | ロット番号＋鋳造番号で 1 件に決まるため |
 | `get_cache_status` | `rowCount`・`sourceReachable`・`sourceHasUpdate`・`lastRefreshAt`・`errorCode`・`errorMessage` を追加 | 「データ」パネルで状態の根拠を示すため |
 | `refresh_cache` | 戻り値に `rowCount` を追加 | 更新の結果を件数で示すため |
-| 設定 | `devServer`（host / port / openBrowser）を追加 | Python 版のみで使用。Tauri 版では無視してよい（キーは残す。スキーマを sample と一致させるため） |
-| `get_cache_status` | `configSource`・`configFile`・`configIncomplete`・`incompleteSettings` を追加 | 設定が未完了のとき、画面で読み込んだファイルと直す項目を示すため |
+| 設定 | `devServer`（host / port / openBrowser）を追加 | Python 版のみで使用。Tauri 版では無視してよい。local に書く必要はない |
+| `get_cache_status` | `configSource`・`configFile`・`configIncomplete`・`incompleteSettings`・`ignoredSettings` を追加 | 設定が未完了・書き間違いの可能性があるとき、画面で直す項目を示すため |
 
 検索の決まり：検索値は前後の空白を除き、全角英数・記号を半角にそろえ（NFKC）、大文字小文字を区別しません。
 部分一致の `%` `_` は文字として扱います。SQL はすべてパラメーター化しています。

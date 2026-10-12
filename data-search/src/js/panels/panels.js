@@ -96,18 +96,27 @@
           if (refreshing) timer = window.setInterval(() => tick(ctx.store.get()), 1000);
           sourceNote.textContent = state.mode.description;
 
-          // 設定が未完了のときは、どのファイルを読み、どこを直せばよいかを出す
-          configBox.hidden = !status.configIncomplete;
+          // 設定が未完了のとき・使わなかった項目があるときは、どこを直せばよいかを出す
+          const ignored = status.ignoredSettings || [];
+          configBox.hidden = !status.configIncomplete && ignored.length === 0;
+          if (!status.configIncomplete && ignored.length) {
+            configBox.replaceChildren(section('設定の確認', [
+              el('p', { className: 'pane-note', text: `config/${status.configFile} の次の項目は config.sample.json にないため使っていません。書き間違いがないか確認してください。` }),
+              el('ul', { className: 'config-help__list mono' }, ignored.map((path) => el('li', { text: path }))),
+            ]));
+          }
           refreshButton.disabled = refreshing || Boolean(status.configIncomplete);
           if (status.configIncomplete) {
             configBox.replaceChildren(
               section('設定の直し方', [
-                el('p', { className: 'pane-note', text: `読み込んだ設定ファイル：config/${status.configFile}` + (status.configSource === 'sample' ? '（config.local.json がないため）' : '') }),
+                el('p', { className: 'pane-note', text: status.configSource === 'sample'
+                  ? 'config.local.json がないため、config.sample.json の初期値だけで起動しています。'
+                  : `config.sample.json の初期値を config/${status.configFile} で上書きしています。` }),
                 el('p', { className: 'pane-note', text: '次の項目が仮の値（<...>）のままです：' }),
                 el('ul', { className: 'config-help__list mono' }, (status.incompleteSettings || []).map((path) => el('li', { text: path }))),
                 el('ol', { className: 'config-help__steps' }, [
-                  el('li', { text: 'config.sample.json をコピーし、同じフォルダに config.local.json という名前で置く' }),
-                  el('li', { text: '上の項目の値を実際の値に書き換える（キーの名前と並びは変えない）' }),
+                  el('li', { text: 'config フォルダに config.local.json を作る（なければ）' }),
+                  el('li', { text: '上の項目だけ実際の値を書く。ほかの項目は書かなくてよい（config.sample.json の値を使う）' }),
                   el('li', { text: 'start.bat を起動し直す' }),
                 ]),
                 el('p', { className: 'pane-note', text: '実データなしで試すときは start-dummy.bat を使ってください。' }),
