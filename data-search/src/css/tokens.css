@@ -75,6 +75,7 @@
   --color-success-bg: var(--c-green-50);
   --color-warning: var(--c-amber-700);
   --color-warning-bg: var(--c-amber-50);
+  --color-warning-border: var(--c-amber-200);
   --color-danger: var(--c-red-600);
   --color-danger-bg: var(--c-red-50);
   --color-info: var(--c-blue-600);

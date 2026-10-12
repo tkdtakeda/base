@@ -95,17 +95,15 @@
         pager.replaceChildren();
         return;
       }
-      const field = DS.domain.fields.get(request.searchType);
-      const mode = request.matchMode === 'exact' ? 'と同じ' : 'を含む';
       const count = el('strong', { className: 'results__count mono', text: `${formatNumber(result.totalCount)} 件` });
-      summary.replaceChildren(
-        el('span', { className: 'results__title' }, [
-          el('span', { text: `${field.label}が「` }),
+      const title = request.keyword
+        ? el('span', { className: 'results__title' }, [
+          el('span', { text: `${DS.domain.fields.get(request.searchType).label}が「` }),
           el('span', { className: 'mono', text: request.keyword }),
-          el('span', { text: `」${mode}データ` }),
-        ]),
-        count,
-      );
+          el('span', { text: `」${request.matchMode === 'exact' ? 'と同じ' : 'を含む'}ロット` }),
+        ])
+        : el('span', { className: 'results__title', text: 'ロット一覧' });
+      summary.replaceChildren(title, count, activeFilterChips(request));
       DS.util.flash(count);
 
       const pages = Math.max(1, Math.ceil(result.totalCount / result.pageSize));
@@ -118,6 +116,23 @@
       const parts = [el('span', { className: 'pager__range mono', text: result.totalCount ? `${formatNumber(from)}–${formatNumber(to)} 件目` : '' })];
       if (pages > 1) parts.push(prev, el('span', { className: 'pager__pages mono', text: `${result.page} / ${formatNumber(pages)} ページ` }), next);
       pager.replaceChildren(...parts);
+    }
+
+    /** 今かかっている絞り込みを札で出す。× で 1 つずつ外せる */
+    function activeFilterChips(request) {
+      const entries = Object.entries(request.filters || {});
+      const nodes = entries.map(([fieldId, spec]) => {
+        const field = DS.domain.fields.get(fieldId);
+        const remove = el('button', { type: 'button', className: 'filter-chip__remove', title: `${field.label}の絞り込みを外す`, 'aria-label': `${field.label}の絞り込みを外す` }, [icon('fa-xmark', '×')]);
+        remove.addEventListener('click', () => search.clearFilter(fieldId));
+        const label = el('button', { type: 'button', className: 'filter-chip__label', title: '絞り込みのパネルで直す' }, [
+          icon('fa-filter', ''),
+          el('span', { text: `${field.label}：${DS.domain.filters.describe(fieldId, spec)}` }),
+        ]);
+        label.addEventListener('click', () => openPanel('filters'));
+        return el('span', { className: 'filter-chip' }, [label, remove]);
+      });
+      return el('span', { className: 'filter-chips' }, nodes);
     }
 
     // ── 空のときの案内（次にすることを 1 つ示す） ──
@@ -152,17 +167,24 @@
         const error = state.search.error;
         card = emptyCard('fa-circle-xmark', '検索できませんでした', error.userMessage + (error.detailId ? `（問い合わせ番号 ${error.detailId}）` : ''),
           [actionButton('もう一度検索する', 'fa-rotate-right', () => search.run({ page: 1 }), false)]);
-      } else if (!result && status !== 'loading') {
-        card = emptyCard('fa-magnifying-glass', '番号を入れて検索します', null);
-        card.appendChild(el('ol', { className: 'steps' }, [
-          el('li', {}, [el('strong', { text: '番号の種類' }), el('span', { text: 'を上で選ぶ（Alt+1〜4）' })]),
-          el('li', {}, [el('strong', { text: '番号' }), el('span', { text: 'を入力する（一部だけでも可）' })]),
-          el('li', {}, [el('kbd', { text: 'Enter' }), el('span', { text: 'で検索。行を選ぶと右に詳細が出ます' })]),
-        ]));
+      } else if (!result) {
+        card = status === 'loading' ? emptyCard('fa-spinner', '一覧を読み込んでいます', null) : null;
       } else if (result && result.totalCount === 0) {
         const request = state.search.request;
-        const field = DS.domain.fields.get(request.searchType);
         const actions = [];
+        const filterCount = Object.keys(request.filters || {}).length;
+        if (filterCount) {
+          actions.push(actionButton('絞り込みを外して探す', 'fa-filter-circle-xmark', () => search.setFilters({}), false));
+        }
+        if (!request.keyword) {
+          card = emptyCard('fa-filter', '絞り込みに当てはまるロットはありません', '条件をゆるめるか、外してください。上の札の × で 1 つずつ外せます。', actions);
+          empty.replaceChildren(card);
+          empty.hidden = false;
+          tableWrap.hidden = true;
+          root.classList.toggle('is-loading', false);
+          return;
+        }
+        const field = DS.domain.fields.get(request.searchType);
         if (request.matchMode === 'exact') {
           actions.push(actionButton('部分一致で探し直す', 'fa-magnifying-glass-plus', () => {
             search.setQuery({ matchMode: 'partial' });
@@ -175,8 +197,8 @@
             search.run({ page: 1 });
           }, false));
         });
-        card = emptyCard('fa-circle-question', '一致するデータはありません',
-          `${field.label}が「${request.keyword}」${request.matchMode === 'exact' ? 'と同じ' : 'を含む'}データは 0 件です。番号の種類や一致のしかたを確かめてください。`,
+        card = emptyCard('fa-circle-question', '一致するロットはありません',
+          `${field.label}が「${request.keyword}」${request.matchMode === 'exact' ? 'と同じ' : 'を含む'}ロットは${filterCount ? '、今の絞り込みの中に' : ''}ありません。番号の種類や一致のしかたを確かめてください。`,
           actions);
       }
       empty.replaceChildren(...(card ? [card] : []));
@@ -195,6 +217,10 @@
       const typed = DS.util.normalize(state.query.keyword);
       if (result && state.search.request && /[！-～　]/.test(state.query.keyword) && typed === state.search.request.keyword) {
         parts.push(el('span', { text: '全角の英数字・記号は半角にそろえて検索しました' }));
+      }
+      const request = state.search.request;
+      if (result && request && Object.values(request.filters || {}).some((spec) => spec.type === 'date' && spec.mode === 'relative')) {
+        parts.push(el('span', { className: 'mono', text: `日付は今日（${DS.domain.filters.slashOf(result.today)}）を基準に絞り込み` }));
       }
       if (status && status.usingPreviousCache) {
         parts.push(el('span', { className: 'is-warning' }, [icon('fa-triangle-exclamation', '!'), el('span', { text: ' 前回のデータを使用中' })]));

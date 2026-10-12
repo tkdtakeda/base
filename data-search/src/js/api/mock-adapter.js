@@ -14,6 +14,7 @@
   const MAX_PAGE_SIZE = 500;
   const LATENCY_MS = 60;
   const REFRESH_MS = 1400;
+  const VALUE_LIST_LIMIT = 200;
 
   const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
   const nowIso = () => new Date().toISOString();
@@ -44,6 +45,61 @@
     }
 
     rebuild();
+
+    // ── 一覧・検索・絞り込み（Python 版の lot_service と同じ決まり） ──
+    function filterRows(payload) {
+      const keyword = DS.util.normalize(payload.keyword).toLowerCase();
+      const searchType = SEARCHABLE.includes(payload.searchType) ? payload.searchType : null;
+      const today = DS.domain.filters.todayIso();
+      const filters = Object.entries(DS.domain.filters.compact(payload.filters));
+      return rows.filter((row) => {
+        if (keyword && searchType) {
+          const value = String(row[searchType] == null ? '' : row[searchType]).toLowerCase();
+          if (payload.matchMode === 'exact' ? value !== keyword : !value.includes(keyword)) return false;
+        }
+        return filters.every(([fieldId, spec]) =>
+          DS.domain.filterTypes.get(spec.type).matches(row[fieldId], spec, today));
+      });
+    }
+
+    function listRows(payload) {
+      const started = performance.now();
+      const keyword = DS.util.normalize(payload.keyword);
+      if (keyword.length > KEYWORD_MAX) return fail('INVALID_REQUEST', `検索する番号は ${KEYWORD_MAX} 文字以内で入力してください。`);
+      if (keyword && !SEARCHABLE.includes(payload.searchType)) return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
+      if (rows.length === 0) return fail('CACHE_UNAVAILABLE', '検索できるデータがまだありません。左の「サンプル」から読み込んでください。');
+      const page = Math.max(1, Number(payload.page) || 1);
+      const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(payload.pageSize) || PAGE_SIZE));
+      const sortKey = DS.domain.fields.has(payload.sortKey) ? payload.sortKey : DS.domain.DEFAULT_SORT.key;
+      const sortField = DS.domain.fields.get(sortKey);
+      const direction = payload.sortOrder === 'desc' ? -1 : 1;
+      const sortValue = (row) => (sortField.type === 'date' ? DS.domain.filters.normalizeDate(row[sortKey]) : row[sortKey]);
+      const isBlank = (value) => value === null || value === undefined || String(value).trim() === '';
+      const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+      const hits = filterRows(payload);
+      hits.sort((a, b) => {
+        const va = sortValue(a);
+        const vb = sortValue(b);
+        // 空欄は昇順・降順どちらでも最後
+        return compare(isBlank(va), isBlank(vb)) ||
+          compare(va || '', vb || '') * direction ||
+          compare(a.lotNo, b.lotNo) ||
+          compare(a.castingNo || '', b.castingNo || '');
+      });
+      const items = hits.slice((page - 1) * pageSize, page * pageSize).map((row) => Object.assign({}, row));
+      return {
+        success: true,
+        count: items.length,
+        totalCount: hits.length,
+        page,
+        pageSize,
+        items,
+        keyword: keyword || null,
+        today: DS.domain.filters.todayIso(),
+        elapsedMs: Math.round((performance.now() - started) * 10) / 10,
+      };
+    }
 
     // ── 命令 ──
     const commands = {
@@ -91,39 +147,27 @@
       },
 
       search_lots(payload) {
-        const started = performance.now();
-        if (!SEARCHABLE.includes(payload.searchType)) return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
-        const keyword = DS.util.normalize(payload.keyword);
-        if (!keyword) return fail('INVALID_REQUEST', '検索する番号を入力してください。');
-        if (keyword.length > KEYWORD_MAX) return fail('INVALID_REQUEST', `検索する番号は ${KEYWORD_MAX} 文字以内で入力してください。`);
-        if (rows.length === 0) return fail('CACHE_UNAVAILABLE', '検索できるデータがまだありません。左の「サンプル」から読み込んでください。');
-        const matchMode = payload.matchMode === 'exact' ? 'exact' : 'partial';
-        const page = Math.max(1, Number(payload.page) || 1);
-        const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(payload.pageSize) || PAGE_SIZE));
-        const sortKey = DS.domain.fields.has(payload.sortKey) ? payload.sortKey : 'lotNo';
-        const direction = payload.sortOrder === 'desc' ? -1 : 1;
+        if (!DS.util.normalize(payload.keyword)) return fail('INVALID_REQUEST', '検索する番号を入力してください。');
+        return listRows(payload);
+      },
 
-        const needle = keyword.toLowerCase();
-        const hits = rows.filter((row) => {
-          const value = String(row[payload.searchType] == null ? '' : row[payload.searchType]).toLowerCase();
-          return matchMode === 'exact' ? value === needle : value.includes(needle);
+      list_lots: (payload) => listRows(payload),
+
+      get_filter_values(payload) {
+        const field = DS.domain.fields.get(payload.field);
+        if (!field || field.filter !== 'values') return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
+        if (rows.length === 0) return fail('CACHE_UNAVAILABLE', '検索できるデータがまだありません。左の「サンプル」から読み込んでください。');
+        const others = Object.assign({}, payload.filters || {});
+        delete others[field.id];
+        const counts = new Map();
+        filterRows(Object.assign({}, payload, { filters: others })).forEach((row) => {
+          const raw = row[field.id];
+          const value = raw === null || raw === undefined || String(raw).trim() === '' ? null : String(raw);
+          counts.set(value, (counts.get(value) || 0) + 1);
         });
-        const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
-        hits.sort((a, b) =>
-          compare(a[sortKey] || '', b[sortKey] || '') * direction ||
-          compare(a.lotNo, b.lotNo) ||
-          compare(a.castingNo || '', b.castingNo || ''));
-        const items = hits.slice((page - 1) * pageSize, page * pageSize).map((row) => Object.assign({}, row));
-        return {
-          success: true,
-          count: items.length,
-          totalCount: hits.length,
-          page,
-          pageSize,
-          items,
-          keyword,
-          elapsedMs: Math.round((performance.now() - started) * 10) / 10,
-        };
+        const values = Array.from(counts, ([value, count]) => ({ value, count }))
+          .sort((a, b) => b.count - a.count || String(a.value).localeCompare(String(b.value)));
+        return { success: true, field: field.id, values: values.slice(0, VALUE_LIST_LIMIT), truncated: values.length > VALUE_LIST_LIMIT };
       },
 
       get_lot_detail(payload) {

@@ -71,11 +71,11 @@
     matchButtons.forEach((button) => button.addEventListener('click', () => {
       search.setQuery({ matchMode: button.dataset.match });
       DS.util.flash(button);
-      if (store.get().search.result) search.run({ page: 1 });
+      if (DS.util.normalize(store.get().query.keyword)) search.run({ page: 1 });
     }));
 
     input.addEventListener('input', () => search.setQuery({ keyword: input.value }));
-    input.addEventListener('focus', () => window.setTimeout(() => input.select(), 0));
+    input.addEventListener('focus', () => window.setTimeout(() => { if (document.activeElement === input) input.select(); }, 0));
     input.addEventListener('keydown', (event) => {
       // 日本語の変換中の Enter では検索しない
       if (event.isComposing || event.keyCode === 229) return;
@@ -85,15 +85,21 @@
       } else if (event.key === 'Escape' && input.value) {
         event.preventDefault();
         event.stopPropagation();
-        input.value = '';
-        search.setQuery({ keyword: '' });
+        clearKeyword();
       }
     });
     clearButton.addEventListener('click', () => {
-      input.value = '';
-      search.setQuery({ keyword: '' });
+      clearKeyword();
       input.focus();
     });
+
+    /** 入力を消す。番号で探していた途中なら、一覧に戻す */
+    function clearKeyword() {
+      input.value = '';
+      const request = store.get().search.request;
+      if (request && request.keyword) search.clearKeyword();
+      else search.setQuery({ keyword: '' });
+    }
     cta.addEventListener('click', doPrimary);
 
     function doPrimary() {
@@ -144,13 +150,13 @@
       cta.classList.toggle('is-busy', Boolean(ready.busy));
       ctaIcon.replaceChildren(ready.busy
         ? icon('fa-spinner', '…', 'fa-spin')
-        : icon(ready.action === 'open-samples' ? 'fa-flask' : ready.action === 'refresh' ? 'fa-rotate' : 'fa-magnifying-glass', ''));
-      ctaLabel.textContent = ready.busy ? '検索中…' : ready.action ? ready.actionLabel : '検索する';
+        : icon(ready.icon || (ready.action === 'open-samples' ? 'fa-flask' : ready.action === 'refresh' ? 'fa-rotate' : 'fa-magnifying-glass'), ''));
+      ctaLabel.textContent = ready.busy ? '読み込み中…' : ready.action ? ready.actionLabel : ready.label || '検索する';
 
       hint.replaceChildren(...(ready.ok
         ? [el('span', { text: 'Enter で検索' }), sep(), el('span', { text: 'Alt+1〜4 で番号の種類を切り替え' }), sep(), el('span', { text: '/ で入力欄へ' })]
         : [icon('fa-circle-info', 'i'), el('span', { text: ready.reason })]));
-      hint.classList.toggle('is-blocked', !ready.ok && !ready.busy);
+      hint.classList.toggle('is-blocked', !ready.ok && !ready.busy && !ready.quiet);
     }
 
     function sep() {

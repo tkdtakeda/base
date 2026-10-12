@@ -111,8 +111,43 @@
       root.addEventListener('focusin', (event) => {
         const target = event.target;
         if (target.matches('input[type="text"], input[type="search"], input:not([type])')) {
-          window.setTimeout(() => target.select(), 0);
+          window.setTimeout(() => { if (document.activeElement === target) target.select(); }, 0);
         }
+      });
+    },
+
+    /**
+     * 入力欄を順に移れるようにする。
+     * 決まった桁（maxlength）まで入れたら次の欄へ。Enter で次へ、Shift+Enter で前へ（日本語の変換中は除く）。
+     * 次がボタンなら Enter でそのボタンを押す。数字の欄（inputmode="numeric"）は全角数字も半角にそろえる。
+     */
+    autoAdvance(nodes) {
+      nodes.forEach((node, index) => {
+        const next = nodes[index + 1];
+        const prev = nodes[index - 1];
+        if (node.tagName === 'INPUT') {
+          node.addEventListener('focus', () => window.setTimeout(() => { if (document.activeElement === node) node.select(); }, 0));
+          node.addEventListener('input', (event) => {
+            if (node.inputMode === 'numeric') {
+              const digits = node.value.normalize('NFKC').replace(/[^0-9]/g, '');
+              if (digits !== node.value) node.value = digits;
+            }
+            const max = Number(node.getAttribute('maxlength')) || 0;
+            if (max && node.value.length >= max && next && !event.isComposing) next.focus();
+          });
+        }
+        if (node.tagName === 'BUTTON') return;
+        node.addEventListener('keydown', (event) => {
+          if (event.isComposing || event.keyCode === 229 || event.key !== 'Enter') return;
+          event.preventDefault();
+          if (event.shiftKey) {
+            if (prev) prev.focus();
+          } else if (next && next.tagName === 'BUTTON') {
+            next.click();
+          } else if (next) {
+            next.focus();
+          }
+        });
       });
     },
 

@@ -49,7 +49,7 @@ SPECIAL_LOTS = ["試作-α-001", "LOT_100%-A", "LOT#5/特急", "LOT(再)-12", "L
 
 def build_rows(count, rng):
     rows = []
-    today = date(2026, 10, 11)
+    today = date.today()  # 日付の絞り込み（今日〜7 日後など）をいつでも試せるよう、今日を基準にする
     order_no, order_left = 0, 0
     for i in range(1, count + 1):
         if order_left == 0:

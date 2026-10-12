@@ -1,0 +1,248 @@
+/* =========================================================
+   絞り込み：タグの列・今かかっている条件の札・絞り込みのパネル
+   ========================================================= */
+
+/* ── タグの列（一覧のすぐ上） ── */
+.tagbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 44px;
+  padding: var(--sp-1) var(--sp-4);
+  border-bottom: var(--bw) solid var(--color-border);
+  background: var(--color-surface-alt);
+}
+
+.tagbar__label {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+  color: var(--color-text-muted);
+}
+
+.tagbar__list {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: 2px 0;
+  overflow-x: auto;
+}
+
+.tagbar__tools { display: flex; flex-shrink: 0; align-items: center; gap: var(--sp-2); }
+.tagbar__hint { font-size: var(--fs-xs); color: var(--color-text-subtle); }
+
+.tag {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--sp-1);
+  height: var(--h-control-sm);
+  padding: 0 var(--sp-3);
+  border: var(--bw) solid var(--color-border-strong);
+  border-radius: var(--r-pill);
+  background: var(--color-surface);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.tag:hover { border-color: var(--color-primary-border); background: var(--color-primary-soft); }
+
+.tag.is-active {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
+  font-weight: var(--fw-bold);
+}
+
+.tag-group { position: relative; display: inline-flex; flex-shrink: 0; align-items: center; gap: 2px; }
+
+.tag__overwrite {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: var(--h-control-sm);
+  padding: 0 var(--sp-2);
+  border: var(--bw) solid var(--color-warning-border);
+  border-radius: var(--r-pill);
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  white-space: nowrap;
+}
+
+.tag__modified { display: inline-flex; align-items: center; gap: 2px; }
+.tag__modified i { font-size: 7px; }
+
+.tag__more {
+  width: 22px;
+  height: var(--h-control-sm);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.tag__more:hover { background: var(--color-surface-sunken); }
+
+.tag-menu {
+  position: fixed;
+  z-index: var(--z-panel);
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  padding: var(--sp-1);
+  border: var(--bw) solid var(--color-border);
+  border-radius: var(--r-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-2);
+}
+
+.tag-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  text-align: left;
+}
+
+.tag-menu__item:hover:not(:disabled) { background: var(--color-surface-sunken); }
+.tag-menu__item:disabled { color: var(--color-border-strong); }
+.tag-menu__item.is-danger { color: var(--color-danger); }
+.tag-menu__sep { width: 100%; margin: var(--sp-1) 0; border: 0; border-top: var(--bw) solid var(--color-border); }
+
+.tag-editor { display: inline-flex; flex-shrink: 0; align-items: center; gap: var(--sp-1); }
+.tag-editor__input { width: 240px; }
+.tag-editor__msg { font-size: var(--fs-xs); color: var(--color-danger); font-weight: var(--fw-bold); }
+
+/* ── 今かかっている条件の札（一覧の見出し） ── */
+.filter-chips { display: inline-flex; flex-wrap: wrap; gap: var(--sp-1); }
+.filter-chips:empty { display: none; }
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  border: var(--bw) solid var(--color-primary-border);
+  border-radius: var(--r-pill);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+}
+
+.filter-chip__label,
+.filter-chip__remove {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  height: 24px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.filter-chip__label { padding: 0 var(--sp-1) 0 var(--sp-2); }
+.filter-chip__remove { padding: 0 var(--sp-2) 0 var(--sp-1); }
+.filter-chip__label:hover,
+.filter-chip__remove:hover { background: var(--color-primary-soft-strong); }
+
+/* ── 絞り込みのパネル ── */
+.filter-summary { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2); padding-bottom: var(--sp-3); }
+.filter-sections { display: flex; flex-direction: column; border-top: var(--bw) solid var(--color-border); }
+.filter-section { border-bottom: var(--bw) solid var(--color-border); }
+.filter-section__row { display: flex; align-items: center; gap: var(--sp-2); }
+
+.filter-section__head {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: var(--sp-2) 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.filter-section__chevron { width: 12px; color: var(--color-text-subtle); transition: transform var(--dur-fast) var(--ease); }
+.filter-section.is-open .filter-section__chevron { transform: rotate(90deg); }
+.filter-section__label { font-weight: var(--fw-bold); }
+
+.filter-section__state {
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  color: var(--color-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filter-section.is-active .filter-section__label { color: var(--color-primary); }
+.filter-section__body { display: flex; flex-direction: column; gap: var(--sp-2); padding: 0 0 var(--sp-3) var(--sp-5); }
+
+.link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.link-btn:hover { text-decoration: underline; }
+
+.value-list { display: flex; flex-direction: column; max-height: 240px; overflow: auto; }
+.check--value { display: grid; grid-template-columns: auto 1fr auto; }
+.check__text { min-width: 0; overflow-wrap: anywhere; }
+.check__count { font-size: var(--fs-xs); color: var(--color-text-subtle); }
+.check--value.is-zero .check__text { color: var(--color-text-subtle); }
+
+.preset-list { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+
+.preset {
+  height: var(--h-control-sm);
+  padding: 0 var(--sp-3);
+  border: var(--bw) solid var(--color-border-strong);
+  border-radius: var(--r-pill);
+  background: var(--color-surface);
+  font-size: var(--fs-sm);
+}
+
+.preset:hover { border-color: var(--color-primary-border); background: var(--color-primary-soft); }
+.preset.is-active { border-color: var(--color-primary); background: var(--color-primary); color: var(--color-text-inverse); font-weight: var(--fw-bold); }
+
+.date-custom { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2); padding: var(--sp-2); border-radius: var(--r-md); background: var(--color-surface); }
+.date-row { display: flex; align-items: center; gap: var(--sp-1); }
+.date-row__label { width: 56px; font-size: var(--fs-sm); color: var(--color-text-muted); }
+.ymd { display: inline-flex; align-items: center; gap: 2px; color: var(--color-text-subtle); }
+.input--num { width: 56px; text-align: right; }
+.input--y { width: 58px; text-align: center; }
+.input--md { width: 38px; text-align: center; }
+.date-custom select.input { width: auto; padding: 0 var(--sp-1); }
+
+.drop-zone {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: var(--bw-strong) dashed var(--color-border-strong);
+  border-radius: var(--r-md);
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.drop-zone.is-over { border-color: var(--color-primary); background: var(--color-primary-soft); }
+.drop-zone__actions { display: flex; gap: var(--sp-2); }
+
+/* ── 詳細：別のツールへ渡すボタン ── */
+.detail__actions { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); border-top: var(--bw) solid var(--color-border); background: var(--color-surface); }

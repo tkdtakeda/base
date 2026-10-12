@@ -31,6 +31,16 @@ def search_lots(ctx, payload):
     return ctx.lot_service.search(payload)
 
 
+@command("list_lots")
+def list_lots(ctx, payload):
+    return ctx.lot_service.list(payload)
+
+
+@command("get_filter_values")
+def get_filter_values(ctx, payload):
+    return ctx.lot_service.filter_values(payload)
+
+
 @command("get_lot_detail")
 def get_lot_detail(ctx, payload):
     return ctx.lot_service.detail(payload)

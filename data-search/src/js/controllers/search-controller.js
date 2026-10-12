@@ -1,5 +1,6 @@
 /* =========================================================
-   検索と詳細の操作。画面の部品はここを呼び、結果は状態（store）を通して受け取る。
+   一覧・検索・絞り込み・詳細の操作。画面の部品はここを呼び、結果は状態（store）を通して受け取る。
+   一覧は「絞り込み」と「番号の検索（任意）」の両方を満たすものを出す。
    ========================================================= */
 (function () {
   'use strict';
@@ -10,47 +11,61 @@
     let searchToken = 0;
     let detailToken = 0;
 
+    const keywordOf = () => DS.util.normalize(store.get().query.keyword);
+    const dataAvailable = () => {
+      const status = store.get().cache.status;
+      return Boolean(status && status.available);
+    };
+
     /** 主要動作（CTA）が今できるか。できないときは理由と、代わりに勧める操作を返す */
     function readiness() {
       const state = store.get();
       const cacheStatus = state.cache.status;
       if (cacheStatus && !cacheStatus.available) {
         if (state.mode.capabilities.sampleData) {
-          return { ok: false, reason: 'サンプルデータを読み込むと検索できます', action: 'open-samples', actionLabel: 'サンプルを読み込む' };
+          return { ok: false, reason: 'サンプルデータを読み込むと一覧が出ます', action: 'open-samples', actionLabel: 'サンプルを読み込む' };
         }
-        return { ok: false, reason: '検索できるデータがありません。データを更新してください', action: 'refresh', actionLabel: 'データを更新する' };
+        return { ok: false, reason: '表示できるデータがありません。データを更新してください', action: 'refresh', actionLabel: 'データを更新する' };
       }
-      if (state.search.status === 'loading') return { ok: false, reason: '検索しています…', busy: true };
-      if (!DS.util.normalize(state.query.keyword)) {
+      if (state.search.status === 'loading') return { ok: false, reason: '読み込んでいます…', busy: true };
+      const searching = state.search.request && state.search.request.keyword;
+      if (!keywordOf()) {
+        // 番号で探している途中に入力を空にしたら、番号の検索を外して一覧に戻せる
+        if (searching) return { ok: true, label: '一覧に戻す', icon: 'fa-list' };
         const field = DS.domain.fields.get(state.query.searchType);
-        return { ok: false, reason: `${field.label}を入力してください` };
+        return { ok: false, quiet: true, reason: `${field.label}を入れると、一覧の中から探せます` };
       }
       return { ok: true };
     }
 
-    async function run(options) {
+    function buildRequest(page) {
       const state = store.get();
-      const page = (options && options.page) || 1;
-      const keyword = DS.util.normalize(state.query.keyword);
-      if (!keyword) return;
       const request = {
-        searchType: state.query.searchType,
-        keyword,
-        matchMode: state.query.matchMode,
         page,
         pageSize: state.mode.pageSize || 100,
         sortKey: state.sort.key,
         sortOrder: state.sort.order,
+        filters: DS.domain.filters.compact(state.filters),
       };
+      const keyword = keywordOf();
+      if (keyword) Object.assign(request, { searchType: state.query.searchType, keyword, matchMode: state.query.matchMode });
+      return request;
+    }
+
+    async function run(options) {
+      if (!dataAvailable()) {
+        store.set({ search: { status: 'idle', result: null, request: null, error: null } });
+        return;
+      }
+      const request = buildRequest((options && options.page) || 1);
       const token = ++searchToken;
-      store.set({ search: Object.assign({}, state.search, { status: 'loading', request, error: null }) });
+      store.set({ search: Object.assign({}, store.get().search, { status: 'loading', request, error: null }) });
       try {
-        const result = await api.call('search_lots', request);
+        const result = await api.call('list_lots', request);
         if (token !== searchToken) return; // 古い結果は捨てる
-        store.set({
-          search: { status: 'done', result, request, error: null },
-          history: DS.controllers.pushHistory(store.get().history, request.searchType, result.keyword || keyword),
-        });
+        const patch = { search: { status: 'done', result, request, error: null } };
+        if (request.keyword) patch.history = DS.controllers.pushHistory(store.get().history, request.searchType, result.keyword || request.keyword);
+        store.set(patch);
         bus.emit('search:done', result);
         // 選んでいた行が結果に残っていなければ詳細を閉じる
         const selectedKey = store.get().selection.key;
@@ -64,6 +79,29 @@
 
     function setQuery(patch) {
       store.merge('query', patch);
+    }
+
+    /** 番号の検索を外して一覧に戻す */
+    function clearKeyword() {
+      setQuery({ keyword: '' });
+      return run({ page: 1 });
+    }
+
+    // ── 絞り込み ──
+    function setFilter(fieldId, spec) {
+      store.set({ filters: Object.assign({}, store.get().filters, { [fieldId]: spec }) });
+      return run({ page: 1 });
+    }
+
+    function setFilters(filters) {
+      store.set({ filters: Object.assign({}, filters) });
+      return run({ page: 1 });
+    }
+
+    function clearFilter(fieldId) {
+      const next = Object.assign({}, store.get().filters);
+      delete next[fieldId];
+      return setFilters(next);
     }
 
     /** 見出しを押したときの並べ替え：同じ列なら昇順⇔降順、別の列なら昇順から */
@@ -81,13 +119,12 @@
       run({ page: Math.min(Math.max(1, page), last) });
     }
 
-    /** 再検索（データの更新やサンプルの読み込みのあと） */
+    /** 読み直し（データの更新のあと） */
     function rerun() {
-      const request = store.get().search.request;
-      if (request && DS.util.normalize(store.get().query.keyword)) return run({ page: 1 });
-      return Promise.resolve();
+      return run({ page: 1 });
     }
 
+    // ── 詳細 ──
     async function select(item) {
       const key = DS.domain.recordKey(item);
       const token = ++detailToken;
@@ -110,7 +147,10 @@
       store.set({ selection: { key: null, item: null, status: 'idle', error: null, duplicated: false } });
     }
 
-    return { readiness, run, setQuery, toggleSort, goToPage, rerun, select, closeDetail };
+    return {
+      readiness, run, setQuery, clearKeyword, setFilter, setFilters, clearFilter,
+      toggleSort, goToPage, rerun, select, closeDetail,
+    };
   }
 
   DS.controllers.createSearchController = createSearchController;

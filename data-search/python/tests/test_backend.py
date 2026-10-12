@@ -249,6 +249,93 @@ class SearchTest(BackendTestCase):
         self.assertEqual(ctx.exception.code, "NOT_FOUND")
 
 
+class FilterTest(BackendTestCase):
+    """絞り込み。今日は 2026-10-03 に固定する。"""
+
+    EXTRA = [
+        ("LOT-SLASH", "INS-101", "CST-101", "ORD-9", "A5052", "H14", "-", "サンプル工業", "2026/10/10", "検査", "QC-01", "仕掛中"),
+        ("LOT-COMPACT", "INS-102", "CST-102", "ORD-9", "A5052", "H14", "-", "サンプル工業", "20261020", "検査", "QC-01", "仕掛中"),
+        ("LOT-BLANK", "INS-103", "CST-103", "ORD-9", "A5052", "H14", "-", "", None, "検査", "QC-01", None),
+    ]
+
+    def setUp(self):
+        super().setUp()
+        conn = sqlite3.connect(self.source)
+        conn.executemany(f'INSERT INTO "t_lot" VALUES ({", ".join("?" for _ in COLUMNS)})', self.EXTRA)
+        conn.commit()
+        conn.close()
+        self.cache.refresh()
+        from datetime import date
+        self.service = LotService(self.config, self.cache, SILENT, today=lambda: date(2026, 10, 3))
+
+    def lots(self, filters, **extra):
+        result = self.service.list({"filters": filters, **extra})
+        return [item["lotNo"] for item in result["items"]], result
+
+    def test_list_without_keyword_sorted_by_date_blank_last(self):
+        lots, result = self.lots({})
+        self.assertEqual(result["totalCount"], len(ROWS) + len(self.EXTRA))
+        self.assertEqual(lots[0], "LOT-001")
+        self.assertEqual(lots[-1], "LOT-BLANK")
+        self.assertEqual(lots[-3:-1], ["LOT-SLASH", "LOT-COMPACT"])
+        self.assertEqual(result["today"], "2026-10-03")
+
+    def test_values_filter_with_blank(self):
+        lots, _ = self.lots({"status": {"type": "values", "values": ["仕掛中", None]}})
+        self.assertEqual(sorted(lots), ["LOT-002", "LOT-BLANK", "LOT-COMPACT", "LOT-SLASH"])
+        lots, _ = self.lots({"customer": {"type": "values", "values": [None]}})
+        self.assertEqual(lots, ["LOT-BLANK"])
+
+    def test_relative_date_filter(self):
+        overdue, _ = self.lots({"deliveryDate": {"type": "date", "mode": "relative", "fromDays": None, "toDays": -1}})
+        self.assertEqual(overdue, ["LOT-001", "LOT-002"])
+        within, _ = self.lots({"deliveryDate": {"type": "date", "mode": "relative", "fromDays": 0, "toDays": 7}})
+        self.assertEqual(within, ["LOT_100%-A", "試作-α-001", "LOT-DUP", "LOT-DUP", "LOT-SLASH"])
+
+    def test_absolute_date_filter_handles_formats(self):
+        lots, _ = self.lots({"deliveryDate": {"type": "date", "mode": "absolute", "from": "2026-10-10", "to": "2026-10-20"}})
+        self.assertEqual(lots, ["LOT-SLASH", "LOT-COMPACT"])
+
+    def test_filters_combine_with_keyword(self):
+        lots, _ = self.lots(
+            {"status": {"type": "values", "values": ["仕掛中"]}},
+            searchType="lotNo", keyword="LOT-", matchMode="partial",
+        )
+        self.assertEqual(lots, ["LOT-002", "LOT-SLASH", "LOT-COMPACT"])
+
+    def test_filter_values_are_faceted(self):
+        result = self.service.filter_values({
+            "field": "status",
+            "filters": {
+                "status": {"type": "values", "values": ["保留"]},
+                "customer": {"type": "values", "values": ["サンプル工業"]},
+            },
+        })
+        counts = {row["value"]: row["count"] for row in result["values"]}
+        self.assertEqual(counts, {"仕掛中": 2, "検査済み": 1})
+
+    def test_invalid_filters(self):
+        bad = [
+            {"lotNo": {"type": "values", "values": ["x"]}},
+            {"status": {"type": "date", "mode": "relative", "fromDays": 0}},
+            {"status": {"type": "values", "values": "仕掛中"}},
+            {"deliveryDate": {"type": "date", "mode": "absolute", "from": "2026-13-01"}},
+            {"deliveryDate": {"type": "date", "mode": "absolute", "from": "2026-10-10", "to": "2026-10-01"}},
+            {"deliveryDate": {"type": "date", "mode": "relative", "fromDays": 99999}},
+        ]
+        for filters in bad:
+            with self.subTest(filters=filters), self.assertRaises(AppError) as ctx:
+                self.service.list({"filters": filters})
+            self.assertEqual(ctx.exception.code, "INVALID_REQUEST")
+
+    def test_empty_conditions_are_ignored(self):
+        _, result = self.lots({
+            "status": {"type": "values", "values": []},
+            "deliveryDate": {"type": "date", "mode": "relative", "fromDays": None, "toDays": None},
+        })
+        self.assertEqual(result["totalCount"], len(ROWS) + len(self.EXTRA))
+
+
 class HttpTest(BackendTestCase):
     def setUp(self):
         super().setUp()
@@ -284,6 +371,10 @@ class HttpTest(BackendTestCase):
         self.assertEqual(body["id"], "data-search")
         status, body = self.post("get_cache_status", {})
         self.assertTrue(body["available"])
+        status, body = self.post("list_lots", {"filters": {"status": {"type": "values", "values": ["保留"]}}})
+        self.assertEqual(body["totalCount"], 1)
+        status, body = self.post("get_filter_values", {"field": "status"})
+        self.assertEqual(len(body["values"]), 6)
 
     def test_error_shape_hides_internal_detail(self):
         status, body = self.post("search_lots", {"searchType": "LOT_NO", "keyword": "x"})

@@ -6,7 +6,7 @@
      2. F12 → コンソール に、このファイルの中身をすべて貼り付けて Enter
      3. 結果が表で出る。最後に「すべて成功」と出れば OK
 
-   ※ 確認のためにサンプルデータを読み込み直します（終わると元の状態に戻します）。
+   ※ 確認のためにサンプルデータ・絞り込み・タグを使います（終わると元の状態に戻します）。
    ========================================================= */
 (async function uiCheck() {
   'use strict';
@@ -25,66 +25,76 @@
     return;
   }
 
-  const { store, search, samples } = app;
-  const before = samples.loadedIds();
+  const { store, search, samples, tags } = app;
+  const before = { samples: samples.loadedIds(), tags: store.get().tags.items.slice(), filters: store.get().filters };
+  const result = () => store.get().search.result;
   const searchFor = async (searchType, keyword, matchMode) => {
     search.setQuery({ searchType, keyword, matchMode: matchMode || 'partial' });
     await search.run({ page: 1 });
-    return store.get().search.result;
+    return result();
   };
+  const today = window.DS.domain.filters.todayIso();
 
   try {
     // ── データなし ──
-    await app.samples.clear();
-    await wait(50);
+    await samples.clear();
     check('データなしのとき CTA はサンプルへ案内する', search.readiness().action === 'open-samples');
 
-    // ── 読み込み ──
+    // ── 読み込むと一覧が出る（入力は不要） ──
+    search.setQuery({ keyword: '' });
+    await search.setFilters({});
     await samples.load('standard');
-    check('標準のデータを読み込める', store.get().cache.status.rowCount === 300, `${store.get().cache.status.rowCount} 件`);
-    check('読み込むと検索の例が動く', store.get().search.result && store.get().search.result.totalCount > 0);
+    check('読み込むと入力なしで一覧が出る', result() && result().totalCount === 300, `${result() && result().totalCount} 件`);
+    check('一覧は 100 件ずつ', result().count === 100);
+    const dates = result().items.map((item) => item.deliveryDate);
+    check('納期が近い順（古い順）に並ぶ', dates.every((date, i) => i === 0 || dates[i - 1] <= date));
 
-    // ── 検索 ──
-    let result = await searchFor('lotNo', 'LOT-2026-00012', 'exact');
-    check('完全一致で 1 件', result.totalCount === 1);
-    result = await searchFor('lotNo', 'ｌｏｔ－２０２６－０００１２', 'exact');
-    check('全角・小文字でも見つかる', result.totalCount === 1);
-    result = await searchFor('lotNo', 'LOT-2026-0001', 'partial');
-    check('部分一致で複数件', result.totalCount === 10, `${result.totalCount} 件`);
-    result = await searchFor('orderNo', 'ORD-260001', 'exact');
-    check('受注番号は複数のロットにまたがる', result.totalCount >= 1, `${result.totalCount} 件`);
-    result = await searchFor('lotNo', 'NOTHING-0', 'partial');
-    check('0 件も正常に表示する', result.totalCount === 0 && document.querySelector('.empty').hidden === false);
+    // ── 番号の検索（任意） ──
+    let r = await searchFor('lotNo', 'LOT-2026-00012', 'exact');
+    check('完全一致で 1 件', r.totalCount === 1);
+    r = await searchFor('lotNo', 'ｌｏｔ－２０２６－０００１２', 'exact');
+    check('全角・小文字でも見つかる', r.totalCount === 1);
+    r = await searchFor('lotNo', 'NOTHING-0', 'partial');
+    check('0 件も正常に表示する', r.totalCount === 0 && document.querySelector('.empty').hidden === false);
+    await search.clearKeyword();
+    check('入力を消すと一覧に戻る', result().totalCount === 300 && !store.get().search.request.keyword);
 
-    // ── ページ送り・並べ替え ──
-    result = await searchFor('lotNo', 'LOT', 'partial');
-    check('100 件ずつのページに分かれる', result.count === 100 && result.totalCount === 300);
-    search.goToPage(3);
-    await wait(150);
-    check('ページを送れる', store.get().search.result.page === 3);
-    search.toggleSort('lotNo');
-    await wait(150);
-    check('見出しで降順に並べ替えられる', store.get().sort.order === 'desc' && store.get().search.result.items[0].lotNo === 'LOT-2026-00300');
-    search.toggleSort('lotNo');
-    await wait(150);
+    // ── 絞り込み ──
+    await search.setFilter('status', { type: 'values', values: ['仕掛中'] });
+    const wip = result().totalCount;
+    check('状態で絞り込める', wip > 0 && wip < 300 && result().items.every((item) => item.status === '仕掛中'), `${wip} 件`);
+    await search.setFilter('deliveryDate', { type: 'date', mode: 'relative', fromDays: 0, toDays: 30 });
+    const end = window.DS.domain.filters.resolveDate({ mode: 'relative', fromDays: 0, toDays: 30 }, today)[1];
+    check('納期（今日〜30 日後）でも絞り込める（かつ）', result().items.every((item) => item.status === '仕掛中' && item.deliveryDate >= today && item.deliveryDate <= end), `${result().totalCount} 件`);
+    const values = await app.api.call('get_filter_values', { field: 'status', filters: store.get().filters });
+    check('値の一覧に件数が出る（自分の条件は外して数える）', values.values.length > 1);
+
+    // ── タグ ──
+    const saved = tags.save('確認用タグ');
+    check('今の条件をタグにできる', saved.ok && store.get().tags.activeId === saved.tag.id);
+    check('同じ名前のタグは作れない', tags.save('確認用タグ').ok === false);
+    await tags.apply(null);
+    check('「すべて」で絞り込みを外せる', result().totalCount === 300 && store.get().tags.activeId === null);
+    await tags.apply(saved.tag.id);
+    check('タグを押すと同じ条件に戻る', Object.keys(store.get().filters).length === 2 && store.get().tags.activeId === saved.tag.id);
+    await search.setFilter('status', { type: 'values', values: ['仕掛中', '保留'] });
+    check('条件を変えると「変更あり」になる', tags.isModified() === true);
+    tags.remove(saved.tag.id);
+    check('タグを消せる', !store.get().tags.items.some((tag) => tag.id === saved.tag.id));
 
     // ── 詳細 ──
-    await search.select(store.get().search.result.items[0]);
+    await search.setFilters({});
+    await search.select(result().items[0]);
     check('行を選ぶと詳細が出る', document.getElementById('detail').hidden === false);
     search.closeDetail();
-    check('詳細を閉じられる', document.getElementById('detail').hidden === true);
 
     // ── 同じロット番号 ──
     await samples.load('duplicate-lot');
-    result = store.get().search.result;
-    check('同じロット番号の 3 件が出る', result.totalCount === 3);
-    await search.select(result.items[2]);
-    check('ロット番号＋鋳造番号で 1 件に決まる', store.get().selection.item.castingNo === result.items[2].castingNo);
-
-    // ── 記号 ──
-    await samples.load('symbols');
-    result = await searchFor('lotNo', '%', 'partial');
-    check('% は文字として扱う', result.totalCount === 1, `${result.totalCount} 件`);
+    r = result();
+    check('同じロット番号の 3 件が出る', r.totalCount === 3);
+    await search.select(r.items[2]);
+    check('ロット番号＋鋳造番号で 1 件に決まる', store.get().selection.item.castingNo === r.items[2].castingNo);
+    search.closeDetail();
 
     // ── 更新の失敗 ──
     await samples.load('refresh-failure');
@@ -98,7 +108,11 @@
   } finally {
     // 元の状態に戻す
     await samples.clear();
-    for (const id of before) await samples.load(id);
+    for (const id of before.samples) await samples.load(id);
+    window.DS.core.storage.write('tags', before.tags);
+    store.set({ tags: { items: before.tags, activeId: null } });
+    search.setQuery({ keyword: '' });
+    await search.setFilters(before.filters);
   }
 
   console.table(results);

@@ -83,7 +83,7 @@
       if (entry.view && entry.view.update) entry.view.update(state);
     }
 
-    const WATCHED = ['ui', 'cache', 'columns', 'samplesVersion'];
+    const WATCHED = ['ui', 'cache', 'columns', 'samplesVersion', 'filters', 'search', 'tags'];
     bus.on('state', ({ state, changed }) => {
       if (changed.some((key) => WATCHED.includes(key))) render(state);
     });

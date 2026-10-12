@@ -48,12 +48,8 @@
 
     async function afterChange(demoQuery) {
       await cache.loadStatus();
-      if (demoQuery) {
-        search.setQuery(demoQuery);
-        await search.run({ page: 1 });
-      } else {
-        await search.rerun();
-      }
+      if (demoQuery) search.setQuery(demoQuery);
+      await search.run({ page: 1 });
     }
 
     async function load(id) {

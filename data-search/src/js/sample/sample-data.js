@@ -34,7 +34,9 @@
     };
   }
 
-  const BASE_DATE = new Date(2026, 9, 11);
+  // 日付は「今日」を基準に作る（日付の絞り込み「今日〜7 日後」などをいつ開いても試せるように）
+  const now = new Date();
+  const BASE_DATE = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const MATERIALS = ['A1100', 'A3003', 'A5052', 'A6061', 'A6063', 'A7075'];
   const TEMPERS = ['O', 'H14', 'H24', 'H32', 'T5', 'T6', 'T651'];
   const CUSTOMERS = ['サンプル工業', 'テスト金属', '見本製作所', '架空商事', '例示精工', 'ダミー産業'];
@@ -96,9 +98,8 @@
     order: 10,
     icon: 'fa-table-list',
     title: '標準のデータ',
-    description: 'ロット 300 件。1 つの受注番号に 1〜6 件のロットがひも付いています。',
+    description: 'ロット 300 件。1 つの受注番号に 1〜6 件のロットがひも付いています。納期は今日の前後 3 か月に散らばります。',
     build: () => buildRows(300, 1001, { year: '2026', short: '26', cast: '41' }),
-    demoQuery: { searchType: 'lotNo', keyword: 'LOT-2026-001', matchMode: 'partial' },
   });
 
   patterns.register({

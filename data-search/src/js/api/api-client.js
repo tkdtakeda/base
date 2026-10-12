@@ -23,7 +23,7 @@
     }
   }
 
-  const COMMANDS = ['search_lots', 'get_lot_detail', 'refresh_cache', 'get_cache_status', 'get_application_info'];
+  const COMMANDS = ['search_lots', 'list_lots', 'get_filter_values', 'get_lot_detail', 'refresh_cache', 'get_cache_status', 'get_application_info'];
 
   function createClient(adapter) {
     return {

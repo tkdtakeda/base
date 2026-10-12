@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="css/base.css">
   <link rel="stylesheet" href="css/components.css">
   <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/filters.css">
 </head>
 <body>
   <div class="app">
@@ -27,7 +28,9 @@
       <nav class="rail" id="rail" aria-label="設定とデータ"></nav>
       <aside class="sidepanel" id="sidepanel" hidden></aside>
       <main class="main">
-        <section class="results" id="results" aria-label="検索結果"></section>
+        <section class="results" id="results" aria-label="ロット一覧">
+          <div class="tagbar" id="tagbar"></div>
+        </section>
         <aside class="detail" id="detail" hidden></aside>
       </main>
     </div>
@@ -42,6 +45,7 @@
   <!-- 論理項目 -->
   <script src="js/domain/fields.js"></script>
   <script src="js/domain/status-tones.js"></script>
+  <script src="js/domain/filters.js"></script>
   <!-- サンプルデータと API -->
   <script src="js/sample/sample-data.js"></script>
   <script src="js/api/api-client.js"></script>
@@ -51,12 +55,15 @@
   <script src="js/controllers/app-state.js"></script>
   <script src="js/controllers/search-controller.js"></script>
   <script src="js/controllers/data-controller.js"></script>
+  <script src="js/controllers/tag-controller.js"></script>
   <!-- 画面の部品 -->
   <script src="js/views/toast.js"></script>
   <script src="js/views/status-chips.js"></script>
   <script src="js/views/side-panel.js"></script>
+  <script src="js/panels/filter-panel.js"></script>
   <script src="js/panels/panels.js"></script>
   <script src="js/views/search-bar.js"></script>
+  <script src="js/views/tag-bar.js"></script>
   <script src="js/views/results-view.js"></script>
   <script src="js/views/detail-view.js"></script>
   <script src="js/manual/manual-content.js"></script>

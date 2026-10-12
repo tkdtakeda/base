@@ -6,6 +6,12 @@
 
   const DS = window.DS;
 
+  /**
+   * 別のツールへ渡す「送り先」の登録簿。登録すると詳細の下にボタンが出る。
+   *   DS.handoffs.register({ id, order, label, icon, send(item) })   item は 12 項目の論理名のデータ
+   */
+  DS.handoffs = DS.core.createRegistry('handoffs');
+
   function createDetailView(root, { store, bus, search, toast }) {
     const { el, icon } = DS.util;
 
@@ -13,7 +19,8 @@
     const closeButton = el('button', { type: 'button', className: 'icon-btn', title: '詳細を閉じる（Esc）', 'aria-label': '詳細を閉じる' }, [icon('fa-xmark', '×')]);
     const notice = el('div', { className: 'detail__notice' });
     const body = el('div', { className: 'detail__body' });
-    root.append(el('div', { className: 'detail__head' }, [title, closeButton]), notice, body);
+    const actions = el('div', { className: 'detail__actions' });
+    root.append(el('div', { className: 'detail__head' }, [title, closeButton]), notice, body, actions);
     root.setAttribute('aria-label', '選んだデータの詳細');
 
     closeButton.addEventListener('click', () => search.closeDetail());
@@ -84,6 +91,14 @@
         ]);
       }));
       if (selection.status === 'done') DS.util.flash(title);
+
+      const targets = DS.handoffs.list();
+      actions.hidden = targets.length === 0;
+      actions.replaceChildren(...targets.map((target) => {
+        const button = el('button', { type: 'button', className: 'btn btn--secondary btn--block' }, [icon(target.icon || 'fa-share-from-square', ''), el('span', { text: target.label })]);
+        button.addEventListener('click', () => target.send(Object.assign({}, item)));
+        return button;
+      }));
     }
 
     bus.on('state', ({ state, changed }) => {
