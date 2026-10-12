@@ -23,6 +23,7 @@ from data_search.http_server import AppContext, create_server  # noqa: E402
 from data_search.logging_setup import setup_logging  # noqa: E402
 from data_search.lot_service import LotService  # noqa: E402
 from data_search.record_service import RecordService  # noqa: E402
+from data_search.type_service import ColumnTypeService  # noqa: E402
 from data_search.settings import SettingsError, load_settings  # noqa: E402
 from data_search.source_service import SourceService  # noqa: E402
 
@@ -105,6 +106,7 @@ def main():
     context = AppContext(config, cache_service, LotService(config, cache_service, logger), logger)
     context.source_service = SourceService(context, APP_ROOT, local_dir)
     context.record_service = RecordService(context, APP_ROOT, local_dir)
+    context.type_service = ColumnTypeService(context, APP_ROOT, local_dir)
 
     has_cache = os.path.isfile(config.cache_path)
     if has_cache and not cache_service.verify_existing():

@@ -2,10 +2,16 @@
    絞り込みの種類の登録簿。種類ごとに「空か」「どう言葉で表すか」「行が当てはまるか」を持つ。
    種類を増やすときは filterTypes.register() を足す（パネルの部品は panels/filter-panel.js）。
 
-   条件の形（画面 → API へそのまま渡す）
+   条件の形（画面 → API へそのまま渡す）。1 つの列で有効な条件は 1 つ（列の種類で使えるものが決まる：domain/fields.js）
      values … { type: 'values', values: ['仕掛中', null] }        null は「空欄」
      date   … { type: 'date', mode: 'relative', fromDays: 0, toDays: 7 }   今日を 0 とした日数
               { type: 'date', mode: 'absolute', from: '2026-10-01', to: '2026-10-31' }
+     number … { type: 'number', min: 1.5, max: null }                  以上・以下（null は制限なし）
+     text   … { type: 'text', op: 'contains', value: 'LOT 0012', fuzzy: true }
+              op：contains / starts / ends / not_contains / not_starts / not_ends
+              fuzzy：記号・空白を無視して比べる。含む・含まない は空白で区切った語ごとに見る
+
+   数値の読み方・文字の比べ方は Python 版の sql_functions.py と同じ決まり（サンプルのモードの検索で使う）。
    ========================================================= */
 (function () {
   'use strict';
@@ -60,6 +66,55 @@
     ];
   }
 
+  // ── 数値・文字の道具（sql_functions.py と同じ決まり） ──
+  const NUMBER_PATTERN = /^[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?$/;
+  const WORD_OPS = ['contains', 'not_contains'];
+  const TEXT_OPS = [
+    { id: 'contains', label: '含む' },
+    { id: 'starts', label: 'で始まる' },
+    { id: 'ends', label: 'で終わる' },
+    { id: 'not_contains', label: '含まない' },
+    { id: 'not_starts', label: 'で始まらない' },
+    { id: 'not_ends', label: 'で終わらない' },
+  ];
+
+  /** 数値として読めれば数、読めなければ null（全角・桁区切りのカンマ・先頭の 0 も読む。単位つきは読まない） */
+  function toNumber(value) {
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    const text = String(value).normalize('NFKC').trim();
+    return NUMBER_PATTERN.test(text) ? Number(text.replace(/,/g, '')) : null;
+  }
+
+  /** 比べるための形：NFKC・小文字。fuzzy なら英数字と文字（日本語を含む）以外を取り除く */
+  function fold(value, fuzzy) {
+    const text = String(value == null ? '' : value).normalize('NFKC').toLowerCase();
+    return fuzzy ? text.replace(/[^\p{L}\p{N}]/gu, '') : text;
+  }
+
+  function termsOf(needle, op, fuzzy) {
+    const text = String(needle || '').normalize('NFKC');
+    const words = WORD_OPS.includes(op) ? text.split(/\s+/) : [text.trim()];
+    return words.map((word) => fold(word, fuzzy)).filter(Boolean);
+  }
+
+  function textMatches(value, op, needle, fuzzy) {
+    const terms = termsOf(needle, op, fuzzy);
+    if (!terms.length) return true;
+    const target = fold(value, fuzzy);
+    switch (op) {
+      case 'contains': return terms.every((term) => target.includes(term));
+      case 'not_contains': return !terms.some((term) => target.includes(term));
+      case 'starts': return target.startsWith(terms[0]);
+      case 'ends': return target.endsWith(terms[0]);
+      case 'not_starts': return !target.startsWith(terms[0]);
+      case 'not_ends': return !target.endsWith(terms[0]);
+      default: return false;
+    }
+  }
+
+  const formatNumber = (n) => Number(n).toLocaleString('ja-JP', { maximumFractionDigits: 6 });
+
   types.register({
     id: 'values',
     empty: () => ({ type: 'values', values: [] }),
@@ -104,13 +159,45 @@
     },
   });
 
-  /** 有効な条件だけを残す（空の条件は送らない・保存しない） */
+  types.register({
+    id: 'number',
+    empty: () => ({ type: 'number', min: null, max: null }),
+    isActive: (spec) => Boolean(spec) && (spec.min !== null && spec.min !== undefined || spec.max !== null && spec.max !== undefined),
+    describe(spec) {
+      const min = spec.min === null || spec.min === undefined ? '' : `${formatNumber(spec.min)} 以上`;
+      const max = spec.max === null || spec.max === undefined ? '' : `${formatNumber(spec.max)} 以下`;
+      return [min, max].filter(Boolean).join(' ');
+    },
+    matches(value, spec) {
+      const number = toNumber(value);
+      if (number === null) return false;
+      return (spec.min === null || spec.min === undefined || number >= spec.min) && (spec.max === null || spec.max === undefined || number <= spec.max);
+    },
+  });
+
+  types.register({
+    id: 'text',
+    ops: TEXT_OPS,
+    empty: () => ({ type: 'text', op: 'contains', value: '', fuzzy: true }),
+    isActive: (spec) => Boolean(spec) && termsOf(spec.value, spec.op, spec.fuzzy !== false).length > 0,
+    describe(spec) {
+      const op = TEXT_OPS.find((item) => item.id === spec.op) || TEXT_OPS[0];
+      return `「${DS.util.normalize(spec.value)}」${op.label}`;
+    },
+    matches: (value, spec) => textMatches(value, spec.op, spec.value, spec.fuzzy !== false),
+  });
+
+  /** その列で使える条件か（列の種類で決まる） */
+  function allowed(field, spec) {
+    return Boolean(field && spec && field.filters.includes(spec.type) && types.has(spec.type));
+  }
+
+  /** 有効な条件だけを残す（空の条件・その列で使えない条件は送らない・保存しない） */
   function compact(filters) {
     const result = {};
     Object.entries(filters || {}).forEach(([fieldId, spec]) => {
       const field = DS.domain.fields.get(fieldId);
-      const type = field && types.get(field.filter);
-      if (type && type.isActive(spec)) result[fieldId] = spec;
+      if (allowed(field, spec) && types.get(spec.type).isActive(spec)) result[fieldId] = spec;
     });
     return result;
   }
@@ -125,10 +212,9 @@
   }
 
   function describe(fieldId, spec) {
-    const field = DS.domain.fields.get(fieldId);
-    return types.get(field.filter).describe(spec);
+    return types.get(spec.type).describe(spec);
   }
 
   DS.domain.filterTypes = types;
-  DS.domain.filters = { compact, sameFilters, describe, normalizeDate, todayIso, resolveDate, slashOf, BLANK_LABEL };
+  DS.domain.filters = { compact, sameFilters, describe, allowed, normalizeDate, todayIso, resolveDate, slashOf, toNumber, fold, textMatches, TEXT_OPS, BLANK_LABEL };
 })();

@@ -92,6 +92,27 @@
     check('値が多い列は、文字でデータ全体から探せる', matched.values.length > 0 && matched.values.every((entry) => entry.value.toLowerCase().includes('lot-2026-0001')), `${matched.values.length} 個`);
     await search.clearFilter(other.id);
 
+    // ── 文字の条件・数値の範囲・種類（ほかの絞り込みを外して確かめ、あとで戻す） ──
+    const filtersBefore = Object.assign({}, store.get().filters);
+    await search.setFilters({});
+    await search.setFilter(LOT, { type: 'text', op: 'contains', value: 'lot2026 00012', fuzzy: true });
+    check('条件で絞る：記号・空白を無視し、空白で区切った語をすべて含む', result().totalCount >= 1 && result().items.every((item) => item[LOT] === 'LOT-2026-00012'), `${result().totalCount} 件`);
+    await search.setFilter(LOT, { type: 'text', op: 'contains', value: 'lot202600012', fuzzy: false });
+    check('記号・空白を無視しないと見つからない', result().totalCount === 0);
+    await search.setFilter(LOT, { type: 'text', op: 'not_starts', value: 'LOT-2026', fuzzy: true });
+    check('「で始まらない」で外せる', result().totalCount === 0);
+    await search.clearFilter(LOT);
+    const width = window.DS.domain.listFields().find((field) => field.type === 'number');
+    check('数値の列は値から判定する', Boolean(width), width && width.label);
+    await search.setFilter(width.id, { type: 'number', min: 1.5, max: null });
+    check('数値の範囲で絞り込める', result().totalCount > 0 && result().items.every((item) => Number(String(item[width.id]).replace(/,/g, '')) >= 1.5), `${result().totalCount} 件`);
+    await search.setFilter(width.id, { type: 'number', min: null, max: null });
+    const typed = await app.api.call('update_column_type', { column: width.id, kind: 'text' });
+    check('種類を手動で変えて保存できる', typed.kind === 'text' && typed.manual === true);
+    const back = await app.api.call('update_column_type', { column: width.id, kind: 'auto' });
+    check('「自動」で値からの判定に戻せる', back.kind === 'number' && back.manual === false);
+    await search.setFilters(filtersBefore);
+
     // ── タグ ──
     const saved = tags.save('確認用タグ');
     check('今の条件をタグにできる', saved.ok && store.get().tags.activeId === saved.tag.id);

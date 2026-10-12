@@ -3,7 +3,8 @@
 
      columns      … DB のテーブルの全列。id も見出しも DB の列名
                     並び：固定列 → 番号で探す列 → 別名のある列 → ほかの列（DB の順）
-                    kind：date（日付の範囲で絞り込む）／ text（値から選んで絞り込む）
+                    kind：date（日付）／ number（数値）／ text（文字列）。autoKind：自動にしたときの種類、manual：手動で決めたか
+                    使える絞り込みは種類で決まる（KIND_FILTERS。先頭が既定）
      recordKey    … 固定列（一覧の左端に固定）。DB に足りなければ空（ready=false）
      searchColumn … 番号で探す列（上部バーの入力欄）
      aliases      … 別名（論理名）→ DB の列名。以前の形（論理名）で保存したタグ・表示の設定を読み替える
@@ -25,6 +26,14 @@
     { id: 'other', label: 'そのほかの項目', icon: 'fa-table-columns' },
   ];
 
+  // 種類 → 使える絞り込み（先頭が既定）。Python 版の lot_service.FILTERS_BY_KIND と同じ
+  const KIND_FILTERS = {
+    date: ['date'],
+    number: ['number', 'values'],
+    text: ['values', 'text'],
+  };
+  const KIND_LABELS = { date: '日付', number: '数値', text: '文字列' };
+
   let lists = { list: [], key: [], search: null, sections: [], hidden: [] };
   let meta = { version: null, aliases: {}, notices: [], ready: false, settingsFile: '' };
 
@@ -39,7 +48,7 @@
       const option = options[column.id] || {};
       const searchable = column.id === view.searchColumn;
       const key = recordKey.includes(column.id);
-      const kind = column.kind === 'date' ? 'date' : 'text';
+      const kind = KIND_FILTERS[column.kind] ? column.kind : 'text';
       fields.register({
         id: column.id,
         order: (index + 1) * 10,
@@ -53,8 +62,11 @@
         example: option.example || '',
         badge: (option.badge || []).map((rule) => ({ pattern: new RegExp(rule.match), tone: rule.tone })),
         type: kind,
-        // どの列でも絞り込める。日付の列は日付の範囲、ほかは値から選ぶ
-        filter: kind === 'date' ? 'date' : 'values',
+        autoKind: KIND_FILTERS[column.autoKind] ? column.autoKind : kind,
+        manual: Boolean(column.manual),
+        // どの列でも絞り込める。使える絞り込みは種類で決まる（filter は既定）
+        filters: KIND_FILTERS[kind].slice(),
+        filter: KIND_FILTERS[kind][0],
         searchable,
         key,
       });
@@ -90,6 +102,7 @@
   }
 
   DS.domain.applyView = applyView;
+  DS.domain.KIND_LABELS = KIND_LABELS;
   DS.domain.migrateId = migrateId;
   DS.domain.listFields = () => lists.list;
   DS.domain.detailFields = () => lists.list;

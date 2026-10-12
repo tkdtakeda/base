@@ -1,5 +1,6 @@
 """一覧・検索・絞り込み・詳細取得の業務ロジック。入力の検証もここで行う。"""
 
+import math
 import sqlite3
 import time
 import unicodedata
@@ -16,6 +17,7 @@ from .fields import (
     VALUE_LIST_LIMIT,
 )
 from .column_model import ColumnModelProvider
+from .sql_functions import TEXT_OPS, terms_of
 from .query import QueryBuilder
 from .settings.validation import RECORD_KEY_MAX
 
@@ -105,12 +107,27 @@ def _parse_iso_date(spec, name):
         raise _invalid("invalid date", "日付は 年（4 桁）・月・日 で正しく入力してください。") from exc
 
 
-def filter_kind(model, name):
-    """その列の絞り込みの種類。日付の列は日付の範囲、ほかは値から選ぶ。列がなければ None。"""
-    kind = model.kind_of(name)
-    if kind is None:
+# 列の種類ごとに使える絞り込み（1 つの列では、どれか 1 つの条件だけが有効）
+FILTERS_BY_KIND = {
+    "date": ("date",),               # 日付の範囲
+    "number": ("number", "values"),  # 数値の範囲／値から選ぶ
+    "text": ("values", "text"),      # 値から選ぶ／文字の条件（含む・始まる…）
+}
+NUMBER_LIMIT = 1e15
+
+
+def filter_kinds(model, name):
+    """その列で使える絞り込みの種類。列がなければ空。"""
+    return FILTERS_BY_KIND.get(model.kind_of(name), ())
+
+
+def _parse_number(spec, name):
+    value = spec.get(name)
+    if value is None:
         return None
-    return "date" if kind == "date" else "values"
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or abs(value) > NUMBER_LIMIT:
+        raise _invalid(f"{name} must be a number", "範囲は数値で入力してください。")
+    return float(value)
 
 
 def parse_filters(payload, today, model):
@@ -120,9 +137,26 @@ def parse_filters(payload, today, model):
         raise _invalid("filters must be an object")
     filters = []
     for name, spec in raw.items():
-        kind = filter_kind(model, name)
-        if kind is None or not isinstance(spec, dict) or spec.get("type") != kind:
+        kind = spec.get("type") if isinstance(spec, dict) else None
+        if kind not in filter_kinds(model, name):
             raise _invalid("unknown filter")
+        if kind == "number":
+            low, high = _parse_number(spec, "min"), _parse_number(spec, "max")
+            if low is not None and high is not None and low > high:
+                raise _invalid("number range reversed", "範囲は「以上」が「以下」より小さくなるようにしてください。")
+            if low is not None or high is not None:
+                filters.append((name, kind, (low, high)))
+            continue
+        if kind == "text":
+            op, needle, fuzzy = spec.get("op"), spec.get("value"), spec.get("fuzzy", True)
+            if op not in TEXT_OPS or not isinstance(needle, str) or not isinstance(fuzzy, bool):
+                raise _invalid("invalid text filter")
+            needle = normalize_keyword(needle)
+            if len(needle) > KEYWORD_MAX_LENGTH:
+                raise _invalid("text filter too long", f"条件の文字は {KEYWORD_MAX_LENGTH} 文字以内で入力してください。")
+            if terms_of(needle, op, fuzzy):  # 比べられる文字がなければ（記号だけなど）条件なし
+                filters.append((name, kind, (op, needle, fuzzy)))
+            continue
         if kind == "values":
             values = spec.get("values")
             if not isinstance(values, list) or len(values) > FILTER_VALUES_MAX:
@@ -258,7 +292,7 @@ class LotService:
         payload = _require_object(payload)
         model = self._data_model()
         name = payload.get("field")
-        if filter_kind(model, name) != "values":
+        if "values" not in filter_kinds(model, name):
             raise _invalid("field is not a value filter")
         match = payload.get("match")
         if match is not None:

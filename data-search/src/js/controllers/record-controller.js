@@ -1,9 +1,11 @@
 /* =========================================================
-   固定列（schema.recordKey）と番号で探す列（schema.searchColumn）の確認・保存
+   列の設定の保存：固定列（schema.recordKey）・番号で探す列（schema.searchColumn）・列の種類（schema.types）
 
      check(names)                選んだ列の組み合わせで 1 件に決まるかを数える（保存はしない）
      save(names, searchColumn)   確かめた組み合わせだけ保存できる → schema.local.json に保存
                                  → 列の並び・左端の固定・探す列が変わるため、画面を読み込み直す
+     setColumnType(id, kind)     kind：auto / date / number / text → schema.local.json の types に保存
+                                 → 使える絞り込みが変わるため、画面を読み込み直す（この列の絞り込みは外れる）
    ========================================================= */
 (function () {
   'use strict';
@@ -51,11 +53,23 @@
       }
     }
 
+    async function setColumnType(fieldId, kind) {
+      try {
+        const result = await api.call('update_column_type', { column: fieldId, kind });
+        toast.show({ tone: 'success', message: `${result.message}画面を読み込み直します`, timeout: RELOAD_WAIT_MS + 1000 });
+        window.setTimeout(() => window.location.reload(), RELOAD_WAIT_MS);
+        return true;
+      } catch (error) {
+        toast.show({ tone: 'danger', message: error.userMessage, detailId: error.detailId });
+        return false;
+      }
+    }
+
     function reset() {
       set({ status: 'idle', result: null, checked: null });
     }
 
-    return { check, canSave, save, reset };
+    return { check, canSave, save, reset, setColumnType };
   }
 
   DS.controllers.createRecordController = createRecordController;

@@ -1,4 +1,4 @@
-## 付録：1 件を決める列の選択・全列の絞り込みで足したバックエンドのファイルの全文
+## 付録：その後の変更（固定列を画面で選ぶ・全列の絞り込み・列の種類）で足したバックエンドのファイルの全文
 
 `python/data_search/column_model.py`
 
@@ -9,8 +9,9 @@
     設定の名前 … DB の列名か、schema.columns に書いた別名（論理名）のどちらでもよい。
                  DB に同じ名前の列があればその列、なければ別名として読み替える（DB にない列は使わない）
     並び順     … 固定列 → 番号で探す列 → 別名のある列（schema.columns の順）→ ほかの列（DB の順）
-    種類       … date / text。schema.types の指定が優先。指定がなければ値から判定する
-                 （固定列・番号で探す列は、数字だけの番号を日付と取り違えないよう text）
+    種類       … date / number / text。手動の指定（schema.types。画面の見出しの小窓から選べる）が優先。
+                 指定がなければ値から判定する（自動）。固定列・番号で探す列は、番号を日付や数値と
+                 取り違えないよう、自動では text
 
 DB にない名前を設定に書いても止めず、notices（画面の「データ」パネルの注意）で知らせる。
 固定列が DB にないときは record_key が空（ready=False）になり、画面は列を選ぶよう案内する。
@@ -25,14 +26,20 @@ SEARCH_PATH = "schema.searchColumn"
 CHOOSE_ACTION = "画面左の「データ」→「固定列」で、DB の列から選んでください。"
 
 
+KINDS = ("date", "number", "text")
+
+
 @dataclass(frozen=True)
 class Column:
     id: str
-    kind: str    # "text" / "date"
-    role: bool   # 主な項目（詳細で先にまとめる）
+    kind: str          # 使う種類 "date" / "number" / "text"
+    role: bool         # 主な項目（詳細で先にまとめる）
+    auto_kind: str = "text"  # 自動にしたときの種類
+    manual: bool = False     # 手動で種類を決めたか
 
     def public(self):
-        return {"id": self.id, "label": self.id, "kind": self.kind, "role": self.role}
+        return {"id": self.id, "label": self.id, "kind": self.kind, "autoKind": self.auto_kind,
+                "manual": self.manual, "role": self.role}
 
 
 @dataclass(frozen=True)
@@ -101,6 +108,12 @@ class _Resolver:
         return self.aliases.get(name)
 
 
+def setting_names_for(settings, db_names, column):
+    """種類の指定（schema.types）のキーのうち、その列を指すもの（別名で書いたものも含む）。"""
+    resolve = _Resolver(settings.aliases, db_names)
+    return [name for name in settings.types if resolve(name) == column]
+
+
 def missing_key_columns(settings, db_names):
     """固定列のうち、DB にない名前（接続テストで、保存の前に知らせるため）。"""
     resolve = _Resolver(settings.aliases, db_names)
@@ -146,19 +159,18 @@ def build_model(settings, catalog):
         else:
             explicit[physical] = kind
     identifiers = set(record_key) | ({search_column} if search_column else set())
-    looks_date = {column.name: column.looks_date for column in catalog}
+    detected = {column.name: ("date" if column.looks_date else "number" if column.looks_number else "text") for column in catalog}
 
-    def kind_of(name):
-        if name in explicit:
-            return explicit[name]
-        return "date" if looks_date.get(name) and name not in identifiers else "text"
+    def auto_kind_of(name):
+        return "text" if name in identifiers else detected.get(name, "text")
 
     # 並び：役割のある列を先頭に（固定列は左端に固定するため、必ず最初）
     leading = list(record_key) + ([search_column] if search_column else []) + list(resolve.aliases.values())
     leading = list(dict.fromkeys(leading))
     order = leading + [name for name in db_names if name not in leading]
     role = set(leading)
-    columns = tuple(Column(name, kind_of(name), name in role) for name in order)
+    columns = tuple(Column(name, explicit.get(name, auto_kind_of(name)), name in role, auto_kind_of(name), name in explicit)
+                    for name in order)
 
     # 既定の並べ替え：書いた列がなければ固定列（なければ先頭の列）
     sort_name, sort_order = settings.default_sort
@@ -177,7 +189,7 @@ def build_model(settings, catalog):
         if physical:
             fields[physical] = dict(fields.get(physical, {}), **options)
 
-    signature = json.dumps([[(c.id, c.kind) for c in columns], record_key, search_column], ensure_ascii=False)
+    signature = json.dumps([[(c.id, c.kind, c.manual) for c in columns], record_key, search_column], ensure_ascii=False)
     return ColumnModel(
         columns=columns,
         record_key=record_key,
@@ -272,6 +284,159 @@ class RecordService:
         return {"success": True, "localFile": file_label(self.app_root, local_file(self.local_dir, "schema"))}
 ```
 
+`python/data_search/type_service.py`
+
+```python
+"""列の種類（日付・数値・文字列）の手動の指定。画面の見出しの小窓から選ぶ。
+
+保存先は schema.local.json の types（キーは DB の列名）。「自動」はその列の指定を消す。
+別名（論理名）で書いた同じ列の指定も一緒に消し、指定が 2 つ残って食い違わないようにする。
+キャッシュは作り直さない（種類は列の決まりの中だけで変わる）。ログには列名を残さない。
+"""
+
+import os
+
+from .column_model import KINDS, setting_names_for
+from .errors import AppError
+from .settings_updater import file_label, save_local_values
+
+AUTO = "auto"
+
+
+class ColumnTypeService:
+    def __init__(self, context, app_root, local_dir):
+        self.context = context      # http_server.AppContext（config・cache_service・lot_service を持つ）
+        self.app_root = app_root
+        self.local_dir = local_dir or os.path.join(app_root, "config", "local")
+
+    def update(self, payload):
+        if not isinstance(payload, dict):
+            raise AppError("INVALID_REQUEST", "payload must be an object")
+        if not self.context.cache_service.cache_available():
+            raise AppError("CACHE_UNAVAILABLE", "cache file not found")
+        model = self.context.lot_service.model
+        column, kind = payload.get("column"), payload.get("kind")
+        if not isinstance(column, str) or not model.has(column):
+            raise AppError("INVALID_REQUEST", "unknown column", user_message="種類を変える列が見つかりません。画面を読み込み直してください。")
+        if kind != AUTO and kind not in KINDS:
+            raise AppError("INVALID_REQUEST", "unknown kind", user_message="種類は 自動・日付・数値・文字列 から選んでください。")
+
+        db_names = [c.name for c in self.context.cache_service.catalog()]
+        old_names = setting_names_for(self.context.config.model, db_names, column)
+        values = {} if kind == AUTO else {("types", column): kind}
+        delete = [("types", name) for name in old_names if not (kind != AUTO and name == column)]
+        target = save_local_values(self.context, self.app_root, self.local_dir, "schema", values, delete)
+
+        updated = self.context.lot_service.model
+        current = next(c for c in updated.columns if c.id == column)
+        self.context.logger.info("column type updated kind=%s manual=%s", current.kind, current.manual)
+        label = {"date": "日付", "number": "数値", "text": "文字列"}[current.kind]
+        return {
+            "success": True,
+            "saved": True,
+            "column": column,
+            "kind": current.kind,
+            "manual": current.manual,
+            "localFile": file_label(self.app_root, target),
+            "message": f"「{column}」の種類を{'自動（' + label + '）' if not current.manual else label}にしました。",
+        }
+```
+
+`python/data_search/sql_functions.py`
+
+```python
+"""SQLite に足す関数。数値の読み方・文字の条件（含む・始まる…）・曖昧な比べ方を 1 か所で決める。
+画面だけで試すモード（js/domain/filters.js）にも同じ決まりを書いている。
+
+    ds_number(x)                  … 数値として読めれば float、読めなければ NULL
+                                    （全角数字・前後の空白・桁区切りのカンマ・先頭の 0 も読む。単位つきは読まない）
+    ds_auto_number(x)             … 種類の自動判定用。ds_number で読めて、先頭が 0 の番号（007 など）でなければ 1
+    ds_text(x, op, needle, fuzzy) … 文字の条件に当てはまれば 1
+        op     … contains / starts / ends / not_contains / not_starts / not_ends
+        fuzzy  … 1 なら記号・空白を無視して比べる（LOT2026-0012 と LOT-2026-00012 を同じとみなす）
+        含む・含まない は、空白で区切った語ごとに見る（含む＝すべての語を含む／含まない＝どの語も含まない）
+        空欄の行は「〜ない」に当てはまる（Excel と同じ）
+大文字小文字・全角半角はいつも区別しない（NFKC でそろえる）。
+"""
+
+import re
+import unicodedata
+from functools import lru_cache
+
+TEXT_OPS = ("contains", "starts", "ends", "not_contains", "not_starts", "not_ends")
+WORD_OPS = ("contains", "not_contains")
+NUMBER_PATTERN = re.compile(r"[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
+
+
+def to_number(value):
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    text = unicodedata.normalize("NFKC", str(value)).strip()
+    if not NUMBER_PATTERN.fullmatch(text):
+        return None
+    return float(text.replace(",", ""))
+
+
+def looks_number(value):
+    """自動判定：数値として読めて、先頭が 0 の番号（0 と 0.5 などは除く）でないとき True。"""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return True
+    if to_number(value) is None:
+        return False
+    digits = unicodedata.normalize("NFKC", str(value)).strip().lstrip("+-")
+    return not (len(digits) > 1 and digits[0] == "0" and digits[1] != ".")
+
+
+def fold(value, fuzzy):
+    """比べるための形：NFKC・小文字。fuzzy なら英数字と文字（日本語を含む）以外を取り除く。"""
+    text = unicodedata.normalize("NFKC", "" if value is None else str(value)).lower()
+    if fuzzy:
+        text = "".join(ch for ch in text if ch.isalnum())
+    return text
+
+
+@lru_cache(maxsize=256)
+def terms_of(needle, op, fuzzy):
+    """条件の語。含む・含まない は空白で区切る。比べられる語がなければ空のタプル。"""
+    text = unicodedata.normalize("NFKC", needle or "")
+    words = text.split() if op in WORD_OPS else [text.strip()]
+    return tuple(word for word in (fold(w, fuzzy) for w in words) if word)
+
+
+def text_matches(value, op, needle, fuzzy):
+    terms = terms_of(needle, op, bool(fuzzy))
+    if not terms:
+        return True
+    target = fold(value, bool(fuzzy))
+    if op == "contains":
+        return all(term in target for term in terms)
+    if op == "not_contains":
+        return not any(term in target for term in terms)
+    term = terms[0]
+    if op == "starts":
+        return target.startswith(term)
+    if op == "ends":
+        return target.endswith(term)
+    if op == "not_starts":
+        return not target.startswith(term)
+    if op == "not_ends":
+        return not target.endswith(term)
+    return False
+
+
+def register(conn):
+    """接続に関数を足す（キャッシュを開くたびに呼ぶ）。"""
+    conn.create_function("ds_number", 1, to_number, deterministic=True)
+    conn.create_function("ds_auto_number", 1, lambda value: 1 if looks_number(value) else 0, deterministic=True)
+    conn.create_function("ds_text", 4, lambda value, op, needle, fuzzy: 1 if text_matches(value, op, needle, fuzzy) else 0,
+                         deterministic=True)
+    return conn
+```
+
 `python/data_search/settings_updater.py`
 
 ```python
@@ -301,12 +466,12 @@ def use_config(context, config):
     context.lot_service.config = config
 
 
-def save_local_values(context, app_root, local_dir, kind, values):
-    """values（{path: 値}）を <kind>.local.json に書き、読み直して差し替える。書き込んだファイルのパスを返す。"""
+def save_local_values(context, app_root, local_dir, kind, values, delete=()):
+    """values（{path: 値}）を <kind>.local.json に書き（delete の path は消す）、読み直して差し替える。書き込んだファイルのパスを返す。"""
     target = local_file(local_dir, kind)
     existed = os.path.isfile(target)
     try:
-        set_local_values(local_dir, kind, values)
+        set_local_values(local_dir, kind, values, delete)
     except (OSError, ValueError) as exc:
         raise AppError("SETTINGS_WRITE_FAILED", f"write failed: {type(exc).__name__}") from exc
     try:

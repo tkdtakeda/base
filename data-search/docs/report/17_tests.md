@@ -29,6 +29,9 @@ from data_search.http_server import AppContext, create_server  # noqa: E402
 from data_search.lot_service import LotService  # noqa: E402
 from data_search.source_service import SourceService  # noqa: E402
 from data_search.record_service import RecordService  # noqa: E402
+from data_search.type_service import ColumnTypeService  # noqa: E402
+from data_search import sql_functions  # noqa: E402
+from data_search.column_catalog import read_catalog  # noqa: E402
 from data_search import commands  # noqa: E402
 from data_search.column_catalog import DbColumn  # noqa: E402
 from data_search.column_model import build_model  # noqa: E402
@@ -361,11 +364,53 @@ class ColumnModelTest(unittest.TestCase):
         model = build_model(self.settings(types={"lotNo": "date"}), self.catalog("C_LOT"))
         self.assertEqual(model.kind_of("C_LOT"), "date")
 
+    def test_number_kind_and_manual_override(self):
+        catalog = (DbColumn("C_LOT"), DbColumn("W", looks_number=True), DbColumn("D", looks_date=True), DbColumn("N", looks_number=True))
+        model = build_model(self.settings(types={"N": "text", "W": "number"}), catalog)
+        kinds = {c.id: (c.kind, c.auto_kind, c.manual) for c in model.columns}
+        self.assertEqual(kinds["W"], ("number", "number", True))     # 自動と同じでも、書けば手動
+        self.assertEqual(kinds["N"], ("text", "number", True))
+        self.assertEqual(kinds["D"], ("date", "date", False))
+        self.assertEqual(kinds["C_LOT"], ("text", "text", False))   # 固定列は自動では文字列
+
     def test_version_changes_with_key(self):
         catalog = self.catalog("C_LOT", "C_DUE")
         first = build_model(self.settings(), catalog)
         second = build_model(self.settings(recordKey=["due"]), catalog)
         self.assertNotEqual(first.version, second.version)
+
+
+class SqlFunctionsTest(unittest.TestCase):
+    """数値の読み方・文字の条件・曖昧な比べ方（sql_functions.py。画面のサンプルのモードも同じ決まり）"""
+
+    def test_numbers(self):
+        cases = {"1,234": 1234.0, "１２": 12.0, " -3.5 ": -3.5, "007": 7.0, 5: 5.0, 2.5: 2.5,
+                 "1.00mm": None, "1,23": None, "": None, None: None, "2026-10-01": None}
+        for value, expected in cases.items():
+            with self.subTest(value=value):
+                self.assertEqual(sql_functions.to_number(value), expected)
+        self.assertFalse(sql_functions.looks_number("007"))     # 先頭が 0 の番号は自動では数値にしない
+        self.assertTrue(all(sql_functions.looks_number(v) for v in ("0", "0.5", "10", "1,000", 3)))
+
+    def test_text_conditions(self):
+        match = sql_functions.text_matches
+        self.assertTrue(match("LOT-2026-00012", "contains", "LOT2026 0012", True))     # 記号を無視・空白で区切った語をすべて含む
+        self.assertFalse(match("LOT-2026-00012", "contains", "LOT2026-0012", False))   # 記号を無視しない
+        self.assertTrue(match("LOT-2026-00012", "contains", "lot-2026", False))        # 大文字小文字は区別しない
+        self.assertTrue(match("ＬＯＴ－１", "starts", "lot1", True))                     # 全角も同じ
+        self.assertTrue(match("サンプル工業", "ends", "工業", True))
+        self.assertTrue(match(None, "not_contains", "工業", True))                       # 空欄は「〜ない」に当てはまる
+        self.assertFalse(match("架空商事", "not_contains", "商事 金属", True))           # どの語も含まない
+        self.assertTrue(match("架空商事", "not_starts", "見本", True))
+        self.assertTrue(match("A-1", "not_ends", "2", True))
+        self.assertTrue(match("x", "contains", "--", True))                              # 比べる文字がなければ条件なし
+
+    def test_catalog_detects_numbers_without_codes(self):
+        conn = sql_functions.register(sqlite3.connect(":memory:"))
+        conn.execute('CREATE TABLE t ("NUM", "CODE", "MIX", "DATE")')
+        conn.executemany("INSERT INTO t VALUES (?, ?, ?, ?)", [("1,234", "007", "1", "2026-10-01"), (5, "12", "a", None), (None, "3", "2", "20261002")])
+        catalog = {c.name: (c.looks_date, c.looks_number) for c in read_catalog(conn, "t")}
+        self.assertEqual(catalog, {"NUM": (False, True), "CODE": (False, False), "MIX": (False, False), "DATE": (True, False)})
 
 
 class CacheTest(BackendTestCase):
@@ -465,7 +510,7 @@ class SearchTest(BackendTestCase):
         context = AppContext(self.config, self.cache, self.service, SILENT)
         view = commands.dispatch("get_view_config", context, {})
         self.assertEqual([c["label"] for c in view["columns"]], [COLUMNS[n] for n in ROLE_FIELDS] + EXTRA_FIRST + EXTRA_LAST)
-        self.assertEqual(view["columns"][0], {"id": "C_LOTNO", "label": "C_LOTNO", "kind": "text", "role": True})
+        self.assertEqual(view["columns"][0], {"id": "C_LOTNO", "label": "C_LOTNO", "kind": "text", "autoKind": "text", "manual": False, "role": True})
         self.assertEqual((view["recordKey"], view["searchColumn"]), (["C_LOTNO", "C_BOXNO"], "C_LOTNO"))
         self.assertEqual(view["defaultSort"], {"field": P["factoryDeliveryDate"], "order": "asc"})
         self.assertEqual(view["aliases"]["lotNo"], "C_LOTNO")
@@ -479,6 +524,17 @@ class SearchTest(BackendTestCase):
             self.search("LOT", sortKey="NO_SUCH")
         with self.assertRaises(AppError):
             self.search("LOT", sortKey="lotNo")  # 別名は列の id ではない
+
+    def test_number_column_is_detected_and_sorted_numerically(self):
+        self.assertEqual(self.service.model.kind_of("注文板厚"), "number")
+        self.assertEqual(self.service.model.kind_of(P["orderNo"]), "text")
+        conn = sqlite3.connect(self.source)
+        conn.execute('UPDATE "t_lot" SET "注文板厚" = \'10.00\' WHERE "C_LOTNO" = \'LOT-001\'')
+        conn.commit()
+        conn.close()
+        self.cache.refresh()
+        items = self.search("LOT", sortKey="注文板厚", sortOrder="asc")["items"]
+        self.assertEqual([i["注文板厚"] for i in items], ["1.00", "1.00", "1.00", "2.00", "10.00"])  # 文字の順なら 10.00 が先
 
     def test_new_db_column_appears_after_refresh(self):
         before = self.service.model.version
@@ -609,6 +665,47 @@ class RecordKeyTest(BackendTestCase):
         self.assertFalse(os.path.isfile(os.path.join(self.local_dir, "schema.local.json.bak")))  # 書き込んでいない
 
 
+class ColumnTypeTest(BackendTestCase):
+    """列の種類の手動の指定（update_column_type）"""
+
+    def setUp(self):
+        super().setUp()
+        self.cache.refresh()
+        self.context = AppContext(self.config, self.cache, self.service, SILENT)
+        self.context.type_service = ColumnTypeService(self.context, self.root, None)
+
+    def call(self, payload):
+        return commands.dispatch("update_column_type", self.context, payload)
+
+    def saved_types(self):
+        with open(os.path.join(self.local_dir, "schema.local.json"), encoding="utf-8") as fp:
+            return json.load(fp).get("types")
+
+    def test_manual_and_back_to_auto(self):
+        result = self.call({"column": "注文板厚", "kind": "text"})
+        self.assertEqual((result["kind"], result["manual"]), ("text", True))
+        self.assertEqual(self.saved_types(), {"注文板厚": "text"})
+        self.assertEqual(self.context.lot_service.model.kind_of("注文板厚"), "text")
+        result = self.call({"column": "注文板厚", "kind": "auto"})
+        self.assertEqual((result["kind"], result["manual"]), ("number", False))
+        self.assertEqual(self.saved_types(), {})
+
+    def test_auto_also_removes_alias_setting(self):
+        self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS), "types": {"factoryDeliveryDate": "text"}})
+        self.context.config = load_settings(self.root)
+        self.context.lot_service.config = self.context.config
+        self.assertEqual(self.context.lot_service.model.kind_of(P["factoryDeliveryDate"]), "text")
+        self.call({"column": P["factoryDeliveryDate"], "kind": "auto"})
+        self.assertEqual(self.saved_types(), {})
+        self.assertEqual(self.context.lot_service.model.kind_of(P["factoryDeliveryDate"]), "date")
+
+    def test_invalid(self):
+        for payload in ({"column": "NO_SUCH", "kind": "text"}, {"column": "注文板厚", "kind": "money"}):
+            with self.subTest(payload=payload), self.assertRaises(AppError) as ctx:
+                self.call(payload)
+            self.assertEqual(ctx.exception.code, "INVALID_REQUEST")
+
+
 class FilterTest(BackendTestCase):
     """絞り込み。今日は 2026-10-03 に固定する。
     工場納期（factoryDeliveryDate）は types に書かず、値から日付の列と判定させる（3 種類の書き方が混ざる）。"""
@@ -679,6 +776,45 @@ class FilterTest(BackendTestCase):
         lots, _ = self.lots({P["factoryDeliveryDate"]: {"type": "values", "values": ["20261020"]}})
         self.assertEqual(lots, ["LOT-COMPACT"])
 
+    def test_text_conditions(self):
+        lot = P["lotNo"]
+        cases = [
+            ({"op": "contains", "value": "LOT100A"}, ["LOT_100%-A"]),                       # 記号・空白を無視（既定）
+            ({"op": "contains", "value": "LOT100A", "fuzzy": False}, []),
+            ({"op": "contains", "value": "lot dup"}, ["LOT-DUP", "LOT-DUP"]),                # 空白で区切った語をすべて含む
+            ({"op": "starts", "value": "lot-0"}, ["LOT-001", "LOT-002"]),
+            ({"op": "ends", "value": "a"}, ["LOT_100%-A"]),
+            ({"op": "not_starts", "value": "LOT"}, ["試作-α-001"]),
+            ({"op": "not_contains", "value": "LOT 試作"}, []),
+            ({"op": "not_ends", "value": "T"}, None),
+        ]
+        for spec, expected in cases:
+            with self.subTest(spec=spec):
+                lots, result = self.lots({lot: dict(spec, type="text")})
+                if expected is None:
+                    self.assertEqual(result["totalCount"], len(ROWS) + len(self.EXTRA) - 1)   # T で終わるのは LOT-COMPACT だけ
+                else:
+                    self.assertEqual(lots, expected)
+        lots, _ = self.lots({P["customerName"]: {"type": "text", "op": "not_contains", "value": "工業"}})
+        self.assertIn("LOT-BLANK", lots)            # 空欄は「含まない」に当てはまる
+        self.assertNotIn("LOT-001", lots)
+
+    def test_number_range_after_manual_type(self):
+        # 注文板厚 は "-" を含むため自動では文字列。手動で数値にすると範囲で絞り込める（数値として読めない値は除く）
+        self.assertEqual(self.service.model.kind_of("注文板厚"), "text")
+        self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS), "types": {"注文板厚": "number"}})
+        self.reload()
+        from datetime import date
+        self.service = LotService(self.config, self.cache, SILENT, today=lambda: date(2026, 10, 3))
+        lots, _ = self.lots({"注文板厚": {"type": "number", "min": 1.5}})
+        self.assertEqual(sorted(lots), ["LOT-002", "LOT-BLANK", "試作-α-001"])
+        lots, _ = self.lots({"注文板厚": {"type": "number", "min": 1, "max": 1}})
+        self.assertEqual(len(lots), 4)
+        lots, _ = self.lots({"注文板厚": {"type": "values", "values": ["2.00"]}})   # 数値の列でも値から選べる
+        self.assertEqual(lots, ["LOT-002"])
+        items = self.service.list({"sortKey": "注文板厚", "sortOrder": "desc"})["items"]
+        self.assertEqual([i["注文板厚"] for i in items][:3], ["5", "5.00", "2.00"])  # 同じ値は固定列の順
+
     def test_filters_combine_with_keyword(self):
         lots, _ = self.lots({P["cfStatus"]: {"type": "values", "values": ["仕掛中"]}}, keyword="LOT-", matchMode="partial")
         self.assertEqual(lots, ["LOT-002", "LOT-SLASH", "LOT-COMPACT"])
@@ -712,6 +848,10 @@ class FilterTest(BackendTestCase):
             {due: {"type": "date", "mode": "absolute", "from": "2026-13-01"}},
             {due: {"type": "date", "mode": "absolute", "from": "2026-10-10", "to": "2026-10-01"}},
             {due: {"type": "date", "mode": "relative", "fromDays": 99999}},
+            {P["lotNo"]: {"type": "text", "op": "like", "value": "x"}},
+            {P["lotNo"]: {"type": "text", "op": "contains", "value": "x", "fuzzy": "yes"}},
+            {P["lotNo"]: {"type": "number", "min": 1}},                       # 文字列の列に数値の範囲
+            {due: {"type": "text", "op": "contains", "value": "2026"}},         # 日付の列に文字の条件
         ]
         for filters in bad:
             with self.subTest(filters=filters), self.assertRaises(AppError) as ctx:

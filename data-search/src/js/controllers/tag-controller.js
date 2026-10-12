@@ -44,7 +44,7 @@
     Object.entries(filters || {}).forEach(([name, spec]) => {
       const fieldId = DS.domain.migrateId(name);
       const field = DS.domain.fields.get(fieldId);
-      if (field && field.filter && spec && spec.type === field.filter) result[fieldId] = spec;
+      if (DS.domain.filters.allowed(field, spec)) result[fieldId] = spec;
     });
     return DS.domain.filters.compact(result);
   }

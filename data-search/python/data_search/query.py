@@ -41,8 +41,11 @@ def blank_expression(column):
 class QueryBuilder:
     """
     search  … None または (DB の列名, keyword, matchMode)
-    filters … [(DB の列名, "values", [値 or None, ...]) / (DB の列名, "date", (from, to))]
-              date の from / to は 'YYYY-MM-DD' か None（日付は呼び出し側で確定させる）
+    filters … [(DB の列名, 種類, 条件)]
+              "values" … [値 or None, ...]（None は空欄）
+              "date"   … (from, to)。'YYYY-MM-DD' か None（日付は呼び出し側で確定させる）
+              "number" … (min, max)。数値か None（以上・以下）
+              "text"   … (op, needle, fuzzy)。判定は SQLite に足した ds_text（sql_functions.py）
     """
 
     def __init__(self, table_name, model):
@@ -73,6 +76,19 @@ class QueryBuilder:
             if any(value is None for value in data):
                 parts.append(blank_expression(column))
             return "(" + " OR ".join(parts) + ")", params
+        if kind == "number":
+            low, high = data
+            parts, params = [f"ds_number({column}) IS NOT NULL"], []
+            if low is not None:
+                parts.append(f"ds_number({column}) >= ?")
+                params.append(low)
+            if high is not None:
+                parts.append(f"ds_number({column}) <= ?")
+                params.append(high)
+            return "(" + " AND ".join(parts) + ")", params
+        if kind == "text":
+            op, needle, fuzzy = data
+            return f"ds_text({column}, ?, ?, ?) = 1", [op, needle, 1 if fuzzy else 0]
         # date
         start, end = data
         expression = date_expression(column)
@@ -103,7 +119,12 @@ class QueryBuilder:
         return (" WHERE " + " AND ".join(parts)) if parts else "", params
 
     def _sort_expression(self, name):
-        return date_expression(self.columns[name]) if self.model.kind_of(name) == "date" else self.columns[name]
+        kind = self.model.kind_of(name)
+        if kind == "date":
+            return date_expression(self.columns[name])
+        if kind == "number":
+            return f"ds_number({self.columns[name]})"
+        return self.columns[name]
 
     # ── 文 ──
     def count(self, search, filters):
@@ -114,10 +135,11 @@ class QueryBuilder:
         where, params = self._where(search, filters)
         direction = "DESC" if sort_order == "desc" else "ASC"
         # 空欄は昇順・降順どちらでも最後に回す
-        order_terms = [
-            f"{blank_expression(self.columns[sort_key])} ASC",
-            f"{self._sort_expression(sort_key)} {direction}",
-        ]
+        order_terms = [f"{blank_expression(self.columns[sort_key])} ASC"]
+        if self.model.kind_of(sort_key) == "number":
+            # 数値の列で数値として読めない値は、空欄の手前（数値の後ろ）に回す
+            order_terms.append(f"(ds_number({self.columns[sort_key]}) IS NULL) ASC")
+        order_terms.append(f"{self._sort_expression(sort_key)} {direction}")
         order_terms += [f"{self.columns[name]} ASC" for name in self.model.record_key if name != sort_key]
         sql = (
             f"SELECT {self.select_list} FROM {self.table}{where} "

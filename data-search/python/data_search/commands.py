@@ -89,6 +89,12 @@ def check_record_key(ctx, payload):
     return ctx.record_service.check(payload)
 
 
+@command("update_column_type")
+def update_column_type(ctx, payload):
+    """列の種類（auto / date / number / text）を schema.local.json の types に保存し、列の決まりを差し替える。"""
+    return ctx.type_service.update(payload)
+
+
 @command("update_record_settings")
 def update_record_settings(ctx, payload):
     """固定列と番号で探す列を schema.local.json に保存し、列の決まりを差し替える。"""

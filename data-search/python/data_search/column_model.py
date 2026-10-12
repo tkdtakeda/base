@@ -4,8 +4,9 @@
     設定の名前 … DB の列名か、schema.columns に書いた別名（論理名）のどちらでもよい。
                  DB に同じ名前の列があればその列、なければ別名として読み替える（DB にない列は使わない）
     並び順     … 固定列 → 番号で探す列 → 別名のある列（schema.columns の順）→ ほかの列（DB の順）
-    種類       … date / text。schema.types の指定が優先。指定がなければ値から判定する
-                 （固定列・番号で探す列は、数字だけの番号を日付と取り違えないよう text）
+    種類       … date / number / text。手動の指定（schema.types。画面の見出しの小窓から選べる）が優先。
+                 指定がなければ値から判定する（自動）。固定列・番号で探す列は、番号を日付や数値と
+                 取り違えないよう、自動では text
 
 DB にない名前を設定に書いても止めず、notices（画面の「データ」パネルの注意）で知らせる。
 固定列が DB にないときは record_key が空（ready=False）になり、画面は列を選ぶよう案内する。
@@ -20,14 +21,20 @@ SEARCH_PATH = "schema.searchColumn"
 CHOOSE_ACTION = "画面左の「データ」→「固定列」で、DB の列から選んでください。"
 
 
+KINDS = ("date", "number", "text")
+
+
 @dataclass(frozen=True)
 class Column:
     id: str
-    kind: str    # "text" / "date"
-    role: bool   # 主な項目（詳細で先にまとめる）
+    kind: str          # 使う種類 "date" / "number" / "text"
+    role: bool         # 主な項目（詳細で先にまとめる）
+    auto_kind: str = "text"  # 自動にしたときの種類
+    manual: bool = False     # 手動で種類を決めたか
 
     def public(self):
-        return {"id": self.id, "label": self.id, "kind": self.kind, "role": self.role}
+        return {"id": self.id, "label": self.id, "kind": self.kind, "autoKind": self.auto_kind,
+                "manual": self.manual, "role": self.role}
 
 
 @dataclass(frozen=True)
@@ -96,6 +103,12 @@ class _Resolver:
         return self.aliases.get(name)
 
 
+def setting_names_for(settings, db_names, column):
+    """種類の指定（schema.types）のキーのうち、その列を指すもの（別名で書いたものも含む）。"""
+    resolve = _Resolver(settings.aliases, db_names)
+    return [name for name in settings.types if resolve(name) == column]
+
+
 def missing_key_columns(settings, db_names):
     """固定列のうち、DB にない名前（接続テストで、保存の前に知らせるため）。"""
     resolve = _Resolver(settings.aliases, db_names)
@@ -141,19 +154,18 @@ def build_model(settings, catalog):
         else:
             explicit[physical] = kind
     identifiers = set(record_key) | ({search_column} if search_column else set())
-    looks_date = {column.name: column.looks_date for column in catalog}
+    detected = {column.name: ("date" if column.looks_date else "number" if column.looks_number else "text") for column in catalog}
 
-    def kind_of(name):
-        if name in explicit:
-            return explicit[name]
-        return "date" if looks_date.get(name) and name not in identifiers else "text"
+    def auto_kind_of(name):
+        return "text" if name in identifiers else detected.get(name, "text")
 
     # 並び：役割のある列を先頭に（固定列は左端に固定するため、必ず最初）
     leading = list(record_key) + ([search_column] if search_column else []) + list(resolve.aliases.values())
     leading = list(dict.fromkeys(leading))
     order = leading + [name for name in db_names if name not in leading]
     role = set(leading)
-    columns = tuple(Column(name, kind_of(name), name in role) for name in order)
+    columns = tuple(Column(name, explicit.get(name, auto_kind_of(name)), name in role, auto_kind_of(name), name in explicit)
+                    for name in order)
 
     # 既定の並べ替え：書いた列がなければ固定列（なければ先頭の列）
     sort_name, sort_order = settings.default_sort
@@ -172,7 +184,7 @@ def build_model(settings, catalog):
         if physical:
             fields[physical] = dict(fields.get(physical, {}), **options)
 
-    signature = json.dumps([[(c.id, c.kind) for c in columns], record_key, search_column], ensure_ascii=False)
+    signature = json.dumps([[(c.id, c.kind, c.manual) for c in columns], record_key, search_column], ensure_ascii=False)
     return ColumnModel(
         columns=columns,
         record_key=record_key,

@@ -1,6 +1,6 @@
 /* =========================================================
-   絞り込みの部品（種類ごとに 1 つ）。見出しの小窓（column-filter.js）と
-   脇のパネル（filter-panel.js）の両方で、同じ部品を使う。
+   絞り込みの部品（条件の種類ごとに 1 つ：値から選ぶ・日付の範囲・数値の範囲・文字の条件）。
+   見出しの小窓（column-filter.js）と脇のパネル（filter-panel.js）で、同じ部品を使う（まとめ役は filter-body.js）。
 
      DS.filterEditors.register({ id: 種類, mount(container, field, ctx) → { load(state), draw(state), focus() } })
        load  … 値の一覧などを取り直して描く（条件・検索・データが変わったとき）
@@ -253,6 +253,130 @@
       }
 
       return { load: draw, draw, focus: () => { const button = presetBox.querySelector('.preset'); if (button) button.focus(); } };
+    },
+  });
+
+  // ── 文字の条件（含む・始まる・終わる・含まない・始まらない・終わらない） ─────────────
+  const TEXT_WAIT_MS = 400; // 打ち終えてから一覧に反映するまで（Enter ならすぐ）
+  const TEXT_HINTS = {
+    contains: '空白で区切ると、すべての語を含む行を探します。',
+    not_contains: '空白で区切ると、どの語も含まない行を探します（空欄の行も入ります）。',
+    starts: '入れた文字全体で比べます。',
+    ends: '入れた文字全体で比べます。',
+    not_starts: '入れた文字全体で比べます（空欄の行も入ります）。',
+    not_ends: '入れた文字全体で比べます（空欄の行も入ります）。',
+  };
+
+  editors.register({
+    id: 'text',
+    mount(container, field, ctx) {
+      const type = DS.domain.filterTypes.get('text');
+      const input = el('input', { type: 'text', className: 'input input--sm', autocomplete: 'off', spellcheck: 'false', maxlength: '100',
+        placeholder: '文字を入れる（例：LOT 0012）', 'aria-label': `${field.label}の条件の文字` });
+      const opSelect = el('select', { className: 'input input--sm', 'aria-label': `${field.label}の条件の種類` },
+        type.ops.map((op) => el('option', { value: op.id, text: op.label })));
+      const fuzzyBox = el('input', { type: 'checkbox' });
+      fuzzyBox.checked = true;
+      const fuzzy = el('label', { className: 'check check--inline', title: '例：LOT2026-0012 と LOT-2026-00012 を同じとみなす' }, [fuzzyBox, el('span', { text: '記号・空白を無視する' })]);
+      const hint = el('p', { className: 'pane-note' });
+      container.append(input, el('div', { className: 'text-cond__row' }, [opSelect, fuzzy]), hint);
+
+      const current = () => {
+        const spec = ctx.store.get().filters[field.id];
+        return spec && spec.type === 'text' ? spec : null;
+      };
+      function apply() {
+        const spec = { type: 'text', op: opSelect.value, value: input.value, fuzzy: fuzzyBox.checked };
+        const before = current();
+        if (!type.isActive(spec) && !before) return; // 空のまま：ほかの絞り込み（値から選ぶ）を消さない
+        ctx.search.setFilter(field.id, type.isActive(spec) ? spec : type.empty());
+        DS.util.flash(input);
+      }
+      const applyLater = DS.util.debounce(apply, TEXT_WAIT_MS);
+
+      input.addEventListener('input', applyLater);
+      input.addEventListener('keydown', (event) => {
+        if (event.isComposing || event.keyCode === 229 || event.key !== 'Enter') return;
+        event.preventDefault();
+        apply();
+      });
+      opSelect.addEventListener('change', () => {
+        hint.textContent = TEXT_HINTS[opSelect.value];
+        if (DS.util.normalize(input.value)) apply();
+      });
+      fuzzyBox.addEventListener('change', () => { if (DS.util.normalize(input.value)) apply(); });
+
+      function draw() {
+        const spec = current();
+        if (spec && document.activeElement !== input) {
+          input.value = spec.value;
+          opSelect.value = spec.op;
+          fuzzyBox.checked = spec.fuzzy !== false;
+        }
+        hint.textContent = TEXT_HINTS[opSelect.value];
+      }
+
+      return { load: draw, draw, focus: () => input.focus() };
+    },
+  });
+
+  // ── 数値の範囲（以上・以下） ─────────────────────────────────
+  editors.register({
+    id: 'number',
+    mount(container, field, ctx) {
+      const numberInput = (label) => el('input', { type: 'text', inputmode: 'decimal', className: 'input input--sm input--range mono', maxlength: '20',
+        autocomplete: 'off', 'aria-label': `${field.label}の${label}` });
+      const minInput = numberInput('いくつ以上');
+      const maxInput = numberInput('いくつ以下');
+      const applyButton = el('button', { type: 'button', className: 'btn btn--secondary btn--sm' }, [el('span', { text: 'この範囲にする' })]);
+      const message = el('p', { className: 'tag-editor__msg', 'aria-live': 'polite' });
+      container.append(
+        el('div', { className: 'range-row' }, [minInput, el('span', { text: '以上' }), el('span', { className: 'range-row__sep', text: '〜' }), maxInput, el('span', { text: '以下' })]),
+        el('p', { className: 'pane-note', text: '片方だけでもかまいません。数値として読めない値（空欄・単位つきなど）は入りません。' }),
+        applyButton,
+        message,
+      );
+      DS.util.autoAdvance([minInput, maxInput, applyButton]);
+
+      const toNumber = DS.domain.filters.toNumber;
+      const read = (input) => {
+        const text = input.value.trim();
+        if (!text) return { ok: true, value: null };
+        const value = toNumber(text);
+        return value === null ? { ok: false } : { ok: true, value };
+      };
+
+      applyButton.addEventListener('click', () => {
+        const low = read(minInput);
+        const high = read(maxInput);
+        if (!low.ok || !high.ok) {
+          message.textContent = '数値で入れてください（例：1.5、1,000）';
+          DS.util.flash(message);
+          (low.ok ? maxInput : minInput).focus();
+          return;
+        }
+        if (low.value !== null && high.value !== null && low.value > high.value) {
+          message.textContent = '「以上」が「以下」より大きくなっています';
+          DS.util.flash(message);
+          minInput.focus();
+          return;
+        }
+        message.textContent = '';
+        // 全角・桁区切りで入れても、読み取った数に書き直して見せる（反映した値が分かるように）
+        minInput.value = low.value === null ? '' : String(low.value);
+        maxInput.value = high.value === null ? '' : String(high.value);
+        ctx.search.setFilter(field.id, { type: 'number', min: low.value, max: high.value });
+        DS.util.flash(applyButton);
+      });
+
+      function draw(state) {
+        const spec = state.filters[field.id];
+        if (!spec || spec.type !== 'number' || [minInput, maxInput].includes(document.activeElement)) return;
+        minInput.value = spec.min === null || spec.min === undefined ? '' : String(spec.min);
+        maxInput.value = spec.max === null || spec.max === undefined ? '' : String(spec.max);
+      }
+
+      return { load: draw, draw, focus: () => minInput.focus() };
     },
   });
 

@@ -1246,6 +1246,7 @@ body.is-resizing { cursor: col-resize; user-select: none; }
   <script src="js/views/source-editor.js"></script>
   <script src="js/views/record-key-editor.js"></script>
   <script src="js/views/filter-editors.js"></script>
+  <script src="js/views/filter-body.js"></script>
   <script src="js/views/column-filter.js"></script>
   <script src="js/panels/filter-panel.js"></script>
   <script src="js/panels/panels.js"></script>
@@ -1292,7 +1293,7 @@ body.is-resizing { cursor: col-resize; user-select: none; }
   }
 
   const COMMANDS = ['get_view_config', 'search_lots', 'list_lots', 'get_filter_values', 'get_lot_detail', 'refresh_cache', 'get_cache_status', 'get_application_info',
-    'get_data_source', 'test_data_source', 'update_data_source', 'check_record_key', 'update_record_settings'];
+    'get_data_source', 'test_data_source', 'update_data_source', 'check_record_key', 'update_record_settings', 'update_column_type'];
 
   function createClient(adapter) {
     return {

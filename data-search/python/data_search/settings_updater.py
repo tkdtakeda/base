@@ -24,12 +24,12 @@ def use_config(context, config):
     context.lot_service.config = config
 
 
-def save_local_values(context, app_root, local_dir, kind, values):
-    """values（{path: 値}）を <kind>.local.json に書き、読み直して差し替える。書き込んだファイルのパスを返す。"""
+def save_local_values(context, app_root, local_dir, kind, values, delete=()):
+    """values（{path: 値}）を <kind>.local.json に書き（delete の path は消す）、読み直して差し替える。書き込んだファイルのパスを返す。"""
     target = local_file(local_dir, kind)
     existed = os.path.isfile(target)
     try:
-        set_local_values(local_dir, kind, values)
+        set_local_values(local_dir, kind, values, delete)
     except (OSError, ValueError) as exc:
         raise AppError("SETTINGS_WRITE_FAILED", f"write failed: {type(exc).__name__}") from exc
     try:

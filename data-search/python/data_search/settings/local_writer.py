@@ -18,8 +18,8 @@ def set_local_value(local_dir, kind, path, value):
     return set_local_values(local_dir, kind, {path: value})
 
 
-def set_local_values(local_dir, kind, values):
-    """{path: 値} をまとめて 1 回で書き込む（控えの .bak も 1 回だけ作る）。書き込んだファイルのパスを返す。"""
+def set_local_values(local_dir, kind, values, delete=()):
+    """{path: 値} をまとめて 1 回で書き込み、delete の path を消す（控えの .bak も 1 回だけ作る）。書き込んだファイルのパスを返す。"""
     target = local_file(local_dir, kind)
     data = {}
     if os.path.isfile(target):
@@ -37,6 +37,12 @@ def set_local_values(local_dir, kind, values):
                 node[key] = child
             node = child
         node[path[-1]] = value
+    for path in delete:
+        node = data
+        for key in path[:-1]:
+            node = node.get(key) if isinstance(node, dict) else None
+        if isinstance(node, dict):
+            node.pop(path[-1], None)
     os.makedirs(local_dir, exist_ok=True)
     temp = target + ".writing"
     with open(temp, "w", encoding="utf-8") as fp:

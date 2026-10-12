@@ -40,6 +40,7 @@ class AppContext:
     logger: object
     source_service: object = None   # 読み込み先の確認・変更（SourceService）。作成後に入れる
     record_service: object = None   # 固定列の確認・変更（RecordService）。作成後に入れる
+    type_service: object = None     # 列の種類の手動の指定（ColumnTypeService）。作成後に入れる
 
 
 class RequestHandler(SimpleHTTPRequestHandler):

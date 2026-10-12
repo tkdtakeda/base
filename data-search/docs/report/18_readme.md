@@ -148,14 +148,17 @@ config/
 
 - **列は DB のテーブルから自動で読み取り、DB の列名をそのまま見出し・詳細・絞り込みの名前（列の id）にします**（設定に表示名は書かない）。
 - 並び順：固定列 → 番号で探す列 → 別名（`schema.columns`）のある列 → 残りは DB の列の順。
-- 列の種類：日付（日付の範囲で絞り込む・日付として並べ替える）か、文字（値から選んで絞り込む）。**値から自動で判定**します（空でない値がすべて `YYYY-MM-DD`・`YYYY/MM/DD`・`YYYYMMDD` の形なら日付。固定列・探す列は番号の取り違えを防ぐため文字）。
+- 列の種類：**日付・数値・文字列**の 3 つ。**値から自動で判定**し、見出しの小窓の「種類」で**手動でも選べます**（`schema.local.json` の `types` に保存。「自動」で消す）。
+  - 日付：空でない値がすべて `YYYY-MM-DD`・`YYYY/MM/DD`・`YYYYMMDD` の形。日付の範囲で絞り込み、日付として並べ替える。
+  - 数値：空でない値がすべて数値（桁区切りのカンマ可。単位つきは不可）。**先頭が 0 の番号（`007` など）がある列は自動では数値にしない**。範囲・値で絞り込み、数の大きさで並べ替える（一覧では右寄せ）。
+  - 文字列：それ以外。値・条件（含む など）で絞り込む。固定列・探す列は、番号の取り違えを防ぐため自動では文字列。
 - 設定に書くのは「役割」だけです。名前は **DB の列名**で書けます（別名を `schema.columns` に書いた場合は、その論理名でもよい）。
 
 | 決めること | 書く場所 |
 |---|---|
 | 固定列（レコードキー。行を 1 件に決める 1〜3 列。標準はロット番号＋BOX番号。一覧の左端に固定し、見出しに鍵のアイコン） | `schema.recordKey`（画面の「データ」→「固定列」で選んで保存できる） |
 | 番号で探す列（上部バーの入力欄） | `schema.searchColumn`（`null` なら recordKey の 1 つ目。画面でも選べる） |
-| 列の種類（自動の判定を変えたいときだけ） | `schema.types`（`"date"` か `"text"`） |
+| 列の種類（自動の判定を変えたいときだけ） | `schema.types`（`"date"`・`"number"`・`"text"`。見出しの小窓の「種類」で選ぶと保存される） |
 | 起動時の並び順 | `view.defaultSort`（列がなければ固定列の順） |
 | 最初は隠しておく列 | `view.hiddenColumns`。各自が画面の「表示列」で出し入れでき、選んだ内容はブラウザに保存 |
 | 等幅・コピー・入力例・値の札（任意） | `view.fields.<DB の列名>`（`mono` / `copy` / `example` / `badge`） |
@@ -209,8 +212,18 @@ config/
 ### 絞り込みとタグ
 
 - **どの列でも絞り込める**。見出しの漏斗から開く小窓（列ごと）と、左の「絞り込み」パネル（今の条件の一覧・すべて解除・隠している列への「条件を足す」）は同じ部品。
-- 文字の列は値の一覧から複数選択（件数つき・空欄も選べる）。値が多い列（200 個を超える）は、上の欄に打つとデータ全体から探す。数値で入っている値も、一覧に出た文字のまま選べる。
-- 日付の列（値から自動で判定）は「今日より前／今日／今日〜7 日後／今日〜30 日後／7 日前〜今日」のほか、今日からの日数や日付そのもので指定できる。
+- 列の種類で使える絞り込みが決まる（1 つの列で有効なのは 1 つ。タブで切り替え）。
+
+  | 種類 | 絞り込み |
+  |---|---|
+  | 文字列 | **値から選ぶ**（複数選択・件数つき・空欄も選べる）／**条件で絞る**（含む・で始まる・で終わる・含まない・で始まらない・で終わらない） |
+  | 数値 | **範囲**（以上・以下。片方だけでもよい。数値として読めない値は除く）／**値から選ぶ** |
+  | 日付 | **日付の範囲** |
+
+- 値が多い列（200 個を超える）は、上の欄に打つとデータ全体から探す。数値で入っている値も、一覧に出た文字のまま選べる。
+- 条件で絞るときは「**記号・空白を無視する**」（最初は ON）：英数字・日本語以外の文字を取り除いて比べる（`LOT2026-0012` と `LOT-2026-00012` を同じとみなす）。大文字小文字・全角半角はいつも区別しない。
+  「含む・含まない」は空白で区切ると複数の語で探す（含む＝すべての語を含む／含まない＝どの語も含まない）。「〜ない」には空欄の行も入る（Excel と同じ）。
+- 日付は「今日より前／今日／今日〜7 日後／今日〜30 日後／7 日前〜今日」のほか、今日からの日数や日付そのもので指定できる。
   **今日からの日数で決めたタグは、毎日その日を基準に絞り込む**（翌月も使える）。
 - 列どうしは「かつ」、同じ列の中は「または」。番号の検索とも「かつ」。
 - 今のデータにない列の条件を持つタグは、その条件を外して絞り込む（タグそのものは消さない。別の読み込み先に戻すとまた使える）。
@@ -253,6 +266,8 @@ data-search/
 │  │  ├─ column_catalog.py        … DB の列と、値から見た種類（日付か）
 │  │  ├─ column_model.py          … 設定と DB の列から、列の決まり（並び・種類・固定列・探す列・注意）を作る
 │  │  ├─ record_service.py        … 固定列の確認・保存
+│  │  ├─ type_service.py          … 列の種類（手動）の保存
+│  │  ├─ sql_functions.py         … SQLite に足す関数（数値の読み方・文字の条件・記号を無視した比べ方）
 │  │  └─ …                        … キャッシュ・検索・HTTP など
 │  ├─ tools/make_dummy_db.py      … ダミーの共有 SQLite と config/dummy を作る
 │  ├─ tools/sample_columns.json   … ダミーと画面だけのモードが使う列の一覧（実データとは無関係）
@@ -270,7 +285,7 @@ data-search/
 | 表示する列 | 何もしない（DB に列を足せば、データの更新で自動で表示される） |
 | 絞り込める列 | 何もしない（全列で絞り込める。日付の列は値から自動で判定。変えたいときだけ `schema.types`） |
 | 値の札の色分け | `view` の `fields.<DB の列名>.badge` |
-| 絞り込みの種類（例：数値の範囲） | `js/domain/filters.js` の `filterTypes.register()` と `views/filter-editors.js` の `DS.filterEditors.register()`、Python の `column_model.py`（種類の判定）・`lot_service.py`（`filter_kind`・`parse_filters`）・`query.py` |
+| 絞り込みの種類 | `js/domain/filters.js` の `filterTypes.register()`・`views/filter-editors.js` の `DS.filterEditors.register()`・`domain/fields.js` の `KIND_FILTERS`（どの種類の列で使うか）、Python の `lot_service.py`（`FILTERS_BY_KIND`・`parse_filters`）・`query.py`（必要なら `sql_functions.py`） |
 | 別のツールへ渡すボタン | `DS.handoffs.register({ id, label, icon, send(item) })` で詳細の下にボタンが出る（item は全列。キーは DB の列名。論理名で取るときは `DS.domain.migrateId('lotNo')` で読み替える） |
 | 脇のパネル | `DS.panels.register()` |
 | サンプルのパターン | `js/sample/sample-data.js` の `patterns.register()` |
@@ -294,7 +309,8 @@ Python 版は Rust 版の構成（`05_directory_structure.md`）に合わせて�
 | `column_catalog.py` / `column_model.py` | `models/catalog.rs` / `models/column_model.rs` |
 | `lot_service.py` | `services/lot_service.rs` |
 | `source_check.py` / `source_service.py` / `settings/local_writer.py` / `settings_updater.py` | `cache/source_check.rs` / `services/source_service.rs` / `config/local_writer.rs` / `config/updater.rs` |
-| `record_service.py` | `services/record_service.rs` |
+| `record_service.py` / `type_service.py` | `services/record_service.rs` / `services/type_service.rs` |
+| `sql_functions.py` | `db/functions.rs`（rusqlite の `create_scalar_function` で同じ関数を足す） |
 | `commands.py` | `commands/search.rs`・`commands/cache.rs`・`commands/view.rs`・`commands/source.rs`・`commands/record.rs` |
 | `errors.py` / `logging_setup.py` | `errors/mod.rs` / `logging/mod.rs` |
 | `http_server.py`（Python 版だけ） | 不要（Tauri の invoke に置き換わる） |
@@ -310,13 +326,14 @@ Tauri 版の画面側は `js/api/remote-adapters.js` の `tauri` アダプター
 
 | 命令 | 変更点 | 理由 |
 |---|---|---|
-| `get_view_config`（新規） | 戻り値は DB の全列 `columns: [{ id（DB の列名）, label（同じ）, kind: date/text, role }]`、`recordKey`・`searchColumn`（DB の列名）、`defaultSort`・`hiddenColumns`・`fields`、`aliases`（別名 → DB の列名）、`notices`（設定と DB の食い違い）、`ready`（固定列がそろったか）、`columnsVersion`、`recordSettingsFile`。**テーブル名・パスは含めない** | 列をソースコードにも設定にも固定せず、DB の列名で表示・絞り込みするため |
+| `get_view_config`（新規） | 戻り値は DB の全列 `columns: [{ id（DB の列名）, label（同じ）, kind: date/number/text, autoKind（自動にしたときの種類）, manual（手動か）, role }]`、`recordKey`・`searchColumn`（DB の列名）、`defaultSort`・`hiddenColumns`・`fields`、`aliases`（別名 → DB の列名）、`notices`（設定と DB の食い違い）、`ready`（固定列がそろったか）、`columnsVersion`、`recordSettingsFile`。**テーブル名・パスは含めない** | 列をソースコードにも設定にも固定せず、DB の列名で表示・絞り込みするため |
 | `list_lots`（新規） | 入力は `search_lots` と同じで、番号（`keyword`）は省略可。`filters` を追加。戻り値も同じ形 | 起動時に入力なしで一覧を出し、絞り込むため |
 | `get_filter_values`（新規） | 入力 `{ field（DB の列名）, filters, (番号の検索), match? }`、戻り値 `{ success, field, values: [{ value, count }], truncated, match }`。`match` を渡すとその文字を含む値だけ。日付の列は対象外 | 絞り込みの値を件数つきで見て選ぶため。値が多い列でも探せるように |
 | `search_lots` | **`searchType` は使わない**（探す列は設定の `searchColumn` で 1 つに決まる。送っても無視）。入力に `sortKey`（DB の列名・既定は defaultSort）・`sortOrder`（asc/desc）・`filters`（キーは DB の列名。全列で使える）を追加（省略可） | 番号の検索は 1 列、ほかの列は見出しから絞り込むため |
 | `search_lots` / `list_lots` | 戻り値に `keyword`（正規化後）・`today`（日付の基準日）・`elapsedMs` を追加。`items` は全列（キーは DB の列名） | 画面に根拠（全角→半角・基準日・検索時間）を出すため |
 | `get_lot_detail` | 入力は固定列の `{ DB の列名: 値 }`。戻り値は `{ success, item, duplicated }`。固定列がそろっていなければ `KEY_NOT_READY` | 選んだ列で 1 件に決まるため |
 | `check_record_key`（新規） | 入力 `{ recordKey: [DB の列名 1〜3 個] }`。戻り値 `{ success, recordKey, rowCount, duplicateGroups, duplicateRows, blankRows, unique, example: { values, count } \| null }`。保存しない | 選んだ列で 1 件に決まるかを、保存の前に確かめるため |
+| `update_column_type`（新規） | 入力 `{ column, kind: auto/date/number/text }`。`schema.local.json` の `types` に保存（auto は消す。別名で書いた同じ列の指定も消す）。戻り値 `{ success, saved, column, kind, manual, localFile, message }` | 自動の判定を画面から直すため |
 | `update_record_settings`（新規） | 入力 `{ recordKey, searchColumn? }`。`schema.local.json` の `recordKey`・`searchColumn` に DB の列名で保存し、列の決まりを差し替える（キャッシュは作り直さない）。戻り値 `{ success, saved, recordKey, searchColumn, localFile, message }` | 似た DB でも、画面から列を選び直して使えるように |
 | `get_data_source`（新規） | 戻り値 `{ success, sourcePath, editable, localFile }` | 画面で今の読み込み先を示すため |
 | `test_data_source`（新規） | 入力 `{ sourcePath? }`（省くと今の読み込み先）。戻り値 `{ success, ok, steps: [{ id, label, status: ok/warn/ng/skip, message, action }], rowCount, modifiedAt, normalizedPath }`。`ok` は × がないこと（△ は含む） | 段階ごとに接続を確かめるため |
@@ -337,7 +354,9 @@ Tauri 版の画面側は `js/api/remote-adapters.js` の `tauri` アダプター
 }
 ```
 
-- キーは DB の列名。`type` は列の種類で決まる（日付の列は `date`、ほかは `values`）。
+- キーは DB の列名。`type` は列の種類で使えるもの（日付：`date`／数値：`number`・`values`／文字列：`values`・`text`）。
+- `number`：`{ "type": "number", "min": 1.5, "max": null }`（以上・以下。`null` は制限なし）。
+- `text`：`{ "type": "text", "op": "contains", "value": "LOT 0012", "fuzzy": true }`（`op` は contains / starts / ends / not_contains / not_starts / not_ends。`fuzzy` は記号・空白を無視。判定は SQLite に足した関数 `ds_text`）。
 - `values` の `null` は空欄。日付の `mode` は `relative`（今日を 0 とした日数。片方 `null` で制限なし）か `absolute`（`from` / `to` に `YYYY-MM-DD`）。
 - 相対の日付はバックエンドが「今日」で具体的な日付に直す。
 - 実データの日付は `YYYY-MM-DD`・`YYYY/MM/DD`・`YYYYMMDD`（時刻付きも可）に対応。月日が 1 桁の書き方（`2026/1/5`）は未対応。

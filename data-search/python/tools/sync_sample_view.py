@@ -4,8 +4,8 @@ file:// で開いた画面は JSON ファイルを読めないため、config/sa
 view.sample.json の設定を、本物と同じ決まり（column_model.build_model）で表示定義にして
 src/js/sample/sample-view.js に書き写す。
 DB の列は、ダミーと共通の列の一覧 python/tools/sample_columns.json を使う（実データとは無関係）。
-別名（schema.columns）の DB の列名は sample_columns.json の role から、日付の列は名前が Date で終わる列とする
-（サンプルデータ・ダミーデータは、その列に日付を入れる）。
+別名（schema.columns）の DB の列名は sample_columns.json の role から、日付の列は名前が Date で終わる列、
+数値の列は名前が NUMBER_NAME に当てはまる列とする（サンプルデータ・ダミーデータは、その列に日付・数値を入れる）。
 サンプルの view / schema を変えたら、このスクリプトを実行する（テストで一致を確かめている）。
 
 使い方: python python/tools/sync_sample_view.py
@@ -13,6 +13,7 @@ DB の列は、ダミーと共通の列の一覧 python/tools/sample_columns.jso
 
 import json
 import os
+import re
 import sys
 
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,6 +28,8 @@ from data_search.settings.merge import fill_defaults  # noqa: E402
 SAMPLE_DIR = os.path.join(APP_ROOT, "config", "sample")
 SAMPLE_COLUMNS = os.path.join(APP_ROOT, "python", "tools", "sample_columns.json")
 OUTPUT = os.path.join(APP_ROOT, "src", "js", "sample", "sample-view.js")
+# サンプルデータ（sample-data.js）・ダミーデータ（make_dummy_db.py）が数値を入れる列の名前の形
+NUMBER_NAME = re.compile(r"(Thickness|Width|Length|Weight|Count|Quantity|Time|Gravity)$")
 
 TEMPLATE = """/* =========================================================
    画面だけで試すモード用の表示定義（自動生成。手で直さない）
@@ -55,7 +58,11 @@ def build_sample_view():
         sample_columns = json.load(fp)["columns"]
     physical = {c["role"]: c["name"] for c in sample_columns if "role" in c}
     schema["columns"] = {name: physical[name] for name in schema["columns"] if name in physical}
-    catalog = tuple(DbColumn(c["name"], c.get("role", c["name"]).endswith("Date")) for c in sample_columns)
+    def column_of(entry):
+        name = entry.get("role", entry["name"])
+        return DbColumn(entry["name"], name.endswith("Date"), bool(NUMBER_NAME.search(name)))
+
+    catalog = tuple(column_of(c) for c in sample_columns)
     return build_model(model_settings_of(schema, view), catalog).public()
 
 

@@ -60,7 +60,8 @@
       const text = blank ? '<span class="muted">—</span>' : searched ? highlight(value, request.keyword) : escapeHtml(value);
       // 長い値は「…」で省くため、マウスを乗せると全文が出るようにする
       const title = blank ? '' : ` title="${escapeHtml(value)}"`;
-      return `<td class="${field.mono ? 'mono' : ''}${searched ? ' is-searched' : ''}${pinned}"${title}>${text}</td>`;
+      // 数値の列は右にそろえ、桁を比べやすくする
+      return `<td class="${field.mono ? 'mono' : ''}${field.type === 'number' ? ' num' : ''}${searched ? ' is-searched' : ''}${pinned}"${title}>${text}</td>`;
     }
 
     /** 絞り込み中の列の見出しに印を付ける（色だけでなく、漏斗のボタンを塗りつぶした形でも示す） */

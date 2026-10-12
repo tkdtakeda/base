@@ -423,7 +423,7 @@ from ..fields import MATCH_MODES, SORT_ORDERS
 PLACEHOLDER_PATTERN = re.compile(r"<[^<>]+>")
 LOG_LEVELS = ("debug", "info", "warning", "error")
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost")
-COLUMN_TYPES = ("text", "date")
+COLUMN_TYPES = ("text", "date", "number")
 RECORD_KEY_MAX = 3  # 固定列の数の上限
 BADGE_TONES = ("success", "info", "warning", "danger", "neutral")
 
@@ -579,7 +579,7 @@ def validate_schema(schema, src, config):
         if _blank(name):
             err(path, "列の名前が空です。", "DB の列名か別名を書いてください。")
         if kind not in COLUMN_TYPES:
-            err(path, f"\"{kind}\" は型として使えません。", "text か date にしてください。")
+            err(path, f"\"{kind}\" は型として使えません。", "date（日付）・number（数値）・text（文字列）のどれかにしてください。")
     return issues
 
 
@@ -659,6 +659,7 @@ import os
 import sqlite3
 
 from .errors import AppError
+from . import sql_functions
 from .query import quote_identifier
 
 
@@ -692,12 +693,12 @@ def validate_cache_file(path, table_name):
 
 
 def open_readonly(path):
-    """ローカルの SQLite を読み取り専用で開く。"""
+    """ローカルの SQLite を読み取り専用で開く。数値・文字の条件の関数（sql_functions）を足しておく。"""
     # SQLite の URI では ? と # を区切りとして扱うため、パス中の文字をエスケープする
     uri_path = os.path.abspath(path).replace("\\", "/").replace("%", "%25").replace("?", "%3F").replace("#", "%23")
     if not uri_path.startswith("/"):
         uri_path = "/" + uri_path  # Windows のドライブ文字（C:/...）
-    return sqlite3.connect(f"file://{uri_path}?mode=ro", uri=True)
+    return sql_functions.register(sqlite3.connect(f"file://{uri_path}?mode=ro", uri=True))
 ```
 
 ## 12. 起動処理の修正版コード全文
@@ -730,6 +731,7 @@ from data_search.http_server import AppContext, create_server  # noqa: E402
 from data_search.logging_setup import setup_logging  # noqa: E402
 from data_search.lot_service import LotService  # noqa: E402
 from data_search.record_service import RecordService  # noqa: E402
+from data_search.type_service import ColumnTypeService  # noqa: E402
 from data_search.settings import SettingsError, load_settings  # noqa: E402
 from data_search.source_service import SourceService  # noqa: E402
 
@@ -812,6 +814,7 @@ def main():
     context = AppContext(config, cache_service, LotService(config, cache_service, logger), logger)
     context.source_service = SourceService(context, APP_ROOT, local_dir)
     context.record_service = RecordService(context, APP_ROOT, local_dir)
+    context.type_service = ColumnTypeService(context, APP_ROOT, local_dir)
 
     has_cache = os.path.isfile(config.cache_path)
     if has_cache and not cache_service.verify_existing():

@@ -14,6 +14,8 @@ Rust/Tauri 版へ移植しやすいよう、モジュール構成を src-tauri/s
     lot_service     ↔ services/lot_service.rs
     source_service  ↔ services/source_service.rs
     record_service  ↔ services/record_service.rs
+    type_service    ↔ services/type_service.rs
+    sql_functions   ↔ db/functions.rs（SQLite に足す関数：数値・文字の条件）
     commands        ↔ commands/*.rs
     errors          ↔ errors/mod.rs
     logging_setup   ↔ logging/mod.rs

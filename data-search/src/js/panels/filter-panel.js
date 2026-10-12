@@ -6,7 +6,7 @@
      ・条件ごとに開いて直す／外す、すべて解除（元に戻せる）
      ・列名から条件を足す（隠している列にもかけられる）
      ・タグのファイルの書き出し・読み込み
-   をまとめる。条件を直す部品は見出しの小窓と同じ（views/filter-editors.js）。
+   をまとめる。条件を直す部品（種類・タブ・部品）は見出しの小窓と同じ（views/filter-body.js）。
    ========================================================= */
 (function () {
   'use strict';
@@ -86,7 +86,7 @@
         const clear = el('button', { type: 'button', className: 'icon-btn', title: `${field.label}の条件を外す`, 'aria-label': `${field.label}の条件を外す` }, [icon('fa-xmark', '×')]);
         const header = el('button', { type: 'button', className: 'filter-section__head', 'aria-expanded': 'false' }, [
           icon('fa-chevron-right', '›', 'filter-section__chevron'),
-          icon(field.filter === 'date' ? 'fa-calendar-days' : 'fa-list-check', '', 'filter-section__kind'),
+          icon({ date: 'fa-calendar-days', number: 'fa-hashtag', text: 'fa-font' }[field.type], '', 'filter-section__kind'),
           el('span', { className: 'filter-section__label', text: field.label }),
           stateText,
         ]);
@@ -195,7 +195,7 @@
           entry.section.classList.toggle('is-active', Boolean(spec));
           entry.state.textContent = spec ? DS.domain.filters.describe(field.id, spec) : '条件なし';
           if (!isOpen) return;
-          if (!entry.editor) entry.editor = DS.filterEditors.get(field.filter).mount(entry.content, field, ctx);
+          if (!entry.editor) entry.editor = DS.views.createFilterBody(entry.content, field, ctx);
           if ((changed || !entry.loaded) && state.cache.status && state.cache.status.available) {
             entry.loaded = true;
             entry.editor.load(state);

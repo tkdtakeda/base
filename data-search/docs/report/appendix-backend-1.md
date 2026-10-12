@@ -87,7 +87,7 @@ DB にない名前があっても止めず、画面の「データ」パネル�
 |---|---|
 | `config.cache` | `temporaryExtension: ".tmp"`・`keepPreviousOnFailure: true` |
 | `config.devServer` | `host: "127.0.0.1"`・`port: 8765`・`openBrowser: true` |
-| `schema.types` | `{}`（種類は値から判定） |
+| `schema.types` | `{}`（種類は値から判定。手動で決めた列だけ `"date"`・`"number"`・`"text"`） |
 | `schema.columns` / `schema.searchColumn` | `{}`（別名なし） / `null`（recordKey の 1 つ目で探す） |
 | `view.fields` / `view.hiddenColumns` | `{}` / `[]` |
 - ローカルのファイルがないときは、空の上書き `{}` として扱う。
@@ -121,7 +121,7 @@ DB にない名前があっても止めず、画面の「データ」パネル�
 - `columns`（別名）は任意。値が文字列でないときだけ誤り。仮の値のままの別名は使わない（誤りにしない）
 - 同じキーが重複していない（JSON の読み込み時に検出）
 - `dataSourceId` が config の `dataSource.id` と同じ（別のデータソースの設定を組み合わせないため）
-- `types` は型が text / date
+- `types` は型が date / number / text
 - 名前が DB にあるかは、ここでは確かめない（キャッシュを読んだあと `column_model.py` が照らし合わせ、ない名前は止めずに「列の注意」で知らせる）
 - 接続後（キャッシュ作成時）に確かめるのはテーブルがあることだけ（`cache_validator.py`）。列はそのとき読み取る（`column_catalog.py`）
 - 以前の形で全列を書いた `columns` は、サンプルにない分を「使っていない」と 1 件の注意にまとめる（止めない）
@@ -233,7 +233,11 @@ flowchart TD
 - 列は、キャッシュのテーブルから読み取る（`PRAGMA table_info`）。設定には役割（固定列・探す列など）だけを書く。
 - **列の id も表示名も DB の列名そのもの**（詳細・一覧の見出し・絞り込み・タグ・保存した表示の設定で共通）。表示名の設定はない。
 - 設定の名前の読み替え：DB に同じ名前の列があればその列、なければ別名（`schema.columns`）として DB の列名に読み替える。どちらもなければ使わない。
-- 種類：`schema.types` の指定が優先。指定がなければ値から判定する（空でない値がすべて `YYYY-MM-DD…`・`YYYY/MM/DD…`・`YYYYMMDD` なら日付。月・日の 1 桁目まで見て番号との取り違えを減らす。固定列・探す列は文字）。判定はキャッシュを作り直したときに 1 回だけ、表を列のまとまりごとに 1 回ずつ読んで行う。
+- 種類（日付・数値・文字列）：手動の指定（`schema.types`。画面の見出しの小窓の「種類」で選ぶと `update_column_type` で保存）が優先。指定がなければ値から判定する（自動）。
+  - 日付：空でない値がすべて `YYYY-MM-DD…`・`YYYY/MM/DD…`・`YYYYMMDD`（月・日の 1 桁目まで見て番号との取り違えを減らす）
+  - 数値：空でない値がすべて数値（桁区切りのカンマ可）。先頭が 0 の番号（`007`）がある列は数値にしない
+  - 固定列・探す列は自動では文字列。判定はキャッシュを作り直したときに 1 回だけ、表を列のまとまりごとに 1 回ずつ読んで行う
+  - 数値の読み方・文字の条件は SQLite に足した関数（`sql_functions.py`：`ds_number`・`ds_auto_number`・`ds_text`）で行い、画面のサンプルのモード（`js/domain/filters.js`）も同じ決まりにする
 - 並び：固定列 → 番号で探す列 → 別名のある列（`schema.columns` の順）→ ほかの列（DB の順）。
 - `get_view_config` は列の一覧（`columns`）・固定列・探す列・別名・列の注意と、並びの印（`columnsVersion`）を返す。データの更新や固定列の変更で印が変わると、画面は読み込み直す。
 - 画面は、以前の形（論理名）で保存したタグ・表示列・列幅・入力の履歴を、別名を使って DB の列名に読み替える。
@@ -241,9 +245,10 @@ flowchart TD
 
 ## 9.1 画面からの書き込み（読み込み先・固定列）
 
-- 画面から書き換えるのは次の 2 つだけ。sample は書き換えない。
+- 画面から書き換えるのは次の 3 つだけ。sample は書き換えない。
   - `config.local.json` の `dataSource.sourcePath`（`update_data_source`）。接続テスト（`source_check.py`）で × がないときだけ書き込む（△＝固定列がない、は保存してから選び直せる）。
   - `schema.local.json` の `recordKey`・`searchColumn`（`update_record_settings`）。DB にある列だけ。DB の列名で書く。探す列が固定列の 1 つ目と同じなら `null`。
+  - `schema.local.json` の `types.<DB の列名>`（`update_column_type`）。「自動」はその列の指定を消す（別名で書いた同じ列の指定も消す）。
 - ほかのキーは残し、書き換え前を `.bak` に残し、一時ファイル → 置き換えで書く（`settings/local_writer.py`）。
 - 書き込み後に `load_settings` で読み直して検証し、誤りがあれば `.bak` に戻す。問題がなければ動いている設定を差し替える（`settings_updater.py`。読み込み先とで共通）。
 - キャッシュの状態ファイルに読み込み先の印（パスのハッシュ）を残し、前の読み込み先のキャッシュは使わない。
@@ -275,6 +280,8 @@ Rust/Tauri 版へ移植しやすいよう、モジュール構成を src-tauri/s
     lot_service     ↔ services/lot_service.rs
     source_service  ↔ services/source_service.rs
     record_service  ↔ services/record_service.rs
+    type_service    ↔ services/type_service.rs
+    sql_functions   ↔ db/functions.rs（SQLite に足す関数：数値・文字の条件）
     commands        ↔ commands/*.rs
     errors          ↔ errors/mod.rs
     logging_setup   ↔ logging/mod.rs
@@ -585,9 +592,10 @@ class CacheService:
 ```python
 """DB のテーブルから読み取る列の一覧（カタログ）。設定に関係なく、DB の事実だけを持つ。
 
-    name       … DB の列名（そのまま画面の列の id・見出しになる）
-    looks_date … 空でない値がすべて日付の書き方か（YYYY-MM-DD… / YYYY/MM/DD… / YYYYMMDD）
-                 1 つでも当てはまらない値があれば、または値がすべて空なら False
+    name         … DB の列名（そのまま画面の列の id・見出しになる）
+    looks_date   … 空でない値がすべて日付の書き方か（YYYY-MM-DD… / YYYY/MM/DD… / YYYYMMDD）
+    looks_number … 空でない値がすべて数値か（桁区切りのカンマ可。先頭が 0 の番号があれば False。sql_functions.looks_number）
+                   どちらも、1 つでも当てはまらない値があれば、または値がすべて空なら False
 並びは DB の順。どの列に役割（1 件を決める・番号で探す）を持たせるかは、column_model.py が設定から決める。
 """
 
@@ -602,13 +610,14 @@ DATE_GLOBS = (
     "[12][0-9][0-9][0-9]/[01][0-9]/[0-3][0-9]*",
 )
 COMPACT_DATE_GLOB = "[12][0-9][0-9][0-9][01][0-9][0-3][0-9]"
-DETECT_CHUNK = 200  # 1 つの SQL で調べる列の数（SQLite の結果列数の上限より十分小さく）
+DETECT_CHUNK = 200  # 1 つの SQL で調べる列の数（1 列につき 3 つ。SQLite の結果列数の上限より十分小さく）
 
 
 @dataclass(frozen=True)
 class DbColumn:
     name: str
     looks_date: bool = False
+    looks_number: bool = False
 
 
 def _date_test(column):
@@ -618,9 +627,10 @@ def _date_test(column):
     return "(" + " OR ".join(parts) + ")"
 
 
-def detect_date_columns(conn, table_name, names):
-    """値がすべて日付の書き方になっている列の名前を返す（表を列のまとまりごとに 1 回ずつ読む）。"""
-    found = set()
+def detect_kinds(conn, table_name, names):
+    """値から見た種類：(日付の列の名前, 数値の列の名前) を返す（表を列のまとまりごとに 1 回ずつ読む）。
+    接続には sql_functions.register で関数を足しておくこと。"""
+    dates, numbers = set(), set()
     table = quote_identifier(table_name)
     for start in range(0, len(names), DETECT_CHUNK):
         chunk = names[start:start + DETECT_CHUNK]
@@ -630,12 +640,15 @@ def detect_date_columns(conn, table_name, names):
             filled = f"NOT {blank_expression(column)}"
             terms.append(f"SUM(CASE WHEN {filled} THEN 1 ELSE 0 END)")
             terms.append(f"SUM(CASE WHEN {filled} AND NOT {_date_test(column)} THEN 1 ELSE 0 END)")
+            terms.append(f"SUM(CASE WHEN {filled} AND ds_auto_number({column}) = 0 THEN 1 ELSE 0 END)")
         row = conn.execute(f"SELECT {', '.join(terms)} FROM {table}").fetchone()
         for index, name in enumerate(chunk):
-            filled, others = row[index * 2] or 0, row[index * 2 + 1] or 0
-            if filled and not others:
-                found.add(name)
-    return found
+            filled, not_date, not_number = (row[index * 3 + offset] or 0 for offset in range(3))
+            if filled and not not_date:
+                dates.add(name)
+            elif filled and not not_number:
+                numbers.add(name)
+    return dates, numbers
 
 
 def read_table_columns(conn, table_name):
@@ -644,8 +657,8 @@ def read_table_columns(conn, table_name):
 
 def read_catalog(conn, table_name):
     names = read_table_columns(conn, table_name)
-    dates = detect_date_columns(conn, table_name, names) if names else set()
-    return tuple(DbColumn(name, name in dates) for name in names)
+    dates, numbers = detect_kinds(conn, table_name, names) if names else (set(), set())
+    return tuple(DbColumn(name, name in dates, name in numbers) for name in names)
 
 
 def catalog_from_file(open_connection, path, table_name):
@@ -752,6 +765,12 @@ def get_view_config(ctx, payload):
 def check_record_key(ctx, payload):
     """選んだ列の組み合わせで 1 件に決まるかを数える（保存はしない）。"""
     return ctx.record_service.check(payload)
+
+
+@command("update_column_type")
+def update_column_type(ctx, payload):
+    """列の種類（auto / date / number / text）を schema.local.json の types に保存し、列の決まりを差し替える。"""
+    return ctx.type_service.update(payload)
 
 
 @command("update_record_settings")
@@ -889,6 +908,7 @@ class AppContext:
     logger: object
     source_service: object = None   # 読み込み先の確認・変更（SourceService）。作成後に入れる
     record_service: object = None   # 固定列の確認・変更（RecordService）。作成後に入れる
+    type_service: object = None     # 列の種類の手動の指定（ColumnTypeService）。作成後に入れる
 
 
 class RequestHandler(SimpleHTTPRequestHandler):
@@ -1009,6 +1029,7 @@ def create_server(context, static_dir, host, port):
 ```python
 """一覧・検索・絞り込み・詳細取得の業務ロジック。入力の検証もここで行う。"""
 
+import math
 import sqlite3
 import time
 import unicodedata
@@ -1025,6 +1046,7 @@ from .fields import (
     VALUE_LIST_LIMIT,
 )
 from .column_model import ColumnModelProvider
+from .sql_functions import TEXT_OPS, terms_of
 from .query import QueryBuilder
 from .settings.validation import RECORD_KEY_MAX
 
@@ -1114,12 +1136,27 @@ def _parse_iso_date(spec, name):
         raise _invalid("invalid date", "日付は 年（4 桁）・月・日 で正しく入力してください。") from exc
 
 
-def filter_kind(model, name):
-    """その列の絞り込みの種類。日付の列は日付の範囲、ほかは値から選ぶ。列がなければ None。"""
-    kind = model.kind_of(name)
-    if kind is None:
+# 列の種類ごとに使える絞り込み（1 つの列では、どれか 1 つの条件だけが有効）
+FILTERS_BY_KIND = {
+    "date": ("date",),               # 日付の範囲
+    "number": ("number", "values"),  # 数値の範囲／値から選ぶ
+    "text": ("values", "text"),      # 値から選ぶ／文字の条件（含む・始まる…）
+}
+NUMBER_LIMIT = 1e15
+
+
+def filter_kinds(model, name):
+    """その列で使える絞り込みの種類。列がなければ空。"""
+    return FILTERS_BY_KIND.get(model.kind_of(name), ())
+
+
+def _parse_number(spec, name):
+    value = spec.get(name)
+    if value is None:
         return None
-    return "date" if kind == "date" else "values"
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or abs(value) > NUMBER_LIMIT:
+        raise _invalid(f"{name} must be a number", "範囲は数値で入力してください。")
+    return float(value)
 
 
 def parse_filters(payload, today, model):
@@ -1129,9 +1166,26 @@ def parse_filters(payload, today, model):
         raise _invalid("filters must be an object")
     filters = []
     for name, spec in raw.items():
-        kind = filter_kind(model, name)
-        if kind is None or not isinstance(spec, dict) or spec.get("type") != kind:
+        kind = spec.get("type") if isinstance(spec, dict) else None
+        if kind not in filter_kinds(model, name):
             raise _invalid("unknown filter")
+        if kind == "number":
+            low, high = _parse_number(spec, "min"), _parse_number(spec, "max")
+            if low is not None and high is not None and low > high:
+                raise _invalid("number range reversed", "範囲は「以上」が「以下」より小さくなるようにしてください。")
+            if low is not None or high is not None:
+                filters.append((name, kind, (low, high)))
+            continue
+        if kind == "text":
+            op, needle, fuzzy = spec.get("op"), spec.get("value"), spec.get("fuzzy", True)
+            if op not in TEXT_OPS or not isinstance(needle, str) or not isinstance(fuzzy, bool):
+                raise _invalid("invalid text filter")
+            needle = normalize_keyword(needle)
+            if len(needle) > KEYWORD_MAX_LENGTH:
+                raise _invalid("text filter too long", f"条件の文字は {KEYWORD_MAX_LENGTH} 文字以内で入力してください。")
+            if terms_of(needle, op, fuzzy):  # 比べられる文字がなければ（記号だけなど）条件なし
+                filters.append((name, kind, (op, needle, fuzzy)))
+            continue
         if kind == "values":
             values = spec.get("values")
             if not isinstance(values, list) or len(values) > FILTER_VALUES_MAX:
@@ -1267,7 +1321,7 @@ class LotService:
         payload = _require_object(payload)
         model = self._data_model()
         name = payload.get("field")
-        if filter_kind(model, name) != "values":
+        if "values" not in filter_kinds(model, name):
             raise _invalid("field is not a value filter")
         match = payload.get("match")
         if match is not None:
@@ -1383,8 +1437,11 @@ def blank_expression(column):
 class QueryBuilder:
     """
     search  … None または (DB の列名, keyword, matchMode)
-    filters … [(DB の列名, "values", [値 or None, ...]) / (DB の列名, "date", (from, to))]
-              date の from / to は 'YYYY-MM-DD' か None（日付は呼び出し側で確定させる）
+    filters … [(DB の列名, 種類, 条件)]
+              "values" … [値 or None, ...]（None は空欄）
+              "date"   … (from, to)。'YYYY-MM-DD' か None（日付は呼び出し側で確定させる）
+              "number" … (min, max)。数値か None（以上・以下）
+              "text"   … (op, needle, fuzzy)。判定は SQLite に足した ds_text（sql_functions.py）
     """
 
     def __init__(self, table_name, model):
@@ -1415,6 +1472,19 @@ class QueryBuilder:
             if any(value is None for value in data):
                 parts.append(blank_expression(column))
             return "(" + " OR ".join(parts) + ")", params
+        if kind == "number":
+            low, high = data
+            parts, params = [f"ds_number({column}) IS NOT NULL"], []
+            if low is not None:
+                parts.append(f"ds_number({column}) >= ?")
+                params.append(low)
+            if high is not None:
+                parts.append(f"ds_number({column}) <= ?")
+                params.append(high)
+            return "(" + " AND ".join(parts) + ")", params
+        if kind == "text":
+            op, needle, fuzzy = data
+            return f"ds_text({column}, ?, ?, ?) = 1", [op, needle, 1 if fuzzy else 0]
         # date
         start, end = data
         expression = date_expression(column)
@@ -1445,7 +1515,12 @@ class QueryBuilder:
         return (" WHERE " + " AND ".join(parts)) if parts else "", params
 
     def _sort_expression(self, name):
-        return date_expression(self.columns[name]) if self.model.kind_of(name) == "date" else self.columns[name]
+        kind = self.model.kind_of(name)
+        if kind == "date":
+            return date_expression(self.columns[name])
+        if kind == "number":
+            return f"ds_number({self.columns[name]})"
+        return self.columns[name]
 
     # ── 文 ──
     def count(self, search, filters):
@@ -1456,10 +1531,11 @@ class QueryBuilder:
         where, params = self._where(search, filters)
         direction = "DESC" if sort_order == "desc" else "ASC"
         # 空欄は昇順・降順どちらでも最後に回す
-        order_terms = [
-            f"{blank_expression(self.columns[sort_key])} ASC",
-            f"{self._sort_expression(sort_key)} {direction}",
-        ]
+        order_terms = [f"{blank_expression(self.columns[sort_key])} ASC"]
+        if self.model.kind_of(sort_key) == "number":
+            # 数値の列で数値として読めない値は、空欄の手前（数値の後ろ）に回す
+            order_terms.append(f"(ds_number({self.columns[sort_key]}) IS NULL) ASC")
+        order_terms.append(f"{self._sort_expression(sort_key)} {direction}")
         order_terms += [f"{self.columns[name]} ASC" for name in self.model.record_key if name != sort_key]
         sql = (
             f"SELECT {self.select_list} FROM {self.table}{where} "

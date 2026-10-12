@@ -9,6 +9,8 @@
   const DS = window.DS;
   const STORAGE_KEY = 'mock:samples';
   const RECORD_KEY = 'mock:record'; // このモードで選んだ「固定列」（ブラウザにだけ保存する）
+  const TYPES_KEY = 'mock:types';   // このモードで手動にした列の種類（ブラウザにだけ保存する）
+  const KINDS = ['date', 'number', 'text'];
   const KEYWORD_MAX = 100;
   const RECORD_KEY_MAX = 3;
   const PAGE_SIZE = 100;
@@ -46,6 +48,22 @@
     return view;
   }
 
+  /** 手動にした列の種類を重ねる（Python 版の column_model と同じく、手動が自動より優先） */
+  function viewWithTypes(view, types) {
+    const entries = Object.entries(types || {}).filter(([, kind]) => KINDS.includes(kind));
+    if (!entries.length) return view;
+    const manual = new Map(entries);
+    view.columns = view.columns.map((column) => (manual.has(column.id)
+      ? Object.assign({}, column, { kind: manual.get(column.id), manual: true })
+      : column));
+    view.columnsVersion = `${view.columnsVersion}-${entries.map(([id, kind]) => `${id}:${kind}`).join('|')}`;
+    return view;
+  }
+
+  function currentView() {
+    return viewWithTypes(viewWithRecord(DS.sampleView, DS.core.storage.read(RECORD_KEY, null)), DS.core.storage.read(TYPES_KEY, {}));
+  }
+
   function createMockAdapter() {
     // 読み込んだパターンの id と時刻だけを保存し、データは種から作り直す（保存量を小さくする）
     let saved = DS.core.storage.read(STORAGE_KEY, { ids: [], loadedAt: null, refreshedAt: null });
@@ -73,8 +91,7 @@
     /** 絞り込みの列と種類を確かめる（どの列でも絞り込める。日付の列は日付の範囲、ほかは値から選ぶ） */
     function badFilter(filters) {
       return Object.entries(filters || {}).some(([fieldId, spec]) => {
-        const field = DS.domain.fields.get(fieldId);
-        return !field || !spec || spec.type !== field.filter;
+        return !DS.domain.filters.allowed(DS.domain.fields.get(fieldId), spec);
       });
     }
 
@@ -104,16 +121,19 @@
       const sortKey = DS.domain.fields.has(payload.sortKey) ? payload.sortKey : DS.domain.DEFAULT_SORT.key;
       const sortField = DS.domain.fields.get(sortKey);
       const direction = payload.sortOrder === 'desc' ? -1 : 1;
-      const sortValue = (row) => (sortField.type === 'date' ? DS.domain.filters.normalizeDate(row[sortKey]) : row[sortKey]);
+      const sortValue = (row) => (sortField.type === 'date' ? DS.domain.filters.normalizeDate(row[sortKey])
+        : sortField.type === 'number' ? DS.domain.filters.toNumber(row[sortKey]) : row[sortKey]);
       const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
       const hits = filterRows(payload);
       hits.sort((a, b) => {
         const va = sortValue(a);
         const vb = sortValue(b);
-        // 空欄は昇順・降順どちらでも最後
-        return compare(isBlank(va), isBlank(vb)) ||
-          compare(va || '', vb || '') * direction ||
+        // 空欄は昇順・降順どちらでも最後。数値の列で数値として読めない値は、その手前
+        const unreadable = (row, value) => sortField.type === 'number' && !isBlank(row[sortKey]) && value === null;
+        return compare(isBlank(a[sortKey]), isBlank(b[sortKey])) ||
+          compare(unreadable(a, va), unreadable(b, vb)) ||
+          compare(va === null ? '' : va, vb === null ? '' : vb) * direction ||
           DS.domain.keyFields().reduce((result, field) => result || compare(a[field.id] || '', b[field.id] || ''), 0);
       });
       const items = hits.slice((page - 1) * pageSize, page * pageSize).map((row) => Object.assign({}, row));
@@ -168,8 +188,25 @@
 
       // 表示定義：config/sample の view・schema と python/tools/sample_columns.json から自動生成した js/sample/sample-view.js
       // ＋ このモードで選んだ「固定列」
-      get_view_config: () => Object.assign({ success: true, recordSettingsFile: '（サンプルのモードではブラウザに保存）' },
-        viewWithRecord(DS.sampleView, DS.core.storage.read(RECORD_KEY, null))),
+      get_view_config: () => Object.assign({ success: true, recordSettingsFile: '（サンプルのモードではブラウザに保存）' }, currentView()),
+
+      update_column_type(payload) {
+        if (rows.length === 0) return fail('CACHE_UNAVAILABLE', '検索できるデータがまだありません。左の「サンプル」から読み込んでください。');
+        const field = DS.domain.fields.get(payload.column);
+        if (!field) return fail('INVALID_REQUEST', '種類を変える列が見つかりません。画面を読み込み直してください。');
+        if (payload.kind !== 'auto' && !KINDS.includes(payload.kind)) return fail('INVALID_REQUEST', '種類は 自動・日付・数値・文字列 から選んでください。');
+        const types = Object.assign({}, DS.core.storage.read(TYPES_KEY, {}));
+        if (payload.kind === 'auto') delete types[field.id];
+        else types[field.id] = payload.kind;
+        const stored = DS.core.storage.write(TYPES_KEY, types);
+        if (!stored.ok) return fail('SETTINGS_WRITE_FAILED', `保存できませんでした：${stored.reason}`);
+        const kind = payload.kind === 'auto' ? field.autoKind : payload.kind;
+        const label = DS.domain.KIND_LABELS[kind];
+        return {
+          success: true, saved: true, column: field.id, kind, manual: payload.kind !== 'auto', localFile: '（サンプルのモードではブラウザに保存）',
+          message: `「${field.id}」の種類を${payload.kind === 'auto' ? `自動（${label}）` : label}にしました（サンプルのモードではブラウザにだけ保存します）。`,
+        };
+      },
 
       check_record_key(payload) {
         if (rows.length === 0) return fail('CACHE_UNAVAILABLE', '検索できるデータがまだありません。左の「サンプル」から読み込んでください。');
@@ -235,7 +272,7 @@
           lastRefreshAt: saved.refreshedAt || saved.loadedAt,
           errorCode: failed ? 'SOURCE_UNAVAILABLE' : null,
           errorMessage: failed ? '共有データに接続できません。ネットワークと共有フォルダを確認してください。' : null,
-          columnsVersion: viewWithRecord(DS.sampleView, DS.core.storage.read(RECORD_KEY, null)).columnsVersion,
+          columnsVersion: currentView().columnsVersion,
         };
       },
 
@@ -266,7 +303,7 @@
 
       get_filter_values(payload) {
         const field = DS.domain.fields.get(payload.field);
-        if (!field || field.filter !== 'values') return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
+        if (!field || !field.filters.includes('values')) return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
         if (rows.length === 0) return fail('CACHE_UNAVAILABLE', '検索できるデータがまだありません。左の「サンプル」から読み込んでください。');
         if (badFilter(payload.filters)) return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
         // match：その文字を含む値だけ（大文字小文字・全角半角を区別しない）

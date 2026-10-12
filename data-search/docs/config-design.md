@@ -82,7 +82,7 @@ DB にない名前があっても止めず、画面の「データ」パネル�
 |---|---|
 | `config.cache` | `temporaryExtension: ".tmp"`・`keepPreviousOnFailure: true` |
 | `config.devServer` | `host: "127.0.0.1"`・`port: 8765`・`openBrowser: true` |
-| `schema.types` | `{}`（種類は値から判定） |
+| `schema.types` | `{}`（種類は値から判定。手動で決めた列だけ `"date"`・`"number"`・`"text"`） |
 | `schema.columns` / `schema.searchColumn` | `{}`（別名なし） / `null`（recordKey の 1 つ目で探す） |
 | `view.fields` / `view.hiddenColumns` | `{}` / `[]` |
 - ローカルのファイルがないときは、空の上書き `{}` として扱う。
@@ -116,7 +116,7 @@ DB にない名前があっても止めず、画面の「データ」パネル�
 - `columns`（別名）は任意。値が文字列でないときだけ誤り。仮の値のままの別名は使わない（誤りにしない）
 - 同じキーが重複していない（JSON の読み込み時に検出）
 - `dataSourceId` が config の `dataSource.id` と同じ（別のデータソースの設定を組み合わせないため）
-- `types` は型が text / date
+- `types` は型が date / number / text
 - 名前が DB にあるかは、ここでは確かめない（キャッシュを読んだあと `column_model.py` が照らし合わせ、ない名前は止めずに「列の注意」で知らせる）
 - 接続後（キャッシュ作成時）に確かめるのはテーブルがあることだけ（`cache_validator.py`）。列はそのとき読み取る（`column_catalog.py`）
 - 以前の形で全列を書いた `columns` は、サンプルにない分を「使っていない」と 1 件の注意にまとめる（止めない）
@@ -228,7 +228,11 @@ flowchart TD
 - 列は、キャッシュのテーブルから読み取る（`PRAGMA table_info`）。設定には役割（固定列・探す列など）だけを書く。
 - **列の id も表示名も DB の列名そのもの**（詳細・一覧の見出し・絞り込み・タグ・保存した表示の設定で共通）。表示名の設定はない。
 - 設定の名前の読み替え：DB に同じ名前の列があればその列、なければ別名（`schema.columns`）として DB の列名に読み替える。どちらもなければ使わない。
-- 種類：`schema.types` の指定が優先。指定がなければ値から判定する（空でない値がすべて `YYYY-MM-DD…`・`YYYY/MM/DD…`・`YYYYMMDD` なら日付。月・日の 1 桁目まで見て番号との取り違えを減らす。固定列・探す列は文字）。判定はキャッシュを作り直したときに 1 回だけ、表を列のまとまりごとに 1 回ずつ読んで行う。
+- 種類（日付・数値・文字列）：手動の指定（`schema.types`。画面の見出しの小窓の「種類」で選ぶと `update_column_type` で保存）が優先。指定がなければ値から判定する（自動）。
+  - 日付：空でない値がすべて `YYYY-MM-DD…`・`YYYY/MM/DD…`・`YYYYMMDD`（月・日の 1 桁目まで見て番号との取り違えを減らす）
+  - 数値：空でない値がすべて数値（桁区切りのカンマ可）。先頭が 0 の番号（`007`）がある列は数値にしない
+  - 固定列・探す列は自動では文字列。判定はキャッシュを作り直したときに 1 回だけ、表を列のまとまりごとに 1 回ずつ読んで行う
+  - 数値の読み方・文字の条件は SQLite に足した関数（`sql_functions.py`：`ds_number`・`ds_auto_number`・`ds_text`）で行い、画面のサンプルのモード（`js/domain/filters.js`）も同じ決まりにする
 - 並び：固定列 → 番号で探す列 → 別名のある列（`schema.columns` の順）→ ほかの列（DB の順）。
 - `get_view_config` は列の一覧（`columns`）・固定列・探す列・別名・列の注意と、並びの印（`columnsVersion`）を返す。データの更新や固定列の変更で印が変わると、画面は読み込み直す。
 - 画面は、以前の形（論理名）で保存したタグ・表示列・列幅・入力の履歴を、別名を使って DB の列名に読み替える。
@@ -236,9 +240,10 @@ flowchart TD
 
 ## 9.1 画面からの書き込み（読み込み先・固定列）
 
-- 画面から書き換えるのは次の 2 つだけ。sample は書き換えない。
+- 画面から書き換えるのは次の 3 つだけ。sample は書き換えない。
   - `config.local.json` の `dataSource.sourcePath`（`update_data_source`）。接続テスト（`source_check.py`）で × がないときだけ書き込む（△＝固定列がない、は保存してから選び直せる）。
   - `schema.local.json` の `recordKey`・`searchColumn`（`update_record_settings`）。DB にある列だけ。DB の列名で書く。探す列が固定列の 1 つ目と同じなら `null`。
+  - `schema.local.json` の `types.<DB の列名>`（`update_column_type`）。「自動」はその列の指定を消す（別名で書いた同じ列の指定も消す）。
 - ほかのキーは残し、書き換え前を `.bak` に残し、一時ファイル → 置き換えで書く（`settings/local_writer.py`）。
 - 書き込み後に `load_settings` で読み直して検証し、誤りがあれば `.bak` に戻す。問題がなければ動いている設定を差し替える（`settings_updater.py`。読み込み先とで共通）。
 - キャッシュの状態ファイルに読み込み先の印（パスのハッシュ）を残し、前の読み込み先のキャッシュは使わない。

@@ -18,7 +18,7 @@ from ..fields import MATCH_MODES, SORT_ORDERS
 PLACEHOLDER_PATTERN = re.compile(r"<[^<>]+>")
 LOG_LEVELS = ("debug", "info", "warning", "error")
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost")
-COLUMN_TYPES = ("text", "date")
+COLUMN_TYPES = ("text", "date", "number")
 RECORD_KEY_MAX = 3  # 固定列の数の上限
 BADGE_TONES = ("success", "info", "warning", "danger", "neutral")
 
@@ -174,7 +174,7 @@ def validate_schema(schema, src, config):
         if _blank(name):
             err(path, "列の名前が空です。", "DB の列名か別名を書いてください。")
         if kind not in COLUMN_TYPES:
-            err(path, f"\"{kind}\" は型として使えません。", "text か date にしてください。")
+            err(path, f"\"{kind}\" は型として使えません。", "date（日付）・number（数値）・text（文字列）のどれかにしてください。")
     return issues
 
 

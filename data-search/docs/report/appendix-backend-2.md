@@ -23,8 +23,8 @@ def set_local_value(local_dir, kind, path, value):
     return set_local_values(local_dir, kind, {path: value})
 
 
-def set_local_values(local_dir, kind, values):
-    """{path: 値} をまとめて 1 回で書き込む（控えの .bak も 1 回だけ作る）。書き込んだファイルのパスを返す。"""
+def set_local_values(local_dir, kind, values, delete=()):
+    """{path: 値} をまとめて 1 回で書き込み、delete の path を消す（控えの .bak も 1 回だけ作る）。書き込んだファイルのパスを返す。"""
     target = local_file(local_dir, kind)
     data = {}
     if os.path.isfile(target):
@@ -42,6 +42,12 @@ def set_local_values(local_dir, kind, values):
                 node[key] = child
             node = child
         node[path[-1]] = value
+    for path in delete:
+        node = data
+        for key in path[:-1]:
+            node = node.get(key) if isinstance(node, dict) else None
+        if isinstance(node, dict):
+            node.pop(path[-1], None)
     os.makedirs(local_dir, exist_ok=True)
     temp = target + ".writing"
     with open(temp, "w", encoding="utf-8") as fp:
@@ -785,8 +791,8 @@ file:// で開いた画面は JSON ファイルを読めないため、config/sa
 view.sample.json の設定を、本物と同じ決まり（column_model.build_model）で表示定義にして
 src/js/sample/sample-view.js に書き写す。
 DB の列は、ダミーと共通の列の一覧 python/tools/sample_columns.json を使う（実データとは無関係）。
-別名（schema.columns）の DB の列名は sample_columns.json の role から、日付の列は名前が Date で終わる列とする
-（サンプルデータ・ダミーデータは、その列に日付を入れる）。
+別名（schema.columns）の DB の列名は sample_columns.json の role から、日付の列は名前が Date で終わる列、
+数値の列は名前が NUMBER_NAME に当てはまる列とする（サンプルデータ・ダミーデータは、その列に日付・数値を入れる）。
 サンプルの view / schema を変えたら、このスクリプトを実行する（テストで一致を確かめている）。
 
 使い方: python python/tools/sync_sample_view.py
@@ -794,6 +800,7 @@ DB の列は、ダミーと共通の列の一覧 python/tools/sample_columns.jso
 
 import json
 import os
+import re
 import sys
 
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -808,6 +815,8 @@ from data_search.settings.merge import fill_defaults  # noqa: E402
 SAMPLE_DIR = os.path.join(APP_ROOT, "config", "sample")
 SAMPLE_COLUMNS = os.path.join(APP_ROOT, "python", "tools", "sample_columns.json")
 OUTPUT = os.path.join(APP_ROOT, "src", "js", "sample", "sample-view.js")
+# サンプルデータ（sample-data.js）・ダミーデータ（make_dummy_db.py）が数値を入れる列の名前の形
+NUMBER_NAME = re.compile(r"(Thickness|Width|Length|Weight|Count|Quantity|Time|Gravity)$")
 
 TEMPLATE = """/* =========================================================
    画面だけで試すモード用の表示定義（自動生成。手で直さない）
@@ -836,7 +845,11 @@ def build_sample_view():
         sample_columns = json.load(fp)["columns"]
     physical = {c["role"]: c["name"] for c in sample_columns if "role" in c}
     schema["columns"] = {name: physical[name] for name in schema["columns"] if name in physical}
-    catalog = tuple(DbColumn(c["name"], c.get("role", c["name"]).endswith("Date")) for c in sample_columns)
+    def column_of(entry):
+        name = entry.get("role", entry["name"])
+        return DbColumn(entry["name"], name.endswith("Date"), bool(NUMBER_NAME.search(name)))
+
+    catalog = tuple(column_of(c) for c in sample_columns)
     return build_model(model_settings_of(schema, view), catalog).public()
 
 
@@ -947,6 +960,27 @@ if __name__ == "__main__":
     const matched = await app.api.call('get_filter_values', { field: LOT, match: 'lot-2026-0001' });
     check('値が多い列は、文字でデータ全体から探せる', matched.values.length > 0 && matched.values.every((entry) => entry.value.toLowerCase().includes('lot-2026-0001')), `${matched.values.length} 個`);
     await search.clearFilter(other.id);
+
+    // ── 文字の条件・数値の範囲・種類（ほかの絞り込みを外して確かめ、あとで戻す） ──
+    const filtersBefore = Object.assign({}, store.get().filters);
+    await search.setFilters({});
+    await search.setFilter(LOT, { type: 'text', op: 'contains', value: 'lot2026 00012', fuzzy: true });
+    check('条件で絞る：記号・空白を無視し、空白で区切った語をすべて含む', result().totalCount >= 1 && result().items.every((item) => item[LOT] === 'LOT-2026-00012'), `${result().totalCount} 件`);
+    await search.setFilter(LOT, { type: 'text', op: 'contains', value: 'lot202600012', fuzzy: false });
+    check('記号・空白を無視しないと見つからない', result().totalCount === 0);
+    await search.setFilter(LOT, { type: 'text', op: 'not_starts', value: 'LOT-2026', fuzzy: true });
+    check('「で始まらない」で外せる', result().totalCount === 0);
+    await search.clearFilter(LOT);
+    const width = window.DS.domain.listFields().find((field) => field.type === 'number');
+    check('数値の列は値から判定する', Boolean(width), width && width.label);
+    await search.setFilter(width.id, { type: 'number', min: 1.5, max: null });
+    check('数値の範囲で絞り込める', result().totalCount > 0 && result().items.every((item) => Number(String(item[width.id]).replace(/,/g, '')) >= 1.5), `${result().totalCount} 件`);
+    await search.setFilter(width.id, { type: 'number', min: null, max: null });
+    const typed = await app.api.call('update_column_type', { column: width.id, kind: 'text' });
+    check('種類を手動で変えて保存できる', typed.kind === 'text' && typed.manual === true);
+    const back = await app.api.call('update_column_type', { column: width.id, kind: 'auto' });
+    check('「自動」で値からの判定に戻せる', back.kind === 'number' && back.manual === false);
+    await search.setFilters(filtersBefore);
 
     // ── タグ ──
     const saved = tags.save('確認用タグ');

@@ -241,6 +241,56 @@
 .value-bulk[hidden] { display: none; }
 .check--value.is-checked .check__text { font-weight: var(--fw-bold); }
 
+/* ── 1 つの列の絞り込みの中身：種類・タブ・部品（filter-body.js） ── */
+.filter-body__typerow { display: flex; align-items: center; gap: var(--sp-2); color: var(--color-text-muted); font-size: var(--fs-sm); }
+.filter-body__typelabel { flex-shrink: 0; }
+.filter-body__type { width: auto; min-width: 9em; }
+.filter-body__manual {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-2);
+  border: var(--bw) solid var(--color-warning-border);
+  border-radius: var(--r-pill);
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+}
+.filter-body__manual[hidden] { display: none; }
+
+.filter-tabs { display: flex; gap: 2px; padding: 2px; border-radius: var(--r-md); background: var(--color-surface-sunken); }
+.filter-tabs[hidden] { display: none; }
+.filter-tab {
+  position: relative;
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  height: var(--h-control-sm);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--fs-sm);
+}
+.filter-tab:hover { color: var(--color-text); }
+.filter-tab[aria-selected="true"] { background: var(--color-surface); color: var(--color-primary); font-weight: var(--fw-bold); box-shadow: var(--shadow-1); }
+.filter-tab__dot { display: none; width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--color-primary); }
+.filter-tab.has-filter .filter-tab__dot { display: inline-block; }
+.filter-body__editor { display: flex; flex-direction: column; gap: var(--sp-2); }
+.filter-body__pane { display: flex; flex-direction: column; gap: var(--sp-2); }
+.filter-body__pane[hidden] { display: none; }
+
+.text-cond__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.text-cond__row select.input { width: auto; }
+.check--inline { display: inline-flex; align-items: center; gap: var(--sp-1); padding: 0; font-size: var(--fs-sm); }
+.range-row { display: flex; align-items: center; gap: var(--sp-1); font-size: var(--fs-sm); color: var(--color-text-muted); }
+.range-row__sep { color: var(--color-text-subtle); }
+.input--range { width: 84px; text-align: right; }
+.grid tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
 /* ── 絞り込みのパネル ── */
 .filter-summary { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2); padding-bottom: var(--sp-3); }
 .filter-sections { display: flex; flex-direction: column; border-top: var(--bw) solid var(--color-border); }

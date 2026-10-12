@@ -24,7 +24,7 @@
   }
 
   const COMMANDS = ['get_view_config', 'search_lots', 'list_lots', 'get_filter_values', 'get_lot_detail', 'refresh_cache', 'get_cache_status', 'get_application_info',
-    'get_data_source', 'test_data_source', 'update_data_source', 'check_record_key', 'update_record_settings'];
+    'get_data_source', 'test_data_source', 'update_data_source', 'check_record_key', 'update_record_settings', 'update_column_type'];
 
   function createClient(adapter) {
     return {
