@@ -37,6 +37,8 @@
 2. `config/local/config.local.json` に、共有 SQLite のパスだけを書く。
 3. `config/local/schema.local.json` に、実際のテーブル名と列名を書く。
 4. 表示を変えたいときだけ `config/local/view.local.json` を書く（なくてよい）。
+   - DB の列名がそのまま利用者向けの名前になっているときは、`make-labels.bat`（または `python python/tools/make_view_labels.py`）で
+     列名を `view.local.json` の表示名（`fields.<項目>.label`）に書き写せます。詳しくは「表示名を DB の列名から作る」。
 5. `start.bat` をダブルクリック。黒いウィンドウが開き、Edge で画面が開きます。
    - 初回はキャッシュを自動で作成します。以後は画面左の「データ」→「データを更新する」で更新します。
    - 設定に誤りがあると、**対象ファイル・項目・理由・対応**をすべて表示して止まります（ウィンドウは開いたまま）。
@@ -161,6 +163,23 @@ config/
 
 1 件を特定する項目（標準はロット番号＋BOX番号）と、日付として扱う項目は `schema` の `recordKey` / `types` で決めます。
 
+### 表示名を DB の列名から作る
+
+画面には DB の列名を渡さない決まりのため、表示名は view に書きます。列名が利用者向けの名前になっている場合は、ツールで書き写せます。
+
+```bash
+python python/tools/make_view_labels.py              # config/local/schema.local.json → config/local/view.local.json
+python python/tools/make_view_labels.py --dry-run    # 書き込まずに件数だけ見る
+python python/tools/make_view_labels.py --overwrite  # すでにある表示名も列名で置き換える
+```
+
+- 書き出し先は `view.local.json` の `fields.<項目>.label`。ほかの設定はそのまま残り、書き換え前は `view.local.json.bak` に残ります。
+- **すでに表示名がある項目は残します**。書き写した表示名は手で直してよく、直した表示名は次に実行しても消えません。
+- schema に項目が増えたら、もう一度実行すると足りない分だけ入ります。
+- 列名が仮の値（`<...>`）・空・論理名と同じ項目は書きません。
+- 画面での表示名の優先順：view の表示名 → 論理名。一覧の見出しと検索の種類は `listColumns[].label` が、詳細・絞り込みは `fields.<項目>.label` が先です。
+- コンソールには列名そのものは出さず、件数と項目名だけを表示します。
+
 ### 絞り込みとタグ
 
 - 絞り込める項目：view の `filters` で決める（標準は製造材質・製造調質・取引先名・残仕掛設備コース・最終実績設備・仕掛区分・保留区分・状態。値の一覧から複数選択。件数つき・空欄も選べる）。
@@ -182,6 +201,7 @@ data-search/
 │  ├─ config-design.md            … 設定ファイルの設計（責務・マージ・検証・起動フロー）
 │  └─ report/                     … 設定・フォルダ構成の見直しの成果物一覧（コード全文つき）
 ├─ start.bat / start-dummy.bat    … Python 版の起動（Windows）
+├─ make-labels.bat                … DB の列名から表示名を作る（Windows）
 ├─ config/
 │  ├─ sample/                     … 外部提供できる初期値（Git 管理対象）
 │  ├─ local/                      … 社内固有の上書き（自分で作る・Git 管理対象外）
@@ -206,6 +226,7 @@ data-search/
 │  │  ├─ settings/                … 設定の読み込み（loader）・再帰マージ（merge）・検証（validation）・既定値（defaults）
 │  │  └─ …                        … キャッシュ・検索・HTTP など
 │  ├─ tools/make_dummy_db.py      … ダミーの共有 SQLite と config/dummy を作る
+│  ├─ tools/make_view_labels.py   … schema の列名を view.local.json の表示名に書き写す
 │  ├─ tools/sync_sample_view.py   … サンプルの表示定義を画面用（src/js/sample/sample-view.js）に書き写す
 │  └─ tests/test_backend.py
 ├─ tests/ui-check.js              … 画面の動作確認（コンソールに貼って使う）

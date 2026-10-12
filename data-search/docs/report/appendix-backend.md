@@ -210,13 +210,33 @@ flowchart TD
 旧 `config.local.json` の `dataSource.tableName` や `fieldMappings` を新しい `config.local.json` にそのまま残すと、
 サンプルにないキーとして「設定の注意」が出る（使われない）。`schema.local.json` へ移すこと。
 
-## 9. 設定項目を足すときの手順
+## 9. 表示名と DB の列名
+
+- `schema.columns` の値は DB の列名（物理名）。画面（`get_view_config`）には渡さない。
+- DB の列名が利用者向けの名前になっている場合は、`python/tools/make_view_labels.py`（処理は `settings/labels.py`）で
+  `view.local.json` の `fields.<項目>.label` に書き写す。既存の表示名は残し（`--overwrite` のときだけ置き換え）、仮の値・空・論理名と同じ列名は書かない。
+- 実行時の表示名は view だけで決まる（`fields.<項目>.label` → `listColumns[].label` → 論理名。一覧の見出しと検索の種類は `listColumns[].label` が先）。
+
+## 10. 設定項目を足すときの手順
 
 1. `config/sample/` の該当ファイルにキーを足す（社内情報でない既定値、または `<...>` の仮の値）
 2. `settings/loader.py` で受け取り、`settings/validation.py` で値を確かめる
 3. view / schema を変えたら `python python/tools/sync_sample_view.py`（画面だけで試すモード用の表示定義を作り直す）
 4. 社内の値が必要な環境だけ、`config/local/` の該当ファイルに書き足す（不要なら何もしない）
 ````
+
+`make-labels.bat`
+
+```bat
+@echo off
+rem Data Search - write display labels from schema.local.json column names into view.local.json
+chcp 65001 > nul
+cd /d "%~dp0"
+set "PY=python"
+where py > nul 2> nul && set "PY=py -3"
+%PY% python\tools\make_view_labels.py %*
+pause
+```
 
 `python/data_search/__init__.py`
 
@@ -959,6 +979,57 @@ class QueryBuilder:
         return sql, [key_values[name] for name in self.model.record_key]
 ```
 
+`python/data_search/settings/labels.py`
+
+```python
+"""表示名の下書き：schema の列名（DB の段階で利用者向けの名前になっている）を、view の表示名として書き写す。
+
+画面には列名を渡さない決まりのため、実行時に schema を表示名へ使うことはせず、
+この処理で view.local.json の fields.<項目>.label に書き出す（あとから手で直せる・何度でも使える）。
+
+    すでに表示名がある項目 … 残す（手で直した表示名を消さない）。overwrite=True のときだけ置き換える
+    列名が仮の値・空・論理名と同じ … 書かない（画面には listColumns の見出しか論理名が出る）
+"""
+
+from dataclasses import dataclass, field
+
+from .validation import is_placeholder
+
+
+@dataclass
+class LabelPlan:
+    fields: dict                                  # 書き出す view.fields（既存の設定も含む）
+    added: list = field(default_factory=list)     # 新しく表示名を入れた項目
+    replaced: list = field(default_factory=list)  # 表示名を置き換えた項目（overwrite のとき）
+    kept: list = field(default_factory=list)      # すでに表示名があり、残した項目
+    skipped: list = field(default_factory=list)   # 列名が使えず、書かなかった項目
+
+
+def plan_labels(columns, existing_fields, overwrite=False):
+    """columns：マージ後の schema.columns（論理名 → 列名）。existing_fields：今の view.local.json の fields。"""
+    result = {name: dict(option) for name, option in (existing_fields or {}).items() if isinstance(option, dict)}
+    plan = LabelPlan(fields=result)
+    for name, physical in columns.items():
+        label = physical.strip() if isinstance(physical, str) else ""
+        if not label or is_placeholder(label) or label == name:
+            plan.skipped.append(name)
+            continue
+        option = result.setdefault(name, {})
+        current = option.get("label")
+        if current and not overwrite:
+            plan.kept.append(name)
+            continue
+        if current == label:
+            plan.kept.append(name)
+            continue
+        (plan.replaced if current else plan.added).append(name)
+        option["label"] = label
+    # 項目の並びは schema の順（読みやすさのため）。schema にない項目は後ろに残す
+    order = {name: index for index, name in enumerate(columns)}
+    plan.fields = dict(sorted(result.items(), key=lambda item: order.get(item[0], len(order))))
+    return plan
+```
+
 `python/tools/make_dummy_db.py`
 
 ```python
@@ -1147,6 +1218,115 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
+
+`python/tools/make_view_labels.py`
+
+```python
+"""schema の列名から、詳細・一覧・検索・絞り込みで使う表示名の下書きを作る。
+
+  読む   : config/sample/schema.sample.json ＋ <上書きフォルダ>/schema.local.json（columns の列名）
+  書き出す: <上書きフォルダ>/view.local.json の fields.<項目>.label（ほかの設定はそのまま残す）
+
+  ・すでに表示名がある項目は残す（手で直した表示名は消えない）。schema に項目が増えたら、もう一度実行すれば足りない分だけ入る
+  ・--overwrite で、すでにある表示名も列名で置き換える
+  ・書き換える前の view.local.json は view.local.json.bak に残す
+  ・画面での優先順：view の表示名（このツールで入れたものを含む）→ 論理名
+
+使い方:
+    python python/tools/make_view_labels.py                         … config/local に書く
+    python python/tools/make_view_labels.py --local-dir config/dummy
+    python python/tools/make_view_labels.py --dry-run               … 書き込まずに件数だけ見る
+    python python/tools/make_view_labels.py --overwrite
+"""
+
+import argparse
+import json
+import os
+import shutil
+import sys
+
+APP_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(APP_ROOT, "python"))
+
+from data_search.settings.labels import plan_labels  # noqa: E402
+from data_search.settings.loader import read_settings_json  # noqa: E402
+
+SAMPLE_DIR = os.path.join(APP_ROOT, "config", "sample")
+
+
+def shown(path):
+    relative = os.path.relpath(path, APP_ROOT)
+    return path if relative.startswith("..") else relative
+
+
+def read_or_stop(path, required):
+    if not os.path.isfile(path):
+        if required:
+            print(f"[止めました] {shown(path)} がありません。")
+            sys.exit(1)
+        return {}
+    issues = []
+    data = read_settings_json(path, shown(path), issues)
+    if issues:
+        print("[止めました] 設定ファイルを読めません。")
+        for issue in issues:
+            print()
+            print(issue.format())
+        sys.exit(1)
+    return data
+
+
+def preview(names, limit=8):
+    shown = "、".join(names[:limit])
+    return f"{shown} ほか {len(names) - limit} 項目" if len(names) > limit else shown
+
+
+def main():
+    parser = argparse.ArgumentParser(description="schema の列名から表示名の下書きを作る")
+    parser.add_argument("--local-dir", default=os.path.join(APP_ROOT, "config", "local"), help="上書きフォルダ（既定：config/local）")
+    parser.add_argument("--overwrite", action="store_true", help="すでにある表示名も列名で置き換える")
+    parser.add_argument("--dry-run", action="store_true", help="書き込まずに件数だけ表示する")
+    args = parser.parse_args()
+
+    local_dir = os.path.abspath(args.local_dir)
+    sample_schema = read_or_stop(os.path.join(SAMPLE_DIR, "schema.sample.json"), required=True)
+    local_schema = read_or_stop(os.path.join(local_dir, "schema.local.json"), required=True)
+    view_path = os.path.join(local_dir, "view.local.json")
+    view = read_or_stop(view_path, required=False)
+
+    # 項目の並びはサンプルの schema、列名はローカルの schema を優先（社内だけで足した項目も含める）
+    columns = dict(sample_schema.get("columns") or {})
+    columns.update(local_schema.get("columns") or {})
+    plan = plan_labels(columns, view.get("fields"), overwrite=args.overwrite)
+
+    # 列名そのものは表示しない（画面に出すのは書き込み後の表示名だけ）。項目名と件数だけ
+    print(f"新しく入れる: {len(plan.added)} 項目")
+    if args.overwrite:
+        print(f"置き換える  : {len(plan.replaced)} 項目")
+    print(f"そのまま残す: {len(plan.kept)} 項目（すでに表示名あり）")
+    if plan.skipped:
+        print(f"書かない    : {len(plan.skipped)} 項目（列名が仮の値・空・論理名と同じ）: {preview(plan.skipped)}")
+    if args.dry_run:
+        print("（--dry-run のため書き込んでいません）")
+        return 0
+    if not plan.added and not plan.replaced:
+        print("変更はありません。")
+        return 0
+
+    if os.path.isfile(view_path):
+        shutil.copyfile(view_path, view_path + ".bak")
+    view["fields"] = plan.fields
+    os.makedirs(local_dir, exist_ok=True)
+    with open(view_path, "w", encoding="utf-8") as fp:
+        json.dump(view, fp, ensure_ascii=False, indent=2)
+        fp.write("\n")
+    print(f"書き込みました: {shown(view_path)}（表示名は手で直せます。直した表示名は次回も残ります）")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
 ```
 
 `python/tools/sync_sample_view.py`

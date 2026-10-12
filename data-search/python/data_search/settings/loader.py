@@ -126,6 +126,11 @@ def _read_json(path, label, issues):
     return data
 
 
+def read_settings_json(path, label, issues):
+    """設定ファイル用の JSON 読み込み（重複したキーも誤りにする）。ツールからも使う。"""
+    return _read_json(path, label, issues)
+
+
 def _load_pair(kind, sample_dir, local_dir, app_root, issues, warnings):
     """1 種類（config / schema / view）を読み込み、マージした結果と SettingSource を返す。"""
     sample_path = os.path.join(sample_dir, f"{kind}.sample.json")

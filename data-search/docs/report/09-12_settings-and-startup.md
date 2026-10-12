@@ -131,6 +131,11 @@ def _read_json(path, label, issues):
     return data
 
 
+def read_settings_json(path, label, issues):
+    """設定ファイル用の JSON 読み込み（重複したキーも誤りにする）。ツールからも使う。"""
+    return _read_json(path, label, issues)
+
+
 def _load_pair(kind, sample_dir, local_dir, app_root, issues, warnings):
     """1 種類（config / schema / view）を読み込み、マージした結果と SettingSource を返す。"""
     sample_path = os.path.join(sample_dir, f"{kind}.sample.json")
@@ -245,6 +250,8 @@ __all__ = ["AppConfig", "DataModel", "SettingsError", "load_settings", "public_v
     merge.py      … 再帰マージ（サンプルにローカルを重ねる）
     validation.py … マージ後の検証（役割ごと）
     loader.py     … 読み込みの順序と、実行時に使う設定の組み立て
+    defaults.py   … sample に書かない運用項目の既定値
+    labels.py     … schema の列名から view の表示名の下書きを作る（tools/make_view_labels.py）
 """
 
 from .loader import AppConfig, DataModel, SettingsError, load_settings, public_view_of
@@ -1057,6 +1064,7 @@ if errorlevel 1 pause
 | 新規 | `config/sample/schema.sample.json` |
 | 新規 | `config/sample/view.sample.json` |
 | 修正 | `docs/config-design.md` |
+| 新規 | `make-labels.bat` |
 | 修正 | `python/data_search/__init__.py` |
 | 修正 | `python/data_search/cache_service.py` |
 | 修正 | `python/data_search/cache_validator.py` |
@@ -1068,12 +1076,14 @@ if errorlevel 1 pause
 | 修正 | `python/data_search/query.py` |
 | 新規 | `python/data_search/settings/__init__.py` |
 | 新規 | `python/data_search/settings/defaults.py` |
+| 新規 | `python/data_search/settings/labels.py` |
 | 新規 | `python/data_search/settings/loader.py` |
 | 新規 | `python/data_search/settings/merge.py` |
 | 新規 | `python/data_search/settings/validation.py` |
 | 修正 | `python/run_server.py` |
 | 修正 | `python/tests/test_backend.py` |
 | 修正 | `python/tools/make_dummy_db.py` |
+| 新規 | `python/tools/make_view_labels.py` |
 | 新規 | `python/tools/sync_sample_view.py` |
 | 修正 | `src/css/components.css` |
 | 修正 | `src/css/layout.css` |

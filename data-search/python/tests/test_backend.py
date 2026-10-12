@@ -8,6 +8,7 @@ import logging
 import os
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import threading
@@ -21,6 +22,7 @@ from data_search.settings import SettingsError, deep_merge, load_settings  # noq
 from data_search.errors import AppError  # noqa: E402
 from data_search.http_server import AppContext, create_server  # noqa: E402
 from data_search.lot_service import LotService  # noqa: E402
+from data_search.settings.labels import plan_labels  # noqa: E402
 
 APP_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SAMPLE_DIR = os.path.join(APP_ROOT, "config", "sample")
@@ -576,6 +578,56 @@ class HttpTest(BackendTestCase):
     def test_static_files_are_served_with_js_mime(self):
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/js/app.js") as response:
             self.assertIn("javascript", response.headers["Content-Type"])
+
+
+class LabelTest(BackendTestCase):
+    """schema の列名 → view.local.json の表示名（tools/make_view_labels.py）"""
+    TOOL = os.path.join(APP_ROOT, "python", "tools", "make_view_labels.py")
+
+    def run_tool(self, *args):
+        return subprocess.run([sys.executable, self.TOOL, "--local-dir", self.local_dir, *args],
+                              capture_output=True, text=True, encoding="utf-8", check=False)
+
+    def read_view(self):
+        with open(os.path.join(self.local_dir, "view.local.json"), encoding="utf-8") as fp:
+            return json.load(fp)
+
+    def test_plan_keeps_existing_and_skips_unusable_names(self):
+        columns = {"lotNo": "ロットNo", "boxNo": "<BOX_NO_COLUMN>", "orderNo": "orderNo", "shape": " 形状 ", "memo": ""}
+        plan = plan_labels(columns, {"lotNo": {"label": "手で直した名前", "mono": True}})
+        self.assertEqual(plan.fields["lotNo"], {"label": "手で直した名前", "mono": True})
+        self.assertEqual(plan.fields["shape"], {"label": "形状"})
+        self.assertEqual((plan.added, plan.kept, plan.skipped), (["shape"], ["lotNo"], ["boxNo", "orderNo", "memo"]))
+        plan = plan_labels(columns, {"lotNo": {"label": "手で直した名前", "mono": True}}, overwrite=True)
+        self.assertEqual(plan.fields["lotNo"], {"label": "ロットNo", "mono": True})
+        self.assertEqual(plan.replaced, ["lotNo"])
+
+    def test_tool_writes_labels_and_screen_uses_them(self):
+        self.write_local("view", {"defaultSort": {"field": "lotNo", "order": "asc"},
+                                  "fields": {"lotNo": {"label": "ロット（手で直した）"}}})
+        result = self.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("C_ORDERMATERIAL", result.stdout)                  # 列名そのものは画面に出さない
+        view = self.read_view()
+        self.assertEqual(view["defaultSort"], {"field": "lotNo", "order": "asc"})  # ほかの設定は残る
+        self.assertEqual(view["fields"]["lotNo"]["label"], "ロット（手で直した）")    # 手で直した表示名は残る
+        self.assertEqual(view["fields"]["customerName"]["label"], "取引先_名称")
+        self.assertEqual(list(view["fields"])[:3], ["lotNo", "boxNo", "inspectionNo"])  # schema の順
+        self.assertTrue(os.path.isfile(os.path.join(self.local_dir, "view.local.json.bak")))
+        config = load_settings(self.root)
+        self.assertEqual(config.public_view()["fields"]["orderMaterial"]["label"], "C_ORDERMATERIAL")
+        self.assertFalse([w for w in config.warnings if w.path == LABEL_WARNING])  # 表示名なしの注意は消える
+        # もう一度実行しても変わらない（再利用できる）
+        again = self.run_tool()
+        self.assertIn("変更はありません", again.stdout)
+        self.assertEqual(self.read_view(), view)
+
+    def test_tool_dry_run_and_missing_schema(self):
+        result = self.run_tool("--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.local_dir, "view.local.json")))
+        self.remove_local("schema")
+        self.assertEqual(self.run_tool().returncode, 1)
 
 
 if __name__ == "__main__":

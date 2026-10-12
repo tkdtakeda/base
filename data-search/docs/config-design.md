@@ -205,7 +205,14 @@ flowchart TD
 旧 `config.local.json` の `dataSource.tableName` や `fieldMappings` を新しい `config.local.json` にそのまま残すと、
 サンプルにないキーとして「設定の注意」が出る（使われない）。`schema.local.json` へ移すこと。
 
-## 9. 設定項目を足すときの手順
+## 9. 表示名と DB の列名
+
+- `schema.columns` の値は DB の列名（物理名）。画面（`get_view_config`）には渡さない。
+- DB の列名が利用者向けの名前になっている場合は、`python/tools/make_view_labels.py`（処理は `settings/labels.py`）で
+  `view.local.json` の `fields.<項目>.label` に書き写す。既存の表示名は残し（`--overwrite` のときだけ置き換え）、仮の値・空・論理名と同じ列名は書かない。
+- 実行時の表示名は view だけで決まる（`fields.<項目>.label` → `listColumns[].label` → 論理名。一覧の見出しと検索の種類は `listColumns[].label` が先）。
+
+## 10. 設定項目を足すときの手順
 
 1. `config/sample/` の該当ファイルにキーを足す（社内情報でない既定値、または `<...>` の仮の値）
 2. `settings/loader.py` で受け取り、`settings/validation.py` で値を確かめる
