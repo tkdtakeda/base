@@ -12,6 +12,9 @@
    */
   DS.handoffs = DS.core.createRegistry('handoffs');
 
+  const OPEN_KEY = 'detail:open-groups';
+  const DEFAULT_OPEN_GROUPS = 2;
+
   function createDetailView(root, { store, bus, search, toast }) {
     const { el, icon } = DS.util;
 
@@ -61,24 +64,31 @@
       if (!selection.key) return;
       const item = selection.item;
 
-      // 見出し：1 件を特定する鍵の最初の項目（例：ロット番号）と、札を持つ項目（例：状態）
-      const headField = DS.domain.keyFields()[0];
+      // 見出し：1 件を特定する鍵（例：ロット番号＋BOX番号）と、札を持つ項目（例：状態）
+      const [headField, ...subFields] = DS.domain.keyFields();
       const badgeField = DS.domain.detailFields().find((field) => DS.domain.hasBadge(field));
-      title.replaceChildren(
+      title.replaceChildren(...[
         el('span', { className: 'detail__label', text: headField.label }),
         el('strong', { className: 'detail__lot mono', text: item[headField.id] || '—' }),
+        subFields.length ? el('span', { className: 'detail__subkeys' }, subFields.map((field) =>
+          el('span', {}, [el('span', { className: 'detail__label', text: `${field.label} ` }), el('span', { className: 'mono', text: item[field.id] || '—' })]))) : null,
         badgeField ? DS.domain.badge(badgeField, item[badgeField.id]) : null,
-      );
+      ].filter(Boolean));
 
       const notices = [];
       if (selection.status === 'loading') notices.push(el('p', { className: 'inline-note' }, [icon('fa-spinner', '…', 'fa-spin'), el('span', { text: ' 最新の内容を確かめています' })]));
       if (selection.status === 'error') notices.push(el('p', { className: 'inline-note inline-note--danger' }, [icon('fa-circle-xmark', '×'), el('span', { text: ' ' + selection.error.userMessage })]));
-      if (selection.duplicated) notices.push(el('p', { className: 'inline-note inline-note--warning' }, [icon('fa-triangle-exclamation', '!'), el('span', { text: ' 同じロット番号・鋳造番号のデータが複数あります。最初の 1 件を表示しています。' })]));
+      if (selection.duplicated) {
+        const keyNames = DS.domain.keyFields().map((field) => field.label).join('・');
+        notices.push(el('p', { className: 'inline-note inline-note--warning' }, [icon('fa-triangle-exclamation', '!'), el('span', { text: ` 同じ${keyNames}のデータが複数あります。最初の 1 件を表示しています。` })]));
+      }
       notice.replaceChildren(...notices);
 
-      // 詳細に出す項目と順番は view の detailFields。まとまりは fields.<項目>.group
-      body.replaceChildren(...DS.domain.fieldGroups.list().flatMap((group) => {
-        const rows = DS.domain.detailFields().filter((field) => field.group === group.id).flatMap((field) => {
+      // 詳細に出す項目は view の detailFields、まとまりと順番は detailGroups。
+      // 項目が多いので、まとまりごとに開閉でき、開閉の状態を覚える（最初は先頭の 2 つだけ開く）
+      const openState = DS.core.storage.read(OPEN_KEY, {});
+      body.replaceChildren(...DS.domain.detailSections().map(({ group, fields }, index) => {
+        const rows = fields.flatMap((field) => {
           const value = item[field.id];
           const copyButton = field.copy && value
             ? el('button', { type: 'button', className: 'copy-btn', title: `${field.label}をコピー`, 'aria-label': `${field.label}をコピー` }, [icon('fa-copy', '⧉')])
@@ -89,11 +99,20 @@
             el('dd', {}, [valueNode(field, value), copyButton]),
           ];
         });
-        if (rows.length === 0) return null;
-        return el('section', { className: 'detail__group' }, [
-          el('h3', { className: 'detail__group-title' }, [icon(group.icon, ''), el('span', { text: group.label })]),
+        const isOpen = openState[group.id] === undefined ? index < DEFAULT_OPEN_GROUPS : openState[group.id];
+        const section = el('details', { className: 'detail__group', open: isOpen }, [
+          el('summary', { className: 'detail__group-title' }, [
+            icon('fa-chevron-right', '›', 'detail__chevron'), icon(group.icon, ''),
+            el('span', { text: group.label }), el('span', { className: 'detail__count', text: `${fields.length}` }),
+          ]),
           el('dl', { className: 'facts facts--detail' }, rows),
         ]);
+        section.addEventListener('toggle', () => {
+          const next = DS.core.storage.read(OPEN_KEY, {});
+          next[group.id] = section.open;
+          DS.core.storage.write(OPEN_KEY, next);
+        });
+        return section;
       }));
       if (selection.status === 'done') DS.util.flash(title);
 

@@ -15,6 +15,8 @@ APP_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 sys.path.insert(0, os.path.join(APP_ROOT, "python"))
 
 from data_search.settings import public_view_of  # noqa: E402
+from data_search.settings.defaults import BUILTIN_DEFAULTS  # noqa: E402
+from data_search.settings.merge import fill_defaults  # noqa: E402
 
 SAMPLE_DIR = os.path.join(APP_ROOT, "config", "sample")
 OUTPUT = os.path.join(APP_ROOT, "src", "js", "sample", "sample-view.js")
@@ -38,6 +40,9 @@ def main():
         schema = json.load(fp)
     with open(os.path.join(SAMPLE_DIR, "view.sample.json"), encoding="utf-8") as fp:
         view = json.load(fp)
+    # サンプルから省かれた任意の項目は、起動時と同じく内部の既定値で補う
+    schema = fill_defaults(schema, BUILTIN_DEFAULTS["schema"])
+    view = fill_defaults(view, BUILTIN_DEFAULTS["view"])
     text = json.dumps(public_view_of(schema, view), ensure_ascii=False, indent=2)
     with open(OUTPUT, "w", encoding="utf-8", newline="\n") as fp:
         fp.write(TEMPLATE.format(json=text))

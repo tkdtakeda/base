@@ -71,12 +71,21 @@ data-search/config/
 | サンプルにないキー（論理項目を足せる場所） | `schema.columns`・`schema.types`・`view.fields` は新しいキーを受け入れて使う（社内だけの論理項目を足せるように） |
 
 - サンプル側のオブジェクトは変更しない（新しいオブジェクトを作る）。
+- サンプルを読んだ直後に、アプリ内の既定値（`settings/defaults.py` の `BUILTIN_DEFAULTS`）でサンプルにないキーを補う（`fill_defaults`）。
+  サンプルに書いてある値が常に優先。補ったキーはサンプルにあるのと同じ扱いになり、local で上書きしても注意は出ない。
+
+| 補う既定値 | 値 |
+|---|---|
+| `config.cache` | `temporaryExtension: ".tmp"`・`keepPreviousOnFailure: true` |
+| `config.devServer` | `host: "127.0.0.1"`・`port: 8765`・`openBrowser: true` |
+| `schema.types` | `{}`（日付の項目なし） |
+| `view.detailGroups` / `view.fields` / `view.filters` | `[]` / `{}` / `[]` |
 - ローカルのファイルがないときは、空の上書き `{}` として扱う。
 
 例（view）：
 
 ```jsonc
-// view.sample.json：listColumns 12 列・detailFields 12 項目
+// view.sample.json：listColumns 17 列・detailFields 83 項目
 // view.local.json
 { "listColumns": [ { "field": "lotNo", "label": "ロットNo.", "visible": true, "searchable": true } ] }
 // 結果：listColumns は 1 列だけ（配列は丸ごと置き換え）。detailFields・fields・filters はサンプルのまま
@@ -110,8 +119,9 @@ data-search/config/
 - 同じ表示項目が重複していない（`listColumns`・`detailFields`・`filters`）
 - `visible`・`searchable` が真偽値。番号で探せる項目が少なくとも 1 つある
 - `filters` の `type` が values / date。date は schema の `types` で date の項目だけ
+- `detailGroups[]` は `id`・`label` が必須、`fields` は配列で、中の論理名が schema にある。同じ項目を 2 つのまとまりに入れない
 - `fields.<項目>.group` が `detailGroups` にある、`badge` のパターンと色が正しい
-- 表示名がどこにもない項目は注意（画面に論理名が出てしまうため）
+- 表示名がどこにもない項目は注意（画面に論理名が出てしまうため）。項目ごとではなく「N 項目に表示名がない」と 1 件にまとめて出す
 - 表示順は配列の順、`visible: false` の列は一覧に出さない（画面側で守る）
 
 ### 6.4 誤りの表示
@@ -133,7 +143,7 @@ data-search/config/
 
 ```mermaid
 flowchart TD
-    S[起動] --> C1[config.sample.json を読む]
+    S[起動] --> C1[config.sample.json を読む<br/>アプリ内の既定値で不足を補う]
     C1 --> C2{config/local/config.local.json がある?}
     C2 -- ある --> C3[読み込んで再帰マージ]
     C2 -- ない --> C4[サンプルのまま]
@@ -154,7 +164,9 @@ flowchart TD
     E -- ない --> W[注意があれば表示して続ける]
     W --> Q{キャッシュがある?}
     Q -- ない --> R[共有 SQLite をコピー → テーブル・列を確認 → キャッシュに置換]
-    Q -- ある --> U
+    Q -- ある --> M{今の schema と合う?}
+    M -- 合わない --> R
+    M -- 合う --> U
     R --> U[画面を開く]
     U --> G[画面：get_view_config で表示定義を受け取り、一覧・詳細・検索・絞り込みを組み立てる]
 ```
@@ -169,7 +181,8 @@ flowchart TD
  ├─ 検証（config → schema → view）
  │    ├─ 誤りあり → 対象・項目・理由・対応をすべて表示して停止
  │    └─ 注意あり → 表示して続ける（未知のキーなど）
- ├─ キャッシュがなければ作る（コピー → テーブル・列の確認 → 置換）
+ ├─ キャッシュがない／今の schema（テーブル名・列名）と合わない → 作る（コピー → テーブル・列の確認 → 置換）
+ │    └─ 作れなければ古いキャッシュは使わず、画面で「データを更新してください」と示す
  └─ 画面：表示定義を受け取って組み立てる
 ```
 

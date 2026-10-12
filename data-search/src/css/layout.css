@@ -414,3 +414,32 @@
 .fatal__title { margin-bottom: var(--sp-3); font-size: var(--fs-xl); color: var(--color-danger); }
 .fatal__text { color: var(--color-text-muted); }
 .fatal__id { margin-top: var(--sp-2); font-size: var(--fs-xs); color: var(--color-text-subtle); }
+
+/* ── 詳細：鍵の 2 つ目以降・開閉できるまとまり ── */
+.detail__subkeys { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-md); }
+.detail__group > summary { cursor: pointer; list-style: none; user-select: none; }
+.detail__group > summary::-webkit-details-marker { display: none; }
+.detail__chevron { width: 12px; color: var(--color-text-subtle); transition: transform var(--dur-fast) var(--ease); }
+.detail__group[open] .detail__chevron { transform: rotate(90deg); }
+.detail__group:not([open]) > summary { margin-bottom: 0; }
+.detail__count { margin-left: auto; padding: 0 var(--sp-2); border-radius: var(--r-pill); background: var(--color-surface-sunken); color: var(--color-text-muted); font-size: var(--fs-xs); font-weight: var(--fw-normal); }
+
+/* ── 番号の種類が多いときの選択欄 ── */
+.type-select__wrap { position: relative; display: inline-flex; flex-shrink: 0; align-items: center; }
+.type-select {
+  height: var(--h-control-lg);
+  min-width: 150px;
+  padding: 0 calc(var(--sp-6) + var(--sp-1)) 0 calc(var(--sp-6) + var(--sp-1));
+  border: var(--bw) solid var(--color-border-strong);
+  border-radius: var(--r-md);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-weight: var(--fw-bold);
+  appearance: none;
+  cursor: pointer;
+}
+.type-select:focus { border-color: var(--color-focus); outline: none; box-shadow: 0 0 0 3px var(--color-primary-soft-strong); }
+.type-select__icon,
+.type-select__chevron { position: absolute; color: var(--color-primary); pointer-events: none; }
+.type-select__icon { left: var(--sp-3); }
+.type-select__chevron { right: var(--sp-3); font-size: var(--fs-sm); }

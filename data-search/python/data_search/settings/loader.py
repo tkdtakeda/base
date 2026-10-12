@@ -16,7 +16,8 @@ import os
 from dataclasses import dataclass
 
 from ..errors import AppError
-from .merge import deep_merge, type_name
+from .defaults import BUILTIN_DEFAULTS
+from .merge import deep_merge, fill_defaults, type_name
 from .validation import Issue, SettingSource, validate_config, validate_schema, validate_view
 
 KINDS = ("config", "schema", "view")
@@ -139,6 +140,8 @@ def _load_pair(kind, sample_dir, local_dir, app_root, issues, warnings):
     sample = _read_json(sample_path, sample_label, issues)
     if sample is None:
         return None, None
+    # サンプルから省かれている任意の項目（cache・devServer など）は内部の既定値で補う
+    sample = fill_defaults(sample, BUILTIN_DEFAULTS[kind])
 
     local_loaded = os.path.isfile(local_path)  # ないことは誤りにしない
     override = _read_json(local_path, local_label, issues) if local_loaded else {}

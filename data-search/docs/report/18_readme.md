@@ -6,7 +6,7 @@
 # 対象データ検索（data-search）
 
 共有 SQLite のロットを一覧で表示し、絞り込み（タグで保存・再利用）とクリックで詳細を参照するツールです。
-番号（ロット・検査・鋳造・受注）が分かっているときは、入力して探すこともできます。
+番号（ロット・BOX・検査・鋳造・受注など、view で searchable にした項目）が分かっているときは、入力して探すこともできます。
 共有データは直接検索せず、**手元へコピー → 検証 → 問題がなければ入れ替え** たローカルキャッシュを検索します。
 
 最終形は Tauri + Rust のデスクトップアプリですが、ビルド前に使用感を確かめられるよう、
@@ -24,8 +24,8 @@
 ## 3 分で使う
 
 1. `src/index.html` を Edge で開く（サーバーやビルドは不要）。
-2. 右上の青いボタン「サンプルを読み込む」→ 左のパネルで「標準のデータ」を **読み込む**。ロットの一覧が納期の近い順に出る。
-3. 一覧の上の「絞り込み」で条件を選ぶ（例：状態＝仕掛中、納期＝今日〜30 日後）→「今の条件をタグにする」で名前を付けて保存。次回からはタグを押すだけ。
+2. 右上の青いボタン「サンプルを読み込む」→ 左のパネルで「標準のデータ」を **読み込む**。ロットの一覧が view の `defaultSort`（標準は工場納期の近い順）で出る。1 ロットに BOX が複数あれば BOX ごとに 1 行。
+3. 一覧の上の「絞り込み」で条件を選ぶ（例：状態＝仕掛中、取引先名＝架空商事）→「今の条件をタグにする」で名前を付けて保存。次回からはタグを押すだけ。
 4. ロットの行を押すと右に詳細。`↑` `↓` で行を移動、`Esc` で閉じる。`F1` で取扱説明書。
 5. 番号が分かっているときは上部バーに入れて `Enter`（今の絞り込みの中から探す）。
 
@@ -80,6 +80,8 @@ config/
 - オブジェクトはキーごとに再帰的に重ね、**配列はローカル側にあれば丸ごと置き換え**ます。
 - サンプルにないキーは読み捨てず、**ファイル名と項目を示して注意**を出します（`schema.columns`・`schema.types`・`view.fields` は論理項目を足せる場所なので注意しません）。
 - マージ後に役割ごとに検証し、誤りがあればすべて表示して止まります。
+- sample に書いていない運用上の項目（`config.cache`・`config.devServer`・`schema.types`・`view.fields` など）は、アプリ内の既定値（`settings/defaults.py`）で補います。sample に書けば sample が、local に書けば local が優先です。
+- 手元のキャッシュが今の schema（テーブル名・列名）と合わないときは使わず、起動時に作り直します（作り直せなければ「データを更新してください」と表示）。
 
 ```text
 [設定エラー]
@@ -100,23 +102,18 @@ config/
 }
 ```
 
-`config/local/schema.local.json`
+`config/local/schema.local.json`（論理名は schema.sample.json の columns と同じ。値だけ実際の列名に）
 ```json
 {
   "tableName": "<実際のテーブル名を設定>",
   "columns": {
     "lotNo": "<実際のロット番号列>",
+    "boxNo": "<実際のBOX番号列>",
     "inspectionNo": "<実際の検査番号列>",
-    "castingNo": "<実際の鋳造番号列>",
-    "orderNo": "<実際の受注番号列>",
-    "material": "<実際の材質列>",
-    "temper": "<実際の質別列>",
-    "size": "<実際の寸法列>",
-    "customer": "<実際の得意先列>",
-    "deliveryDate": "<実際の納期列>",
-    "process": "<実際の工程列>",
-    "equipment": "<実際の設備列>",
-    "status": "<実際の状態列>"
+    "…": "（schema.sample.json の columns にある論理名すべて）"
+  },
+  "types": {
+    "factoryDeliveryDate": "date"
   }
 }
 ```
@@ -126,7 +123,7 @@ config/
 {
   "listColumns": [
     { "field": "lotNo", "label": "ロット番号", "visible": true, "searchable": true },
-    { "field": "inspectionNo", "label": "検査番号", "visible": true, "searchable": true }
+    { "field": "boxNo", "label": "BOX番号", "visible": true, "searchable": true }
   ]
 }
 ```
@@ -154,19 +151,20 @@ config/
 | 決めること | view の項目 |
 |---|---|
 | 一覧の列・見出し・順番・幅・表示/非表示 | `listColumns`（配列の順が表示順。`visible: false` の列は一覧に出さない） |
-| 番号で探せる項目（上部バーの種類） | `listColumns[].searchable` |
+| 番号で探せる項目（上部バーの種類） | `listColumns[].searchable`（4 種類までは横並びのボタン、5 種類以上は選択欄。どちらも `Alt+数字` で切り替え） |
 | 詳細に出す項目と順番 | `detailFields` |
-| 詳細のまとまり（見出し・アイコン） | `detailGroups` と `fields.<項目>.group` |
-| 詳細・絞り込みで使う表示名、等幅・コピー・入力例 | `fields.<項目>`（`label` / `mono` / `copy` / `example` / `short`） |
+| 詳細のまとまり（見出し・中身・アイコン） | `detailGroups[]`（`id`・`label`・`fields`。`icon` は任意）。どのまとまりにもない項目は「その他」。最初の 2 つを開いた状態で表示し、開閉はブラウザに記憶 |
+| 詳細・絞り込みで使う表示名、等幅・コピー・入力例 | `fields.<項目>`（`label` / `mono` / `copy` / `example` / `short`）。`label` がなければ listColumns の見出し、それもなければ論理名。`mono`・`copy` は指定がなければ検索できる項目だけ有効 |
 | 値の札（例：状態の色分け） | `fields.<項目>.badge`（上から順に当てはめる。`tone` は success / info / warning / danger / neutral） |
 | 絞り込める項目と種類 | `filters`（`values`＝値から選ぶ / `date`＝日付の範囲。`date` は schema の `types` で date の項目だけ） |
 | 起動時の並び順 | `defaultSort` |
 
-1 件を特定する項目（ロット番号＋鋳造番号）と、日付として扱う項目は `schema` の `recordKey` / `types` で決めます。
+1 件を特定する項目（標準はロット番号＋BOX番号）と、日付として扱う項目は `schema` の `recordKey` / `types` で決めます。
 
 ### 絞り込みとタグ
 
-- 絞り込める項目：材質・質別・得意先・工程・設備・状態（値の一覧から複数選択。件数つき・空欄も選べる）、納期（日付の範囲）。
+- 絞り込める項目：view の `filters` で決める（標準は製造材質・製造調質・取引先名・残仕掛設備コース・最終実績設備・仕掛区分・保留区分・状態。値の一覧から複数選択。件数つき・空欄も選べる）。
+- 日付の範囲で絞り込むには、schema の `types` で日付にし、view の `filters` に `type: "date"` で足す（標準のサンプルには未設定）。
 - 日付は「今日より前／今日／今日〜7 日後／今日〜30 日後／7 日前〜今日」のほか、今日からの日数や日付そのもので指定できる。
   **今日からの日数で決めたタグは、毎日その日を基準に絞り込む**（翌月も使える）。
 - 項目どうしは「かつ」、同じ項目の中は「または」。番号の検索とも「かつ」。
@@ -205,7 +203,7 @@ data-search/
 ├─ python/                        … Python 版バックエンド（Rust 版の手本）
 │  ├─ run_server.py               … 起動
 │  ├─ data_search/
-│  │  ├─ settings/                … 設定の読み込み（loader）・再帰マージ（merge）・検証（validation）
+│  │  ├─ settings/                … 設定の読み込み（loader）・再帰マージ（merge）・検証（validation）・既定値（defaults）
 │  │  └─ …                        … キャッシュ・検索・HTTP など
 │  ├─ tools/make_dummy_db.py      … ダミーの共有 SQLite と config/dummy を作る
 │  ├─ tools/sync_sample_view.py   … サンプルの表示定義を画面用（src/js/sample/sample-view.js）に書き写す
@@ -265,10 +263,10 @@ Tauri 版の画面側は `js/api/remote-adapters.js` の `tauri` アダプター
 | `get_filter_values`（新規） | 入力 `{ field, filters, (番号の検索) }`、戻り値 `{ success, field, values: [{ value, count }], truncated }` | 絞り込みの値を件数つきで見て選ぶため |
 | `search_lots` | 入力に `sortKey`（論理名・既定は view の defaultSort）・`sortOrder`（asc/desc）・`filters` を追加（省略可） | 見出しでの並べ替えをページをまたいで正しく行うため |
 | `search_lots` / `list_lots` | 戻り値に `keyword`（正規化後）・`today`（日付の基準日）・`elapsedMs` を追加。`items` は schema の全論理項目 | 画面に根拠（全角→半角・基準日・検索時間）を出すため |
-| `get_lot_detail` | 入力は schema の `recordKey` の項目（標準は `{ lotNo, castingNo }`）。戻り値は `{ success, item, duplicated }` | ロット番号＋鋳造番号で 1 件に決まるため |
+| `get_lot_detail` | 入力は schema の `recordKey` の項目（標準は `{ lotNo, boxNo }`）。戻り値は `{ success, item, duplicated }` | ロット番号＋BOX番号で 1 件に決まるため |
 | `get_cache_status` | `rowCount`・`sourceReachable`・`sourceHasUpdate`・`lastRefreshAt`・`errorCode`・`errorMessage`・`settingsWarnings` を追加 | 「データ」パネルで状態の根拠と設定の注意を示すため |
 | `refresh_cache` | 戻り値に `rowCount` を追加 | 更新の結果を件数で示すため |
-| 設定 | `devServer`（host / port / openBrowser）を追加 | Python 版のみで使用。Tauri 版では無視してよい。local に書く必要はない |
+| 設定 | `devServer`（host / port / openBrowser）・`cache`（temporaryExtension / keepPreviousOnFailure）は sample に書かなくてもアプリ内の既定値を使う。変えたいときだけ sample か local に書く | sample を簡潔に保つため。`devServer` は Python 版のみ |
 
 検索の決まり：検索値は前後の空白を除き、全角英数・記号を半角にそろえ（NFKC）、大文字小文字を区別しません。
 部分一致の `%` `_` は文字として扱います。SQL はすべてパラメーター化しています。
@@ -277,8 +275,8 @@ Tauri 版の画面側は `js/api/remote-adapters.js` の `tauri` アダプター
 
 ```json
 {
-  "status":       { "type": "values", "values": ["仕掛中", null] },
-  "deliveryDate": { "type": "date", "mode": "relative", "fromDays": 0, "toDays": 7 }
+  "cfStatus":            { "type": "values", "values": ["仕掛中", null] },
+  "factoryDeliveryDate": { "type": "date", "mode": "relative", "fromDays": 0, "toDays": 7 }
 }
 ```
 
@@ -302,8 +300,8 @@ python -m unittest discover -s python/tests -v
 
 画面：`src/index.html` を開き、F12 → コンソールに `tests/ui-check.js` の中身を貼って Enter。「すべて成功」と出れば OK。
 
-大量データ：画面は「サンプル → 大量のデータ（20,000 件）」、Python 版は
-`python python/tools/make_dummy_db.py --rows 100000` で 10 万件のダミーを作れます。
+大量データ：画面は「サンプル → 大量のデータ（ロット 10,000 件）」、Python 版は
+`python python/tools/make_dummy_db.py --lots 50000` でロット 5 万件（BOX 約 10 万件）のダミーを作れます。
 
 異常系の再現：`python python/tools/make_dummy_db.py --variant corrupt`（`missing-table` / `missing-column` も可）の後に、
 画面で「データを更新する」→ 前回のデータを使い続けることを確認。`--variant normal` で元に戻ります。

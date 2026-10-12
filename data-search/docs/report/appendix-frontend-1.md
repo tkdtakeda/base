@@ -1,4 +1,4 @@
-## 付録：画面側の修正ファイルの全文（1/2）
+## 付録：画面側の修正ファイルの全文（1/3）
 
 `src/css/components.css`
 
@@ -929,6 +929,35 @@
 .fatal__title { margin-bottom: var(--sp-3); font-size: var(--fs-xl); color: var(--color-danger); }
 .fatal__text { color: var(--color-text-muted); }
 .fatal__id { margin-top: var(--sp-2); font-size: var(--fs-xs); color: var(--color-text-subtle); }
+
+/* ── 詳細：鍵の 2 つ目以降・開閉できるまとまり ── */
+.detail__subkeys { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-md); }
+.detail__group > summary { cursor: pointer; list-style: none; user-select: none; }
+.detail__group > summary::-webkit-details-marker { display: none; }
+.detail__chevron { width: 12px; color: var(--color-text-subtle); transition: transform var(--dur-fast) var(--ease); }
+.detail__group[open] .detail__chevron { transform: rotate(90deg); }
+.detail__group:not([open]) > summary { margin-bottom: 0; }
+.detail__count { margin-left: auto; padding: 0 var(--sp-2); border-radius: var(--r-pill); background: var(--color-surface-sunken); color: var(--color-text-muted); font-size: var(--fs-xs); font-weight: var(--fw-normal); }
+
+/* ── 番号の種類が多いときの選択欄 ── */
+.type-select__wrap { position: relative; display: inline-flex; flex-shrink: 0; align-items: center; }
+.type-select {
+  height: var(--h-control-lg);
+  min-width: 150px;
+  padding: 0 calc(var(--sp-6) + var(--sp-1)) 0 calc(var(--sp-6) + var(--sp-1));
+  border: var(--bw) solid var(--color-border-strong);
+  border-radius: var(--r-md);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-weight: var(--fw-bold);
+  appearance: none;
+  cursor: pointer;
+}
+.type-select:focus { border-color: var(--color-focus); outline: none; box-shadow: 0 0 0 3px var(--color-primary-soft-strong); }
+.type-select__icon,
+.type-select__chevron { position: absolute; color: var(--color-primary); pointer-events: none; }
+.type-select__icon { left: var(--sp-3); }
+.type-select__chevron { right: var(--sp-3); font-size: var(--fs-sm); }
 ```
 
 `src/index.html`
@@ -1324,78 +1353,6 @@
     detect: () => true,
     create: createMockAdapter,
   });
-})();
-```
-
-`src/js/controllers/app-state.js`
-
-```javascript
-/* =========================================================
-   状態の初期値と、設定の自動保存（次に開いたときに元に戻す）
-   ========================================================= */
-(function () {
-  'use strict';
-
-  const DS = window.DS;
-  DS.controllers = DS.controllers || {};
-
-  const PREFS_KEY = 'prefs';
-  const HISTORY_MAX = 8;
-
-  function defaultVisibleColumns() {
-    return DS.domain.listFields().map((field) => field.id);
-  }
-
-  function createInitialState(mode) {
-    const prefs = DS.core.storage.read(PREFS_KEY, {});
-    const searchable = DS.domain.searchableFields().map((field) => field.id);
-    const knownColumns = (prefs.visibleColumns || []).filter((id) => DS.domain.fields.has(id));
-    return {
-      mode,
-      appInfo: null,
-      cache: { status: null, refreshing: false, refreshStartedAt: null },
-      query: {
-        searchType: searchable.includes(prefs.searchType) ? prefs.searchType : searchable[0],
-        keyword: '',
-        matchMode: prefs.matchMode === 'exact' ? 'exact' : 'partial',
-      },
-      sort: Object.assign({}, DS.domain.DEFAULT_SORT),
-      filters: {},
-      tags: { items: DS.controllers.loadTags(), activeId: null },
-      search: { status: 'idle', result: null, request: null, error: null },
-      selection: { key: null, item: null, status: 'idle', error: null, duplicated: false },
-      ui: { panel: null },
-      columns: { visible: knownColumns.length ? knownColumns : defaultVisibleColumns() },
-      history: prefs.history || {},
-      samplesVersion: 0,
-    };
-  }
-
-  /** 保存したい部分が変わったときだけ書き込む */
-  function attachPrefsPersistence(store, bus) {
-    const WATCHED = ['query', 'columns', 'history'];
-    bus.on('state', ({ state, changed }) => {
-      if (!changed.some((key) => WATCHED.includes(key))) return;
-      const result = DS.core.storage.write(PREFS_KEY, {
-        searchType: state.query.searchType,
-        matchMode: state.query.matchMode,
-        visibleColumns: state.columns.visible,
-        history: state.history,
-      });
-      if (!result.ok) bus.emit('prefs:failed', result.reason);
-    });
-  }
-
-  function pushHistory(history, searchType, keyword) {
-    const list = (history[searchType] || []).filter((item) => item !== keyword);
-    list.unshift(keyword);
-    return Object.assign({}, history, { [searchType]: list.slice(0, HISTORY_MAX) });
-  }
-
-  DS.controllers.createInitialState = createInitialState;
-  DS.controllers.attachPrefsPersistence = attachPrefsPersistence;
-  DS.controllers.defaultVisibleColumns = defaultVisibleColumns;
-  DS.controllers.pushHistory = pushHistory;
 })();
 ```
 

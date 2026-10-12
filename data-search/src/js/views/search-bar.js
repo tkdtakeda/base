@@ -7,11 +7,19 @@
 
   const DS = window.DS;
 
+  const SEGMENT_MAX = 4; // 番号の種類をボタンで並べる上限
+
   function createSearchBar(root, { store, bus, search, openPanel, refresh }) {
     const { el, icon } = DS.util;
     const searchable = DS.domain.searchableFields();
 
-    // ── 番号の種類（常に見えるボタン。Alt+1〜4 でも切り替え） ──
+    // ── 番号の種類 ──
+    // 4 種類までは常に見えるボタン（見て選べる）。それより多いと上部バーに収まらないため、
+    // 1 つの選択欄にまとめる。どちらも Alt+1〜9 で切り替えられる。
+    const useSelect = searchable.length > SEGMENT_MAX;
+    const typeSelect = el('select', { className: 'type-select', 'aria-label': '番号の種類', title: '番号の種類（Alt+1〜' + searchable.length + '）' },
+      searchable.map((field, index) => el('option', { value: field.id, text: `${index + 1}. ${field.listLabel}` })));
+    typeSelect.addEventListener('change', () => chooseType(typeSelect.value));
     const typeButtons = searchable.map((field, index) =>
       el('button', {
         type: 'button',
@@ -57,7 +65,7 @@
     const hint = el('p', { className: 'search__hint', id: 'search-hint' });
 
     root.appendChild(el('div', { className: 'search' }, [
-      el('div', { className: 'search__row' }, [typeGroup, inputBox, matchGroup, cta]),
+      el('div', { className: 'search__row' }, [useSelect ? el('span', { className: 'type-select__wrap' }, [icon('fa-hashtag', '#', 'type-select__icon'), typeSelect, icon('fa-chevron-down', '▾', 'type-select__chevron')]) : typeGroup, inputBox, matchGroup, cta]),
       hint,
     ]));
 
@@ -113,14 +121,14 @@
       }
     }
 
-    // Alt+1〜4：種類の切り替え / 「/」：入力欄へ
+    // Alt+数字：種類の切り替え / 「/」：入力欄へ
     document.addEventListener('keydown', (event) => {
       if (event.altKey && !event.ctrlKey && /^[1-9]$/.test(event.key)) {
         const field = searchable[Number(event.key) - 1];
         if (field) {
           event.preventDefault();
           chooseType(field.id);
-          DS.util.flash(typeButtons[Number(event.key) - 1]);
+          DS.util.flash(useSelect ? typeSelect : typeButtons[Number(event.key) - 1]);
         }
       } else if (event.key === '/' && !event.ctrlKey && !event.altKey && !isTyping(event.target)) {
         event.preventDefault();
@@ -136,9 +144,10 @@
     function render(state) {
       const field = DS.domain.fields.get(state.query.searchType);
       typeButtons.forEach((button) => button.setAttribute('aria-checked', String(button.dataset.type === state.query.searchType)));
+      if (typeSelect.value !== state.query.searchType) typeSelect.value = state.query.searchType;
       matchButtons.forEach((button) => button.setAttribute('aria-checked', String(button.dataset.match === state.query.matchMode)));
       if (input.value !== state.query.keyword) input.value = state.query.keyword;
-      input.placeholder = `例：${field.example}`;
+      input.placeholder = field.example ? `例：${field.example}` : `${field.listLabel}を入力`;
       inputLabel.textContent = field.listLabel;
       clearButton.hidden = !state.query.keyword;
 
@@ -154,7 +163,7 @@
       ctaLabel.textContent = ready.busy ? '読み込み中…' : ready.action ? ready.actionLabel : ready.label || '検索する';
 
       hint.replaceChildren(...(ready.ok
-        ? [el('span', { text: 'Enter で検索' }), sep(), el('span', { text: 'Alt+1〜4 で番号の種類を切り替え' }), sep(), el('span', { text: '/ で入力欄へ' })]
+        ? [el('span', { text: 'Enter で検索' }), sep(), el('span', { text: `Alt+1〜${searchable.length} で番号の種類を切り替え` }), sep(), el('span', { text: '/ で入力欄へ' })]
         : [icon('fa-circle-info', 'i'), el('span', { text: ready.reason })]));
       hint.classList.toggle('is-blocked', !ready.ok && !ready.busy && !ready.quiet);
     }

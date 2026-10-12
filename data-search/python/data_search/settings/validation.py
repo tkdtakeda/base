@@ -223,15 +223,25 @@ def validate_view(view, src, schema):
                 err(path, f"\"{name}\" が detailFields の中で重複しています。", "どちらか一方を消してください。")
             seen.add(name)
 
-    group_ids = []
+    group_ids, grouped = [], {}
     for index, group in enumerate(view["detailGroups"]):
         path = f"detailGroups[{index}]"
         if not isinstance(group, dict) or _blank(group.get("id")) or _blank(group.get("label")):
-            err(path, "id と label が必要です。", "{ \"id\": \"...\", \"label\": \"...\", \"icon\": \"fa-...\" } の形にしてください。")
+            err(path, "id と label が必要です。", "{ \"id\": \"...\", \"label\": \"...\", \"fields\": [ ... ] } の形にしてください。")
             continue
         if group["id"] in group_ids:
             err(f"{path}.id", f"\"{group['id']}\" が重複しています。", "別の id にしてください。")
         group_ids.append(group["id"])
+        members = group.get("fields", [])
+        if not isinstance(members, list):
+            err(f"{path}.fields", "配列 [ ] ではありません。", "[\"論理名\", ...] の形にしてください。")
+            continue
+        for position, name in enumerate(members):
+            member_path = f"{path}.fields[{position}]"
+            if check_field(member_path, name):
+                if name in grouped:
+                    err(member_path, f"\"{name}\" は detailGroups[{grouped[name]}] にも入っています。", "1 つのまとまりにだけ入れてください。")
+                grouped.setdefault(name, index)
 
     for name, options in view["fields"].items():
         path = f"fields.{name}"
@@ -276,14 +286,16 @@ def validate_view(view, src, schema):
             err(f"{base}.type", f"\"{field}\" は schema.types で date になっていません。",
                 f"schema の types に \"{field}\": \"date\" を足すか、type を values にしてください。")
 
-    # 表示名がどこにもない項目は、論理名（英字）がそのまま画面に出てしまう
+    # 表示名がどこにもない項目は、論理名（英字）がそのまま画面に出てしまう（まとめて 1 件の注意にする）
     listed = {c.get("field"): c.get("label") for c in view["listColumns"] if isinstance(c, dict)}
     used = list(view["detailFields"]) + [f.get("field") for f in view["filters"] if isinstance(f, dict)]
-    for name in dict.fromkeys(used):
-        if name in columns and _blank(view["fields"].get(name, {}).get("label")) and _blank(listed.get(name)):
-            issues.append(Issue("warning", src.local_label, f"fields.{name}.label",
-                                f"\"{name}\" の表示名がないため、画面に論理名がそのまま表示されます。",
-                                f"view の fields.{name} に \"label\": \"表示名\" を設定してください。"))
+    unlabeled = [name for name in dict.fromkeys(used)
+                 if name in columns and _blank(view["fields"].get(name, {}).get("label")) and _blank(listed.get(name))]
+    if unlabeled:
+        shown = "、".join(unlabeled[:8]) + (f" ほか {len(unlabeled) - 8} 項目" if len(unlabeled) > 8 else "")
+        issues.append(Issue("warning", src.origin("fields"), "fields.<項目>.label",
+                            f"{len(unlabeled)} 項目に表示名がないため、詳細などに論理名がそのまま表示されます（{shown}）。",
+                            "view の fields に { \"論理名\": { \"label\": \"表示名\" } } を足してください（一覧の列は listColumns の label が使われます）。"))
 
     sort = view["defaultSort"]
     check_field("defaultSort.field", sort.get("field"))

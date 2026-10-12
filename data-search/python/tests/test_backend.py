@@ -22,27 +22,37 @@ from data_search.errors import AppError  # noqa: E402
 from data_search.http_server import AppContext, create_server  # noqa: E402
 from data_search.lot_service import LotService  # noqa: E402
 
-COLUMNS = {
-    "lotNo": "LOT_NO", "inspectionNo": "KENSA_NO", "castingNo": "CHUZO_NO", "orderNo": "JUCHU_NO",
-    "material": "ZAISHITSU", "temper": "SHITSUBETSU", "size": "SUNPO", "customer": "得意先名",
-    "deliveryDate": "NOUKI", "process": "KOUTEI", "equipment": "SETSUBI", "status": "JOUTAI",
-}
-ROWS = [
-    ("LOT-001", "INS-001", "CST-001", "ORD-1", "A5052", "H14", "t1×1000×2000", "サンプル工業", "2026-10-01", "検査", "QC-01", "検査済み"),
-    ("LOT-002", "INS-002", "CST-002", "ORD-1", "A6061", "T6", "t2×1000×2000", "テスト金属", "2026-10-02", "切断", "SL-01", "仕掛中"),
-    ("LOT_100%-A", "INS-003", "CST-003", "ORD-2", "A1100", "O", "t1×1000×2000", "見本製作所", "2026-10-03", "鋳造", "CST-01", "保留"),
-    ("試作-α-001", "INS-004", "CST-004", "ORD-3", "A7075", "T651", "t5×1250×2500", "架空商事", "2026-10-04", "焼鈍", "AN-01", "不適合"),
-    ("LOT-DUP", "INS-005", "CST-005", "ORD-4", "A3003", "H24", "t1×1000×2000", "例示精工", "2026-10-05", "検査", "QC-02", "検査待ち"),
-    ("LOT-DUP", "INS-006", "CST-006", "ORD-4", "A3003", "H24", "t1×1000×2000", "例示精工", "2026-10-05", "検査", "QC-02", "出荷済み"),
-]
 APP_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SAMPLE_DIR = os.path.join(APP_ROOT, "config", "sample")
+
+with open(os.path.join(SAMPLE_DIR, "schema.sample.json"), encoding="utf-8") as _fp:
+    LOGICAL_FIELDS = list(json.load(_fp)["columns"])
+# 物理列名：論理名と違う名前にする（1 列は日本語。引用符の処理の確認用）
+COLUMNS = {name: ("取引先_名称" if name == "customerName" else "C_" + name.upper()) for name in LOGICAL_FIELDS}
+
+# テストで値を入れる項目（ほかの項目は空）
+ROW_FIELDS = ("lotNo", "boxNo", "inspectionNo", "castingNo", "orderNo", "manufacturingMaterial", "manufacturingTemper",
+              "orderThickness", "customerName", "factoryDeliveryDate", "plannedEquipmentName", "lastActualEquipmentName", "cfStatus")
+ROWS = [
+    ("LOT-001", "01", "INS-001", "CST-001", "ORD-1", "A5052", "H14", "1.00", "サンプル工業", "2026-10-01", "検査", "QC-01", "検査済み"),
+    ("LOT-002", "01", "INS-002", "CST-002", "ORD-1", "A6061", "T6", "2.00", "テスト金属", "2026-10-02", "切断", "SL-01", "仕掛中"),
+    ("LOT_100%-A", "01", "INS-003", "CST-003", "ORD-2", "A1100", "O", "1.00", "見本製作所", "2026-10-03", "鋳造", "CST-01", "保留"),
+    ("試作-α-001", "01", "INS-004", "CST-004", "ORD-3", "A7075", "T651", "5.00", "架空商事", "2026-10-04", "焼鈍", "AN-01", "不適合"),
+    ("LOT-DUP", "01", "INS-005", "CST-005", "ORD-4", "A3003", "H24", "1.00", "例示精工", "2026-10-05", "検査", "QC-02", "検査待ち"),
+    ("LOT-DUP", "02", "INS-006", "CST-006", "ORD-4", "A3003", "H24", "1.00", "例示精工", "2026-10-05", "検査", "QC-02", "出荷済み"),
+]
+LABEL_WARNING = "fields.<項目>.label"  # 公開サンプルの view には詳細だけの項目の表示名がないため、この注意は常に出る
 SILENT = logging.getLogger("test-silent")
 SILENT.addHandler(logging.NullHandler())
 SILENT.propagate = False
 
 
-def make_db(path, variant="normal"):
+def full_row(values):
+    data = dict(zip(ROW_FIELDS, values))
+    return [data.get(name) for name in LOGICAL_FIELDS]
+
+
+def make_db(path, variant="normal", rows=ROWS):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if os.path.exists(path):
         os.remove(path)
@@ -50,18 +60,22 @@ def make_db(path, variant="normal"):
         with open(path, "wb") as fp:
             fp.write(b"broken" * 200)
         return
-    columns = list(COLUMNS.values())
-    if variant == "missing-column":
-        columns = columns[:-1]
+    keep = [i for i, name in enumerate(LOGICAL_FIELDS) if not (variant == "missing-column" and name == "cfStatus")]
+    columns = [COLUMNS[LOGICAL_FIELDS[i]] for i in keep]
     table = "other" if variant == "missing-table" else "t_lot"
     conn = sqlite3.connect(path)
     conn.execute(f'CREATE TABLE "{table}" ({", ".join(chr(34) + c + chr(34) for c in columns)})')
     conn.executemany(
         f'INSERT INTO "{table}" VALUES ({", ".join("?" for _ in columns)})',
-        [row[: len(columns)] for row in ROWS],
+        [[full_row(row)[i] for i in keep] for row in rows],
     )
     conn.commit()
     conn.close()
+
+
+def other_warnings(config):
+    """公開サンプル由来の「表示名がない」注意以外の注意。"""
+    return [w for w in config.warnings if w.path != LABEL_WARNING]
 
 
 class BackendTestCase(unittest.TestCase):
@@ -114,15 +128,17 @@ class ConfigTest(BackendTestCase):
 
     # ── マージ ──
     def test_local_with_only_needed_keys_works(self):
-        self.assertEqual(self.config.server_port, 8765)          # config.sample の値（local に devServer はない）
+        self.assertEqual(self.config.server_port, 8765)          # 内部の既定値（サンプルにも local にも devServer はない）
+        self.assertEqual(self.config.temporary_extension, ".tmp")  # 内部の既定値（サンプルに cache はない）
         self.assertEqual(self.config.page_size, 100)             # config.sample の値
         self.assertEqual(self.config.table_name, "t_lot")        # schema.local の値
         self.assertEqual(self.config.source_path, os.path.normpath(self.source))
         self.assertEqual(self.config.cache_path, os.path.join(self.root, "data", "cache", "target-data.sqlite3"))
-        self.assertEqual(self.config.model.record_key, ("lotNo", "castingNo"))
-        self.assertEqual(self.config.model.searchable, ("lotNo", "inspectionNo", "castingNo", "orderNo"))
-        self.assertEqual(self.config.model.filters["deliveryDate"], "date")
-        self.assertEqual(self.config.warnings, ())
+        self.assertEqual(self.config.model.record_key, ("lotNo", "boxNo"))
+        self.assertEqual(self.config.model.searchable, ("lotNo", "boxNo", "inspectionNo", "castingNo", "orderNo", "customerName"))
+        self.assertEqual(self.config.model.filters["cfStatus"], "values")
+        self.assertEqual(self.config.model.default_sort, ("factoryDeliveryDate", "asc"))
+        self.assertEqual(other_warnings(self.config), [])
         self.assertEqual([s[2] is not None for s in self.config.sources], [True, True, False])  # view.local はない
 
     def test_deep_merge_rules(self):
@@ -137,11 +153,11 @@ class ConfigTest(BackendTestCase):
     def test_view_array_is_replaced_whole(self):
         self.write_local("view", {"listColumns": [
             {"field": "lotNo", "label": "ロット", "visible": True, "searchable": True},
-            {"field": "status", "label": "状態", "visible": True, "searchable": False},
+            {"field": "cfStatus", "label": "状態", "visible": True, "searchable": False},
         ]})
         config = load_settings(self.root)
-        self.assertEqual([c["field"] for c in config.view["listColumns"]], ["lotNo", "status"])
-        self.assertEqual(len(config.view["detailFields"]), 12)  # 上書きしていない配列はサンプルのまま
+        self.assertEqual([c["field"] for c in config.view["listColumns"]], ["lotNo", "cfStatus"])
+        self.assertEqual(len(config.view["detailFields"]), len(LOGICAL_FIELDS))  # 上書きしていない配列はサンプルのまま
         self.assertEqual(config.model.searchable, ("lotNo",))
 
     def test_schema_can_add_logical_field(self):
@@ -154,12 +170,12 @@ class ConfigTest(BackendTestCase):
         config = load_settings(self.root)
         self.assertIn("workDate", config.model.fields)
         self.assertEqual(config.model.filters, {"workDate": "date"})
-        self.assertEqual(config.warnings, ())
+        self.assertEqual(other_warnings(config), [])
 
     def test_unknown_keys_are_warned_with_file_and_path(self):
         self.write_local("config", {"dataSource": {"sourcePath": "./shared/source.sqlite3", "tableName": "x"}, "dataSources": []})
         config = load_settings(self.root)
-        self.assertEqual({(w.file, w.path) for w in config.warnings},
+        self.assertEqual({(w.file, w.path) for w in other_warnings(config)},
                          {("config/local/config.local.json", "dataSource.tableName"), ("config/local/config.local.json", "dataSources")})
 
     # ── ローカルがない ──
@@ -188,6 +204,15 @@ class ConfigTest(BackendTestCase):
         self.write_local("config", {"dataSource": {"sourcePath": "./s.sqlite3"}, "search": {"maxPageSize": 0}})
         self.assert_error("config/local/config.local.json", "search.maxPageSize", "正の整数")
 
+    def test_builtin_defaults_can_be_overridden_without_warning(self):
+        # サンプルにない devServer・cache・types も、内部の既定値があるので local で上書きできる
+        self.write_local("config", {"dataSource": {"sourcePath": "./s.sqlite3"}, "devServer": {"port": 9000}, "cache": {"temporaryExtension": ".part"}})
+        self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS), "types": {"factoryDeliveryDate": "date"}})
+        config = load_settings(self.root)
+        self.assertEqual((config.server_port, config.temporary_extension), (9000, ".part"))
+        self.assertEqual(config.model.date_fields, ("factoryDeliveryDate",))
+        self.assertEqual(other_warnings(config), [])
+
     def test_dev_server_port(self):
         self.write_local("config", {"dataSource": {"sourcePath": "./s.sqlite3"}, "devServer": {"port": 70000}})
         self.assert_error("config/local/config.local.json", "devServer.port", "ポート番号")
@@ -201,9 +226,9 @@ class ConfigTest(BackendTestCase):
 
     # ── 検証：schema ──
     def test_schema_rules(self):
-        self.write_local("schema", {"tableName": " ", "columns": dict(COLUMNS, status="")})
+        self.write_local("schema", {"tableName": " ", "columns": dict(COLUMNS, cfStatus="")})
         self.assert_error("config/local/schema.local.json", "tableName", "空")
-        self.assert_error("config/local/schema.local.json", "columns.status", "空")
+        self.assert_error("config/local/schema.local.json", "columns.cfStatus", "空")
 
     def test_data_source_id_must_match(self):
         self.write_local("schema", {"dataSourceId": "other", "tableName": "t_lot", "columns": dict(COLUMNS)})
@@ -221,20 +246,31 @@ class ConfigTest(BackendTestCase):
         self.assert_error("config/local/view.local.json", "listColumns[2].visible", "真偽値")
 
     def test_date_filter_needs_date_type(self):
-        self.write_local("view", {"filters": [{"field": "status", "type": "date"}]})
+        self.write_local("view", {"filters": [{"field": "cfStatus", "type": "date"}]})
         self.assert_error("config/local/view.local.json", "filters[0].type", "date になっていません")
 
-    def test_labels_survive_replacing_list_columns(self):
-        self.write_local("view", {"listColumns": [{"field": "lotNo", "label": "ロットNo.", "visible": True, "searchable": True}]})
-        config = load_settings(self.root)
-        self.assertEqual(config.view["fields"]["inspectionNo"]["label"], "検査番号")  # fields はサンプルの表示名のまま
-        self.assertEqual(config.warnings, ())
+    def test_detail_groups_rules(self):
+        self.write_local("view", {"detailGroups": [
+            {"id": "a", "label": "A", "fields": ["lotNo", "productNo"]},
+            {"id": "b", "label": "B", "fields": ["lotNo"]},
+        ]})
+        self.assert_error("config/local/view.local.json", "detailGroups[0].fields[1]", "schema.columns に定義されていません")
+        self.assert_error("config/local/view.local.json", "detailGroups[1].fields[0]", "detailGroups[0] にも入っています")
 
-    def test_missing_label_is_warned(self):
+    def test_labels_in_fields_survive_replacing_list_columns(self):
+        self.write_local("view", {"fields": {"inspectionNo": {"label": "検査No."}},
+                                  "listColumns": [{"field": "lotNo", "label": "ロットNo.", "visible": True, "searchable": True}]})
+        config = load_settings(self.root)
+        self.assertEqual(config.view["fields"]["inspectionNo"]["label"], "検査No.")
+
+    def test_missing_labels_are_warned_once(self):
+        self.assertEqual([w.path for w in self.config.warnings], [LABEL_WARNING])
         self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS, workDate="SAGYOBI")})
         self.write_local("view", {"detailFields": ["lotNo", "workDate"]})
         config = load_settings(self.root)
-        self.assertEqual([(w.path, w.level) for w in config.warnings], [("fields.workDate.label", "warning")])
+        warning = [w for w in config.warnings if w.path == LABEL_WARNING][0]
+        self.assertIn("1 項目", warning.reason)
+        self.assertIn("workDate", warning.reason)
 
     def test_error_format(self):
         self.write_local("view", {"defaultSort": {"field": "productNo", "order": "asc"}})
@@ -305,6 +341,19 @@ class CacheTest(BackendTestCase):
             self.search("LOT")
         self.assertEqual(ctx.exception.code, "CACHE_UNAVAILABLE")
 
+    def test_cache_not_matching_schema_is_not_used(self):
+        # 作ったあとで schema の列名が変わったキャッシュは、誤った値を返さないよう使わない
+        self.cache.refresh()
+        self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS, customerName="RENAMED")})
+        config = load_settings(self.root)
+        cache = CacheService(config, SILENT)
+        self.assertFalse(cache.verify_existing())
+        self.assertFalse(cache.status()["available"])
+        self.assertIn("合わない", cache.status()["message"])
+        with self.assertRaises(AppError) as ctx:
+            LotService(config, cache, SILENT).list({})
+        self.assertEqual(ctx.exception.code, "CACHE_UNAVAILABLE")
+
     def test_source_is_not_modified(self):
         before = os.stat(self.source).st_mtime_ns
         self.cache.refresh()
@@ -325,7 +374,7 @@ class SearchTest(BackendTestCase):
     def test_items_use_logical_names(self):
         item = self.search("LOT-001")["items"][0]
         self.assertEqual(set(item), set(COLUMNS))
-        self.assertEqual(item["customer"], "サンプル工業")
+        self.assertEqual(item["customerName"], "サンプル工業")
 
     def test_zero_results_is_success(self):
         result = self.search("NOTHING")
@@ -362,10 +411,10 @@ class SearchTest(BackendTestCase):
 
     def test_invalid_requests(self):
         bad = [
-            {"searchType": "material", "keyword": "A"},
+            {"searchType": "manufacturingMaterial", "keyword": "A"},
             {"searchType": "lotNo", "keyword": ""},
             {"searchType": "lotNo", "keyword": "A", "matchMode": "regex"},
-            {"searchType": "lotNo", "keyword": "A", "sortKey": "LOT_NO"},
+            {"searchType": "lotNo", "keyword": "A", "sortKey": "C_LOTNO"},
             {"searchType": "lotNo", "keyword": "A", "pageSize": 501},
             {"searchType": "lotNo", "keyword": "A", "page": 0},
             {"searchType": "lotNo", "keyword": "x" * 101},
@@ -375,29 +424,33 @@ class SearchTest(BackendTestCase):
                 self.service.search(payload)
             self.assertEqual(ctx.exception.code, "INVALID_REQUEST")
 
-    def test_detail_by_lot_and_casting(self):
-        result = self.service.detail({"lotNo": "LOT-DUP", "castingNo": "CST-006"})
+    def test_detail_by_lot_and_box(self):
+        result = self.service.detail({"lotNo": "LOT-DUP", "boxNo": "02"})
         self.assertEqual(result["item"]["inspectionNo"], "INS-006")
         with self.assertRaises(AppError) as ctx:
-            self.service.detail({"lotNo": "LOT-DUP", "castingNo": "CST-999"})
+            self.service.detail({"lotNo": "LOT-DUP", "boxNo": "99"})
         self.assertEqual(ctx.exception.code, "NOT_FOUND")
 
 
 class FilterTest(BackendTestCase):
-    """絞り込み。今日は 2026-10-03 に固定する。"""
+    """絞り込み。今日は 2026-10-03 に固定する。
+    工場納期（factoryDeliveryDate）を日付として絞り込めるよう、local の schema に types、view に日付の絞り込みを足す。"""
 
     EXTRA = [
-        ("LOT-SLASH", "INS-101", "CST-101", "ORD-9", "A5052", "H14", "-", "サンプル工業", "2026/10/10", "検査", "QC-01", "仕掛中"),
-        ("LOT-COMPACT", "INS-102", "CST-102", "ORD-9", "A5052", "H14", "-", "サンプル工業", "20261020", "検査", "QC-01", "仕掛中"),
-        ("LOT-BLANK", "INS-103", "CST-103", "ORD-9", "A5052", "H14", "-", "", None, "検査", "QC-01", None),
+        ("LOT-SLASH", "01", "INS-101", "CST-101", "ORD-9", "A5052", "H14", "-", "サンプル工業", "2026/10/10", "検査", "QC-01", "仕掛中"),
+        ("LOT-COMPACT", "01", "INS-102", "CST-102", "ORD-9", "A5052", "H14", "-", "サンプル工業", "20261020", "検査", "QC-01", "仕掛中"),
+        ("LOT-BLANK", "01", "INS-103", "CST-103", "ORD-9", "A5052", "H14", "-", "", None, "検査", "QC-01", None),
     ]
 
     def setUp(self):
         super().setUp()
-        conn = sqlite3.connect(self.source)
-        conn.executemany(f'INSERT INTO "t_lot" VALUES ({", ".join("?" for _ in COLUMNS)})', self.EXTRA)
-        conn.commit()
-        conn.close()
+        make_db(self.source, rows=ROWS + self.EXTRA)
+        self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS), "types": {"factoryDeliveryDate": "date"}})
+        with open(os.path.join(SAMPLE_DIR, "view.sample.json"), encoding="utf-8") as fp:
+            filters = json.load(fp)["filters"]
+        self.write_local("view", {"filters": filters + [{"field": "factoryDeliveryDate", "type": "date"}]})
+        self.config = load_settings(self.root)
+        self.cache = CacheService(self.config, SILENT)
         self.cache.refresh()
         from datetime import date
         self.service = LotService(self.config, self.cache, SILENT, today=lambda: date(2026, 10, 3))
@@ -415,34 +468,34 @@ class FilterTest(BackendTestCase):
         self.assertEqual(result["today"], "2026-10-03")
 
     def test_values_filter_with_blank(self):
-        lots, _ = self.lots({"status": {"type": "values", "values": ["仕掛中", None]}})
+        lots, _ = self.lots({"cfStatus": {"type": "values", "values": ["仕掛中", None]}})
         self.assertEqual(sorted(lots), ["LOT-002", "LOT-BLANK", "LOT-COMPACT", "LOT-SLASH"])
-        lots, _ = self.lots({"customer": {"type": "values", "values": [None]}})
+        lots, _ = self.lots({"customerName": {"type": "values", "values": [None]}})
         self.assertEqual(lots, ["LOT-BLANK"])
 
     def test_relative_date_filter(self):
-        overdue, _ = self.lots({"deliveryDate": {"type": "date", "mode": "relative", "fromDays": None, "toDays": -1}})
+        overdue, _ = self.lots({"factoryDeliveryDate": {"type": "date", "mode": "relative", "fromDays": None, "toDays": -1}})
         self.assertEqual(overdue, ["LOT-001", "LOT-002"])
-        within, _ = self.lots({"deliveryDate": {"type": "date", "mode": "relative", "fromDays": 0, "toDays": 7}})
+        within, _ = self.lots({"factoryDeliveryDate": {"type": "date", "mode": "relative", "fromDays": 0, "toDays": 7}})
         self.assertEqual(within, ["LOT_100%-A", "試作-α-001", "LOT-DUP", "LOT-DUP", "LOT-SLASH"])
 
     def test_absolute_date_filter_handles_formats(self):
-        lots, _ = self.lots({"deliveryDate": {"type": "date", "mode": "absolute", "from": "2026-10-10", "to": "2026-10-20"}})
+        lots, _ = self.lots({"factoryDeliveryDate": {"type": "date", "mode": "absolute", "from": "2026-10-10", "to": "2026-10-20"}})
         self.assertEqual(lots, ["LOT-SLASH", "LOT-COMPACT"])
 
     def test_filters_combine_with_keyword(self):
         lots, _ = self.lots(
-            {"status": {"type": "values", "values": ["仕掛中"]}},
+            {"cfStatus": {"type": "values", "values": ["仕掛中"]}},
             searchType="lotNo", keyword="LOT-", matchMode="partial",
         )
         self.assertEqual(lots, ["LOT-002", "LOT-SLASH", "LOT-COMPACT"])
 
     def test_filter_values_are_faceted(self):
         result = self.service.filter_values({
-            "field": "status",
+            "field": "cfStatus",
             "filters": {
-                "status": {"type": "values", "values": ["保留"]},
-                "customer": {"type": "values", "values": ["サンプル工業"]},
+                "cfStatus": {"type": "values", "values": ["保留"]},
+                "customerName": {"type": "values", "values": ["サンプル工業"]},
             },
         })
         counts = {row["value"]: row["count"] for row in result["values"]}
@@ -451,11 +504,11 @@ class FilterTest(BackendTestCase):
     def test_invalid_filters(self):
         bad = [
             {"lotNo": {"type": "values", "values": ["x"]}},
-            {"status": {"type": "date", "mode": "relative", "fromDays": 0}},
-            {"status": {"type": "values", "values": "仕掛中"}},
-            {"deliveryDate": {"type": "date", "mode": "absolute", "from": "2026-13-01"}},
-            {"deliveryDate": {"type": "date", "mode": "absolute", "from": "2026-10-10", "to": "2026-10-01"}},
-            {"deliveryDate": {"type": "date", "mode": "relative", "fromDays": 99999}},
+            {"cfStatus": {"type": "date", "mode": "relative", "fromDays": 0}},
+            {"cfStatus": {"type": "values", "values": "仕掛中"}},
+            {"factoryDeliveryDate": {"type": "date", "mode": "absolute", "from": "2026-13-01"}},
+            {"factoryDeliveryDate": {"type": "date", "mode": "absolute", "from": "2026-10-10", "to": "2026-10-01"}},
+            {"factoryDeliveryDate": {"type": "date", "mode": "relative", "fromDays": 99999}},
         ]
         for filters in bad:
             with self.subTest(filters=filters), self.assertRaises(AppError) as ctx:
@@ -464,8 +517,8 @@ class FilterTest(BackendTestCase):
 
     def test_empty_conditions_are_ignored(self):
         _, result = self.lots({
-            "status": {"type": "values", "values": []},
-            "deliveryDate": {"type": "date", "mode": "relative", "fromDays": None, "toDays": None},
+            "cfStatus": {"type": "values", "values": []},
+            "factoryDeliveryDate": {"type": "date", "mode": "relative", "fromDays": None, "toDays": None},
         })
         self.assertEqual(result["totalCount"], len(ROWS) + len(self.EXTRA))
 
@@ -505,16 +558,16 @@ class HttpTest(BackendTestCase):
         self.assertEqual(body["id"], "data-search")
         status, body = self.post("get_cache_status", {})
         self.assertTrue(body["available"])
-        status, body = self.post("list_lots", {"filters": {"status": {"type": "values", "values": ["保留"]}}})
+        status, body = self.post("list_lots", {"filters": {"cfStatus": {"type": "values", "values": ["保留"]}}})
         self.assertEqual(body["totalCount"], 1)
-        status, body = self.post("get_filter_values", {"field": "status"})
+        status, body = self.post("get_filter_values", {"field": "cfStatus"})
         self.assertEqual(len(body["values"]), 6)
 
     def test_error_shape_hides_internal_detail(self):
-        status, body = self.post("search_lots", {"searchType": "LOT_NO", "keyword": "x"})
+        status, body = self.post("search_lots", {"searchType": "C_LOTNO", "keyword": "x"})
         self.assertFalse(body["success"])
         self.assertEqual(set(body["error"]), {"code", "userMessage", "detailId"})
-        self.assertNotIn("LOT_NO", json.dumps(body, ensure_ascii=False))
+        self.assertNotIn("C_LOTNO", json.dumps(body, ensure_ascii=False))
 
     def test_unknown_command_and_foreign_origin(self):
         self.assertEqual(self.post("drop_table", {})[0], 404)

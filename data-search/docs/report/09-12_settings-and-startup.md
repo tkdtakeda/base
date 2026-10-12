@@ -21,7 +21,8 @@ import os
 from dataclasses import dataclass
 
 from ..errors import AppError
-from .merge import deep_merge, type_name
+from .defaults import BUILTIN_DEFAULTS
+from .merge import deep_merge, fill_defaults, type_name
 from .validation import Issue, SettingSource, validate_config, validate_schema, validate_view
 
 KINDS = ("config", "schema", "view")
@@ -144,6 +145,8 @@ def _load_pair(kind, sample_dir, local_dir, app_root, issues, warnings):
     sample = _read_json(sample_path, sample_label, issues)
     if sample is None:
         return None, None
+    # サンプルから省かれている任意の項目（cache・devServer など）は内部の既定値で補う
+    sample = fill_defaults(sample, BUILTIN_DEFAULTS[kind])
 
     local_loaded = os.path.isfile(local_path)  # ないことは誤りにしない
     override = _read_json(local_path, local_label, issues) if local_loaded else {}
@@ -305,6 +308,17 @@ def _compatible(base_value, value):
     return type_name(base_value) == type_name(value)
 
 
+def fill_defaults(sample, defaults):
+    """サンプルにないキーだけを内部の既定値で補う（サンプルの値が常に優先）。新しいオブジェクトを返す。"""
+    result = copy.deepcopy(sample)
+    for key, value in defaults.items():
+        if key not in result:
+            result[key] = copy.deepcopy(value)
+        elif isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = fill_defaults(result[key], value)
+    return result
+
+
 def deep_merge(base, override, open_maps=(), path=""):
     """base（サンプル）に override（ローカル）を重ねた結果を返す。"""
     result = MergeResult(value=copy.deepcopy(base))
@@ -330,6 +344,38 @@ def _merge_into(result, target, base, override, open_maps, path):
         else:
             target[key] = copy.deepcopy(value)  # 配列もここで丸ごと置き換える
             result.overridden.append(child)
+```
+
+`python/data_search/settings/defaults.py`
+
+```python
+"""サンプルに書かれていないときだけ使う、内部の既定値。
+
+config/sample の 3 ファイルが正式な設定スキーマ兼初期値である。
+ここには「サンプルから省いてよい（環境や社内情報に関係しない）」項目の既定値だけを置く。
+サンプルに同じキーがあれば、必ずサンプルの値が優先される。
+
+ここに既定値があるキーは、ローカルのファイルで上書きしてもよい（未知のキーとして扱わない）。
+"""
+
+BUILTIN_DEFAULTS = {
+    "config": {
+        # キャッシュの作り方（一時ファイルの拡張子・失敗時は前回のキャッシュを使い続ける）
+        "cache": {"temporaryExtension": ".tmp", "keepPreviousOnFailure": True},
+        # Python 版の画面サーバー（手元の PC だけで待ち受ける）。デスクトップ版では使わない
+        "devServer": {"host": "127.0.0.1", "port": 8765, "openBrowser": True},
+    },
+    "schema": {
+        # 日付として比べる論理項目（例：{"factoryDeliveryDate": "date"}）。日付の絞り込みに必要
+        "types": {},
+    },
+    "view": {
+        "detailGroups": [],
+        # 項目ごとの表示（表示名・等幅・コピー・入力例・値の札）。論理項目を足せる場所
+        "fields": {},
+        "filters": [],
+    },
+}
 ```
 
 ## 11. 設定検証処理のコード全文
@@ -562,15 +608,25 @@ def validate_view(view, src, schema):
                 err(path, f"\"{name}\" が detailFields の中で重複しています。", "どちらか一方を消してください。")
             seen.add(name)
 
-    group_ids = []
+    group_ids, grouped = [], {}
     for index, group in enumerate(view["detailGroups"]):
         path = f"detailGroups[{index}]"
         if not isinstance(group, dict) or _blank(group.get("id")) or _blank(group.get("label")):
-            err(path, "id と label が必要です。", "{ \"id\": \"...\", \"label\": \"...\", \"icon\": \"fa-...\" } の形にしてください。")
+            err(path, "id と label が必要です。", "{ \"id\": \"...\", \"label\": \"...\", \"fields\": [ ... ] } の形にしてください。")
             continue
         if group["id"] in group_ids:
             err(f"{path}.id", f"\"{group['id']}\" が重複しています。", "別の id にしてください。")
         group_ids.append(group["id"])
+        members = group.get("fields", [])
+        if not isinstance(members, list):
+            err(f"{path}.fields", "配列 [ ] ではありません。", "[\"論理名\", ...] の形にしてください。")
+            continue
+        for position, name in enumerate(members):
+            member_path = f"{path}.fields[{position}]"
+            if check_field(member_path, name):
+                if name in grouped:
+                    err(member_path, f"\"{name}\" は detailGroups[{grouped[name]}] にも入っています。", "1 つのまとまりにだけ入れてください。")
+                grouped.setdefault(name, index)
 
     for name, options in view["fields"].items():
         path = f"fields.{name}"
@@ -615,14 +671,16 @@ def validate_view(view, src, schema):
             err(f"{base}.type", f"\"{field}\" は schema.types で date になっていません。",
                 f"schema の types に \"{field}\": \"date\" を足すか、type を values にしてください。")
 
-    # 表示名がどこにもない項目は、論理名（英字）がそのまま画面に出てしまう
+    # 表示名がどこにもない項目は、論理名（英字）がそのまま画面に出てしまう（まとめて 1 件の注意にする）
     listed = {c.get("field"): c.get("label") for c in view["listColumns"] if isinstance(c, dict)}
     used = list(view["detailFields"]) + [f.get("field") for f in view["filters"] if isinstance(f, dict)]
-    for name in dict.fromkeys(used):
-        if name in columns and _blank(view["fields"].get(name, {}).get("label")) and _blank(listed.get(name)):
-            issues.append(Issue("warning", src.local_label, f"fields.{name}.label",
-                                f"\"{name}\" の表示名がないため、画面に論理名がそのまま表示されます。",
-                                f"view の fields.{name} に \"label\": \"表示名\" を設定してください。"))
+    unlabeled = [name for name in dict.fromkeys(used)
+                 if name in columns and _blank(view["fields"].get(name, {}).get("label")) and _blank(listed.get(name))]
+    if unlabeled:
+        shown = "、".join(unlabeled[:8]) + (f" ほか {len(unlabeled) - 8} 項目" if len(unlabeled) > 8 else "")
+        issues.append(Issue("warning", src.origin("fields"), "fields.<項目>.label",
+                            f"{len(unlabeled)} 項目に表示名がないため、詳細などに論理名がそのまま表示されます（{shown}）。",
+                            "view の fields に { \"論理名\": { \"label\": \"表示名\" } } を足してください（一覧の列は listColumns の label が使われます）。"))
 
     sort = view["defaultSort"]
     check_field("defaultSort.field", sort.get("field"))
@@ -791,8 +849,12 @@ def main():
     cache_service = CacheService(config, logger)
     context = AppContext(config, cache_service, LotService(config, cache_service, logger), logger)
 
+    has_cache = os.path.isfile(config.cache_path)
+    if has_cache and not cache_service.verify_existing():
+        print("手元のキャッシュが今の schema（テーブル名・列名）と合わないため、作り直します…")
     if not cache_service.cache_available():
-        print("初回のため、共有データからキャッシュを作成しています…")
+        if not has_cache:
+            print("初回のため、共有データからキャッシュを作成しています…")
         try:
             result = cache_service.refresh()
             print(f"  完了：{result['rowCount']:,} 件")
@@ -974,6 +1036,7 @@ if errorlevel 1 pause
 
 | 対象 | 内容 | 理由 | 影響範囲 |
 |---|---|---|---|
+| `config/sample/*.sample.json` | 依頼者提供のファイルに差し替え | 正式なサンプルとして提供されたため | 検索項目 6 種・一覧 17 列・詳細 83 項目・絞り込み 8 種（すべて値から選ぶ）。日付の絞り込みと状態の色分けは、sample に定義がないため出ない |
 | `config/config.sample.json` | 削除（`config/sample/` の 3 ファイルへ分割） | 環境・DB 定義・表示定義を分けるため | 旧パスを読む処理はすべて置き換え済み |
 | `python/data_search/config_loader.py` | 削除（`settings/` へ置き換え） | 読み込み・マージ・検証を役割ごとのファイルに分けるため | `run_server.py`・テストを置き換え済み |
 | 「設定が未完了」状態での起動 | 廃止。仮の値が残っていれば、対象ファイルと項目を示して**停止**する | 依頼書 13 章「実データ利用に必要なローカル値が未設定の場合は、対象ファイルと項目を明示して停止する」 | 画面の「設定が未完了」表示・直し方の表示を削除。`get_cache_status` の `configSource`・`configFile`・`configIncomplete`・`incompleteSettings`・`ignoredSettings` を削除し、`settingsWarnings` に置き換え |
@@ -1004,6 +1067,7 @@ if errorlevel 1 pause
 | 修正 | `python/data_search/lot_service.py` |
 | 修正 | `python/data_search/query.py` |
 | 新規 | `python/data_search/settings/__init__.py` |
+| 新規 | `python/data_search/settings/defaults.py` |
 | 新規 | `python/data_search/settings/loader.py` |
 | 新規 | `python/data_search/settings/merge.py` |
 | 新規 | `python/data_search/settings/validation.py` |
@@ -1021,14 +1085,18 @@ if errorlevel 1 pause
 | 修正 | `src/js/controllers/search-controller.js` |
 | 修正 | `src/js/domain/fields.js` |
 | 修正 | `src/js/domain/status-tones.js` |
+| 修正 | `src/js/manual/manual-content.js` |
 | 修正 | `src/js/panels/panels.js` |
+| 修正 | `src/js/sample/sample-data.js` |
 | 新規 | `src/js/sample/sample-view.js` |
 | 修正 | `src/js/views/detail-view.js` |
 | 修正 | `src/js/views/results-view.js` |
 | 修正 | `src/js/views/search-bar.js` |
 | 修正 | `src/js/views/status-chips.js` |
+| 修正 | `src/js/views/tag-bar.js` |
 | 修正 | `start-dummy.bat` |
 | 修正 | `start.bat` |
+| 修正 | `tests/ui-check.js` |
 | 新規 | `docs/report/*.md`（この成果物一覧） |
 
 リポジトリ直下の `01_external_ai_spec.md`・`05_directory_structure.md`・`06_external_ai_prompt.txt` は依頼者の資料のため変更していない。旧パス（`config/config.sample.json`）が書かれているので、必要に応じて更新をお願いしたい。

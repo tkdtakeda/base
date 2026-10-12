@@ -31,6 +31,9 @@ class CacheService:
         self.state_path = config.cache_path + ".status.json"
         # 置換中に検索が走らないよう、更新と読み取りを 1 本の鍵で順番にする
         self.lock = threading.RLock()
+        # 今の schema（テーブル名・列名）と合わないキャッシュは使わない。
+        # SQLite は存在しない列名を "..." で書くと文字列として扱うため、合わないまま検索すると誤った値が返る。
+        self.stale = False
 
     # ── 状態の読み書き ──
     def _read_state(self):
@@ -48,7 +51,20 @@ class CacheService:
         os.replace(temp, self.state_path)
 
     def cache_available(self):
-        return os.path.isfile(self.cache_path)
+        return os.path.isfile(self.cache_path) and not self.stale
+
+    def verify_existing(self):
+        """手元のキャッシュが今の schema と合うかを確かめる（起動時）。合わなければ使わない印を付けて False。"""
+        if not os.path.isfile(self.cache_path):
+            return False
+        try:
+            validate_cache_file(self.cache_path, self.config.table_name, self.config.field_mappings)
+            self.stale = False
+            return True
+        except AppError as error:
+            self.stale = True
+            self.logger.warning("existing cache does not match schema code=%s detail=%s", error.code, error.detail)
+            return False
 
     # ── 更新 ──
     def refresh(self):
@@ -60,6 +76,7 @@ class CacheService:
                 row_count = validate_cache_file(self.temp_path, self.config.table_name, self.config.field_mappings)
                 os.makedirs(os.path.dirname(self.cache_path) or ".", exist_ok=True)
                 os.replace(self.temp_path, self.cache_path)
+                self.stale = False
             except AppError as error:
                 cache_copier.remove_quietly(self.temp_path)
                 using_previous = self.cache_available()
@@ -118,7 +135,9 @@ class CacheService:
         has_update = bool(available and current_source and cached_source and current_source > cached_source)
         succeeded = state.get("lastRefreshSucceeded", available)
 
-        if not available:
+        if not available and self.stale:
+            message = "手元のキャッシュが今の設定（テーブル名・列名）と合わないため使っていません。データを更新してください。"
+        elif not available:
             message = "検索できるデータがまだありません。データを更新してください。"
         elif not succeeded:
             message = "最新のデータを取得できなかったため、前回のデータを参照しています。"

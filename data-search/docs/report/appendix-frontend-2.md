@@ -1,4 +1,76 @@
-## 付録：画面側の修正ファイルの全文（2/2）
+## 付録：画面側の修正ファイルの全文（2/3）
+
+`src/js/controllers/app-state.js`
+
+```javascript
+/* =========================================================
+   状態の初期値と、設定の自動保存（次に開いたときに元に戻す）
+   ========================================================= */
+(function () {
+  'use strict';
+
+  const DS = window.DS;
+  DS.controllers = DS.controllers || {};
+
+  const PREFS_KEY = 'prefs';
+  const HISTORY_MAX = 8;
+
+  function defaultVisibleColumns() {
+    return DS.domain.listFields().map((field) => field.id);
+  }
+
+  function createInitialState(mode) {
+    const prefs = DS.core.storage.read(PREFS_KEY, {});
+    const searchable = DS.domain.searchableFields().map((field) => field.id);
+    const knownColumns = (prefs.visibleColumns || []).filter((id) => DS.domain.fields.has(id));
+    return {
+      mode,
+      appInfo: null,
+      cache: { status: null, refreshing: false, refreshStartedAt: null },
+      query: {
+        searchType: searchable.includes(prefs.searchType) ? prefs.searchType : searchable[0],
+        keyword: '',
+        matchMode: prefs.matchMode === 'exact' ? 'exact' : 'partial',
+      },
+      sort: Object.assign({}, DS.domain.DEFAULT_SORT),
+      filters: {},
+      tags: { items: DS.controllers.loadTags(), activeId: null },
+      search: { status: 'idle', result: null, request: null, error: null },
+      selection: { key: null, item: null, status: 'idle', error: null, duplicated: false },
+      ui: { panel: null },
+      columns: { visible: knownColumns.length ? knownColumns : defaultVisibleColumns() },
+      history: prefs.history || {},
+      samplesVersion: 0,
+    };
+  }
+
+  /** 保存したい部分が変わったときだけ書き込む */
+  function attachPrefsPersistence(store, bus) {
+    const WATCHED = ['query', 'columns', 'history'];
+    bus.on('state', ({ state, changed }) => {
+      if (!changed.some((key) => WATCHED.includes(key))) return;
+      const result = DS.core.storage.write(PREFS_KEY, {
+        searchType: state.query.searchType,
+        matchMode: state.query.matchMode,
+        visibleColumns: state.columns.visible,
+        history: state.history,
+      });
+      if (!result.ok) bus.emit('prefs:failed', result.reason);
+    });
+  }
+
+  function pushHistory(history, searchType, keyword) {
+    const list = (history[searchType] || []).filter((item) => item !== keyword);
+    list.unshift(keyword);
+    return Object.assign({}, history, { [searchType]: list.slice(0, HISTORY_MAX) });
+  }
+
+  DS.controllers.createInitialState = createInitialState;
+  DS.controllers.attachPrefsPersistence = attachPrefsPersistence;
+  DS.controllers.defaultVisibleColumns = defaultVisibleColumns;
+  DS.controllers.pushHistory = pushHistory;
+})();
+```
 
 `src/js/controllers/search-controller.js`
 
@@ -180,27 +252,35 @@
   const DS = window.DS;
   DS.domain = DS.domain || {};
 
-  const OTHER_GROUP = { id: '__other', label: 'その他', icon: 'fa-ellipsis', order: 9999 };
+  const DEFAULT_GROUP_ICON = 'fa-layer-group';
+  const OTHER_GROUP = { id: '__other', label: 'その他', icon: 'fa-ellipsis' };
 
-  let lists = { list: [], detail: [], searchable: [], key: [], filter: [] };
+  let lists = { list: [], detail: [], searchable: [], key: [], filter: [], sections: [] };
 
   /** 表示定義を当てはめる。起動時に 1 回、画面の部品を作る前に呼ぶ */
   function applyView(view) {
     const groups = DS.core.createRegistry('fieldGroups');
     const fields = DS.core.createRegistry('fields');
-    (view.detailGroups || []).forEach((group, index) => groups.register(Object.assign({ order: (index + 1) * 10 }, group)));
+    const detailGroups = view.detailGroups || [];
+    detailGroups.forEach((group, index) => groups.register({
+      id: group.id, label: group.label, icon: group.icon || DEFAULT_GROUP_ICON, order: (index + 1) * 10, members: group.fields || null,
+    }));
+    groups.register(Object.assign({ order: 99990, members: null }, OTHER_GROUP));
+
+    // まとまりへの所属：detailGroups[].fields を優先し、なければ fields.<項目>.group
+    const membership = new Map();
+    detailGroups.forEach((group) => (group.fields || []).forEach((id) => membership.set(id, group.id)));
 
     const columns = new Map((view.listColumns || []).map((column, index) => [column.field, Object.assign({ index }, column)]));
     const filters = new Map((view.filters || []).map((filter) => [filter.field, filter.type]));
     const options = view.fields || {};
     const recordKey = view.recordKey || [];
-    let usesOther = false;
 
     view.logicalFields.forEach((id, index) => {
       const column = columns.get(id) || {};
       const option = options[id] || {};
-      const group = option.group && groups.has(option.group) ? option.group : OTHER_GROUP.id;
-      if (group === OTHER_GROUP.id) usesOther = true;
+      const groupId = membership.get(id) || (option.group && groups.has(option.group) ? option.group : OTHER_GROUP.id);
+      const searchable = column.searchable === true;
       fields.register({
         id,
         order: (index + 1) * 10,
@@ -208,28 +288,39 @@
         label: option.label || column.label || id,
         listLabel: column.label || option.label || id,
         short: option.short || null,
-        group,
-        mono: Boolean(option.mono),
-        copy: Boolean(option.copy),
+        group: groupId,
+        // 番号で探せる項目は、指定がなければ等幅で表示し、コピーできるようにする（0 と O を見分けやすく、転記しやすく）
+        mono: option.mono === undefined ? searchable : Boolean(option.mono),
+        copy: option.copy === undefined ? searchable : Boolean(option.copy),
         example: option.example || '',
         width: column.width || 120,
         badge: (option.badge || []).map((rule) => ({ pattern: new RegExp(rule.match), tone: rule.tone })),
         filter: filters.get(id) || null,
         type: (view.types || {})[id] || 'text',
-        searchable: column.searchable === true,
+        searchable,
         key: recordKey.includes(id),
       });
     });
-    if (usesOther) groups.register(OTHER_GROUP);
 
     const pick = (ids) => ids.map((id) => fields.get(id)).filter(Boolean);
+    const detail = pick(view.detailFields || []);
+    const detailSet = new Set(detail.map((field) => field.id));
+    // 詳細の区切り：まとまりの順に、まとまりの fields の順（なければ detailFields の順）で並べる
+    const sections = groups.list().map((group) => ({
+      group,
+      fields: group.members
+        ? pick(group.members).filter((field) => detailSet.has(field.id))
+        : detail.filter((field) => field.group === group.id),
+    })).filter((section) => section.fields.length);
+
     lists = {
       // 一覧に出す列：listColumns の順。visible: false の列は一覧に出さない
       list: pick((view.listColumns || []).filter((column) => column.visible).map((column) => column.field)),
-      detail: pick(view.detailFields || []),
+      detail,
       searchable: pick((view.listColumns || []).filter((column) => column.searchable).map((column) => column.field)),
       key: pick(recordKey),
       filter: pick((view.filters || []).map((filter) => filter.field)),
+      sections,
     };
 
     DS.domain.fieldGroups = groups;
@@ -240,11 +331,12 @@
   DS.domain.applyView = applyView;
   DS.domain.listFields = () => lists.list;
   DS.domain.detailFields = () => lists.detail;
+  DS.domain.detailSections = () => lists.sections;
   DS.domain.searchableFields = () => lists.searchable;
   DS.domain.keyFields = () => lists.key;
   DS.domain.filterFields = () => lists.filter;
 
-  /** 1 件を特定する鍵（schema の recordKey。例：ロット番号＋鋳造番号）を文字列にする */
+  /** 1 件を特定する鍵（schema の recordKey。例：ロット番号＋BOX番号）を文字列にする */
   DS.domain.recordKey = (item) =>
     lists.key.map((field) => (item[field.id] == null ? '' : item[field.id])).join('\u001f');
 })();
@@ -289,6 +381,166 @@
 
   DS.domain.badge = badge;
   DS.domain.hasBadge = (field) => Boolean(field && field.badge && field.badge.length);
+})();
+```
+
+`src/js/manual/manual-content.js`
+
+```javascript
+/* =========================================================
+   取扱説明書の章。機能を足したら、ここにも register() で章を足す。
+   group は作業の順のまとまり。最初は「3 分で使う」を開く。
+   ========================================================= */
+(function () {
+  'use strict';
+
+  const DS = window.DS;
+  const groups = DS.core.createRegistry('manualGroups');
+  const chapters = DS.core.createRegistry('manualChapters');
+
+  [
+    { id: 'start', label: 'はじめに', order: 10 },
+    { id: 'search', label: '探す', order: 20 },
+    { id: 'data', label: 'データと表示', order: 30 },
+    { id: 'trouble', label: '困ったとき', order: 40 },
+    { id: 'appendix', label: '付録', order: 50 },
+  ].forEach((group) => groups.register(group));
+
+  [
+    {
+      id: 'quick', group: 'start', order: 10, title: '3 分で使う',
+      body: `
+        <ol class="manual-steps">
+          <li>開くと<strong>ロットの一覧</strong>が決まった順（標準は工場納期の近い順）に出ます。入力は要りません。1 ロットに BOX が複数あれば BOX ごとに 1 行です。</li>
+          <li>一覧の上の<strong>タグ</strong>を押すと、保存しておいた絞り込みに切り替わります。</li>
+          <li>ロットの行を押すと、右に<strong>詳細</strong>が出ます。<kbd>↑</kbd><kbd>↓</kbd> で行を移れます。</li>
+          <li>番号が分かっているときは、上部バーに入れて <kbd>Enter</kbd>。今の絞り込みの中から探します。</li>
+        </ol>
+        <p>右上の青いボタンは、いつも「次にすること」を指します。データがないときは「サンプルを読み込む」「データを更新する」に変わります。</p>`,
+    },
+    {
+      id: 'modes', group: 'start', order: 20, title: '3 つの起動方法',
+      body: `
+        <table class="manual-table">
+          <tr><th>起動のしかた</th><th>上部バーの表示</th><th>検索するデータ</th></tr>
+          <tr><td>index.html をダブルクリック</td><td>サンプル</td><td>ブラウザの中のサンプル（実データは使いません）</td></tr>
+          <tr><td>start.bat をダブルクリック</td><td>Python 版</td><td>設定ファイルが指す共有データのコピー</td></tr>
+          <tr><td>デスクトップ版（今後）</td><td>デスクトップ版</td><td>同上</td></tr>
+        </table>
+        <p>どのデータを見ているかは、上部バー右と一覧の下に必ず表示されます。</p>`,
+    },
+    {
+      id: 'filters', group: 'search', order: 5, title: '絞り込む',
+      body: `
+        <ul>
+          <li>一覧の上の「絞り込み」か、左の <span class="manual-icon">▼</span> で絞り込みのパネルが開きます。</li>
+          <li>項目を開き、値にチェックを付けるとすぐ一覧に反映されます。値の横の数は、ほかの条件を当てはめたときの件数です。</li>
+          <li>項目どうしは「かつ」、同じ項目の中は「または」で絞り込みます。（空欄）も選べます。</li>
+          <li>日付の項目は「今日より前」「今日〜7 日後」などから選べます。「範囲を自分で決める」で日数や日付そのものも指定できます。</li>
+          <li>今かかっている条件は一覧の見出しに札で出ます。札の × で 1 つずつ外せます。</li>
+        </ul>`,
+    },
+    {
+      id: 'tags', group: 'search', order: 6, title: 'タグ（絞り込みを保存して使い回す）',
+      body: `
+        <ul>
+          <li>条件を選んだら、一覧の上の「今の条件をタグにする」で名前を付けて保存します。次回からはタグを押すだけです。</li>
+          <li>日付を「今日から○日」で決めたタグは、毎日その日を基準に絞り込みます。日付そのもので決めたタグは、その日付のままです。</li>
+          <li>タグを選んだあと条件を変えると「変更あり」と出ます。「上書き保存」でタグを今の条件にできます。</li>
+          <li>名前の変更・並べ替え・削除は、選んだタグの <span class="manual-icon">⋮</span> から。消したあと 10 秒間は「元に戻す」で戻せます。</li>
+          <li>タグはこの PC のブラウザに保存されます。絞り込みのパネルの下で、ファイルに書き出して、ほかの人に渡せます。</li>
+        </ul>`,
+    },
+    {
+      id: 'search', group: 'search', order: 10, title: '番号で探す',
+      body: `
+        <ul>
+          <li><strong>部分一致</strong>：入力した文字を含むものを探します（例：「0012」で LOT-2026-00012 も見つかる）。</li>
+          <li><strong>完全一致</strong>：入力した文字と同じものだけを探します。</li>
+          <li>今の絞り込み（タグ）の中から探します。見つからないときは「絞り込みを外して探す」を押してください。</li>
+          <li>大文字・小文字、全角・半角の違いは気にせず入力できます（全角の英数字は半角にそろえて探します）。</li>
+          <li>入力を消す（× か <kbd>Esc</kbd>）と、一覧に戻ります。</li>
+          <li>入力欄を選ぶと中身が全部選ばれるので、そのまま次の番号を打てます。<kbd>Esc</kbd> で消せます。</li>
+          <li>入力欄では、前に探した番号が候補に出ます。</li>
+        </ul>`,
+    },
+    {
+      id: 'results', group: 'search', order: 20, title: '結果を見る・並べ替える',
+      body: `
+        <ul>
+          <li>一覧の上に「何を・どう探したか」と件数が出ます。100 件を超えるとページに分かれ、右上の <span class="manual-icon">‹ ›</span> で移れます。</li>
+          <li>見出しを押すと、その列で並べ替えます。もう一度押すと逆順になります。</li>
+          <li>探した列は色が付き、一致した部分に印が付きます。</li>
+          <li>一覧の下に、検索したデータの時点と、検索にかかった時間が出ます。</li>
+        </ul>`,
+    },
+    {
+      id: 'detail', group: 'search', order: 30, title: '詳細を見る・番号をコピーする',
+      body: `
+        <ul>
+          <li>行を選ぶと右に詳細が出ます。設定したまとまりごとに並びます。見出しを押すと開閉でき、開き方は次回も保たれます。</li>
+          <li>番号の横の <span class="manual-icon">⧉</span> でコピーできます。</li>
+          <li>詳細は 1 件を特定する項目（標準は「ロット番号＋BOX番号」）で決めています。</li>
+          <li><kbd>Esc</kbd> か右上の × で閉じます。</li>
+        </ul>`,
+    },
+    {
+      id: 'cache', group: 'data', order: 10, title: 'データの状態と更新',
+      body: `
+        <p>このツールは、共有データを手元に<strong>コピー（キャッシュ）</strong>してから検索します。共有データを直接書き換えることはありません。</p>
+        <ul>
+          <li>上部バー右の札で状態が分かります：<strong>最新</strong>／<strong>新しい更新があります</strong>／<strong>前回のデータを使用中</strong>／<strong>データなし</strong>。</li>
+          <li>左の「データ」で、いつ時点のデータか・件数・前回の更新の結果を確かめられます。</li>
+          <li>「データを更新する」で、コピー → 検証 → 入れ替え を行います。検証で問題が見つかったときは入れ替えず、前回のデータを使い続けます。</li>
+        </ul>`,
+    },
+    {
+      id: 'columns', group: 'data', order: 20, title: '表示する列を選ぶ',
+      body: `<p>左の「表示列」で、一覧に出す列を選べます。設定は自動で保存され、次に開いたときも同じになります。詳細にはいつもすべての項目が出ます。</p>`,
+    },
+    {
+      id: 'samples', group: 'data', order: 30, title: 'サンプルデータで試す',
+      body: `
+        <p>index.html を直接開いたときは、左の「サンプル」から目的別のデータを読み込めます。読み込むと、そのデータに合った検索の例を実行します。</p>
+        <ul>
+          <li>基本の動き／入力の確認（日本語・記号、同じロット番号）／0 件・異常のとき／速さの確認</li>
+          <li>「サンプルデータだけを消す」で片付けられます。消したあと 10 秒間は「元に戻す」で戻せます。</li>
+        </ul>`,
+    },
+    {
+      id: 'zero', group: 'trouble', order: 10, title: '0 件になったとき',
+      body: `
+        <ul>
+          <li>番号の種類が合っているか確かめてください。0 件の画面から、ほかの種類で探し直せます。</li>
+          <li>完全一致のときは「部分一致で探し直す」を試してください。</li>
+          <li>上部バー右の札が「前回のデータを使用中」のときは、新しいデータがまだ入っていない可能性があります。</li>
+        </ul>`,
+    },
+    {
+      id: 'errors', group: 'trouble', order: 20, title: 'エラーが出たとき',
+      body: `
+        <ul>
+          <li>メッセージに書かれた操作を試してください。</li>
+          <li>続くときは、メッセージの<strong>問い合わせ番号</strong>を管理者に伝えてください。ログ（logs フォルダ）から原因を探せます。</li>
+          <li>「検索サーバーに接続できません」と出たら、start.bat の黒いウィンドウが開いているか確かめてください。</li>
+        </ul>`,
+    },
+    {
+      id: 'keys', group: 'appendix', order: 10, title: 'キーボード操作',
+      body: `
+        <table class="manual-table">
+          <tr><th>キー</th><th>動き</th></tr>
+          <tr><td><kbd>/</kbd></td><td>入力欄へ移る</td></tr>
+          <tr><td><kbd>Alt</kbd>+<kbd>1</kbd>〜<kbd>4</kbd></td><td>番号の種類を切り替える</td></tr>
+          <tr><td><kbd>Enter</kbd></td><td>検索する（日本語の変換中は除く）</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>入力を消す／詳細・パネル・説明書を閉じる</td></tr>
+          <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>一覧で行を移る（一覧を選んでいるとき）</td></tr>
+          <tr><td><kbd>F1</kbd></td><td>この説明書を開く・閉じる</td></tr>
+        </table>`,
+    },
+  ].forEach((chapter) => chapters.register(chapter));
+
+  DS.manual = { groups, chapters };
 })();
 ```
 
@@ -538,912 +790,257 @@
 })();
 ```
 
-`src/js/sample/sample-view.js`
+`src/js/sample/sample-data.js`
 
 ```javascript
 /* =========================================================
-   画面だけで試すモード用の表示定義（自動生成。手で直さない）
-   元: config/sample/view.sample.json と schema.sample.json の論理情報
-   作り直し: python python/tools/sync_sample_view.py
-   ========================================================= */
-(function () {
-  'use strict';
+   サンプルデータ（画面だけで試すモード用）
+   乱数の種を固定しているので、毎回同じデータができる。日付だけは「今日」を基準にする
+   （日付の絞り込み「今日〜7 日後」などをいつ開いても試せるように）。
+   パターンを増やすときは patterns.register() を足すだけでよい。
 
-  window.DS = window.DS || {};
-  window.DS.sampleView = /*VIEW_JSON_START*/{
-  "logicalFields": [
-    "lotNo",
-    "inspectionNo",
-    "castingNo",
-    "orderNo",
-    "material",
-    "temper",
-    "size",
-    "customer",
-    "deliveryDate",
-    "process",
-    "equipment",
-    "status"
-  ],
-  "recordKey": [
-    "lotNo",
-    "castingNo"
-  ],
-  "types": {
-    "deliveryDate": "date"
-  },
-  "listColumns": [
-    {
-      "field": "lotNo",
-      "label": "ロット番号",
-      "visible": true,
-      "searchable": true,
-      "width": 170
-    },
-    {
-      "field": "inspectionNo",
-      "label": "検査番号",
-      "visible": true,
-      "searchable": true,
-      "width": 150
-    },
-    {
-      "field": "castingNo",
-      "label": "鋳造番号",
-      "visible": true,
-      "searchable": true,
-      "width": 150
-    },
-    {
-      "field": "orderNo",
-      "label": "受注番号",
-      "visible": true,
-      "searchable": true,
-      "width": 120
-    },
-    {
-      "field": "material",
-      "label": "材質",
-      "visible": true,
-      "searchable": false,
-      "width": 90
-    },
-    {
-      "field": "temper",
-      "label": "質別",
-      "visible": true,
-      "searchable": false,
-      "width": 70
-    },
-    {
-      "field": "size",
-      "label": "寸法",
-      "visible": true,
-      "searchable": false,
-      "width": 150
-    },
-    {
-      "field": "customer",
-      "label": "得意先",
-      "visible": true,
-      "searchable": false,
-      "width": 130
-    },
-    {
-      "field": "deliveryDate",
-      "label": "納期",
-      "visible": true,
-      "searchable": false,
-      "width": 110
-    },
-    {
-      "field": "process",
-      "label": "工程",
-      "visible": true,
-      "searchable": false,
-      "width": 100
-    },
-    {
-      "field": "equipment",
-      "label": "設備",
-      "visible": true,
-      "searchable": false,
-      "width": 90
-    },
-    {
-      "field": "status",
-      "label": "状態",
-      "visible": true,
-      "searchable": false,
-      "width": 110
-    }
-  ],
-  "detailFields": [
-    "lotNo",
-    "inspectionNo",
-    "castingNo",
-    "orderNo",
-    "material",
-    "temper",
-    "size",
-    "customer",
-    "deliveryDate",
-    "process",
-    "equipment",
-    "status"
-  ],
-  "detailGroups": [
-    {
-      "id": "id",
-      "label": "識別番号",
-      "icon": "fa-hashtag"
-    },
-    {
-      "id": "product",
-      "label": "製品",
-      "icon": "fa-cube"
-    },
-    {
-      "id": "trade",
-      "label": "取引",
-      "icon": "fa-handshake"
-    },
-    {
-      "id": "mfg",
-      "label": "製造",
-      "icon": "fa-industry"
-    }
-  ],
-  "fields": {
-    "lotNo": {
-      "label": "ロット番号",
-      "short": "ロット",
-      "group": "id",
-      "mono": true,
-      "copy": true,
-      "example": "LOT-2026-00012"
-    },
-    "inspectionNo": {
-      "label": "検査番号",
-      "short": "検査",
-      "group": "id",
-      "mono": true,
-      "copy": true,
-      "example": "INS-26-000012"
-    },
-    "castingNo": {
-      "label": "鋳造番号",
-      "short": "鋳造",
-      "group": "id",
-      "mono": true,
-      "copy": true,
-      "example": "CST-41000012"
-    },
-    "orderNo": {
-      "label": "受注番号",
-      "short": "受注",
-      "group": "id",
-      "mono": true,
-      "copy": true,
-      "example": "ORD-00003"
-    },
-    "material": {
-      "label": "材質",
-      "group": "product"
-    },
-    "temper": {
-      "label": "質別",
-      "group": "product"
-    },
-    "size": {
-      "label": "寸法",
-      "group": "product",
-      "mono": true
-    },
-    "customer": {
-      "label": "得意先",
-      "group": "trade"
-    },
-    "deliveryDate": {
-      "label": "納期",
-      "group": "trade",
-      "mono": true
-    },
-    "process": {
-      "label": "工程",
-      "group": "mfg"
-    },
-    "equipment": {
-      "label": "設備",
-      "group": "mfg",
-      "mono": true
-    },
-    "status": {
-      "label": "状態",
-      "group": "mfg",
-      "badge": [
-        {
-          "match": "不適合|不良|NG|異常|廃棄",
-          "tone": "danger"
-        },
-        {
-          "match": "保留|停止|要確認|遅延",
-          "tone": "warning"
-        },
-        {
-          "match": "完了|済|合格|OK",
-          "tone": "success"
-        },
-        {
-          "match": "仕掛|待ち|中$|予定",
-          "tone": "info"
-        }
-      ]
-    }
-  },
-  "filters": [
-    {
-      "field": "material",
-      "type": "values"
-    },
-    {
-      "field": "temper",
-      "type": "values"
-    },
-    {
-      "field": "customer",
-      "type": "values"
-    },
-    {
-      "field": "deliveryDate",
-      "type": "date"
-    },
-    {
-      "field": "process",
-      "type": "values"
-    },
-    {
-      "field": "equipment",
-      "type": "values"
-    },
-    {
-      "field": "status",
-      "type": "values"
-    }
-  ],
-  "defaultSort": {
-    "field": "deliveryDate",
-    "order": "asc"
-  }
-}/*VIEW_JSON_END*/;
-})();
-```
-
-`src/js/views/detail-view.js`
-
-```javascript
-/* =========================================================
-   選んだ行の詳細（メイン領域の右）。項目はまとまりごとに分けて表示する。
+   行の項目は、表示定義の論理項目（DS.sampleView.logicalFields）すべてを埋める。
+   主な項目は値の候補（VALUE_RULES）から、それ以外は項目名の形（〜Date・〜Width など）から作る。
+   論理項目が増えても、項目名の形に当てはまればそのままサンプルが作られる。
    ========================================================= */
 (function () {
   'use strict';
 
   const DS = window.DS;
+  const groups = DS.core.createRegistry('sampleGroups');
+  const patterns = DS.core.createRegistry('samplePatterns');
+
+  [
+    { id: 'basic', label: '基本の動き', order: 10 },
+    { id: 'input', label: '入力の確認', order: 20 },
+    { id: 'abnormal', label: '0 件・異常のとき', order: 30 },
+    { id: 'perf', label: '速さの確認', order: 40 },
+  ].forEach((group) => groups.register(group));
+
+  // ── 乱数（種を固定） ──
+  function createRandom(seed) {
+    let a = seed >>> 0;
+    const next = () => {
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    return {
+      next,
+      int: (min, max) => min + Math.floor(next() * (max - min + 1)),
+      pick: (list) => list[Math.floor(next() * list.length)],
+    };
+  }
+
+  const now = new Date();
+  const BASE_DATE = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const pad = (n, width) => String(n).padStart(width, '0');
+
+  function isoDate(offsetDays) {
+    const date = new Date(BASE_DATE.getTime() + offsetDays * 86400000);
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1, 2)}-${pad(date.getDate(), 2)}`;
+  }
+
+  // ── 値の候補（架空の値だけ） ──
+  const MATERIALS = ['A1100', 'A3003', 'A5052', 'A6061', 'A6063', 'A7075'];
+  const TEMPERS = ['O', 'H14', 'H24', 'H32', 'T5', 'T6', 'T651'];
+  const CUSTOMERS = [['C0101', 'サンプル工業'], ['C0102', 'テスト金属'], ['C0103', '見本製作所'], ['C0104', '架空商事'], ['C0105', '例示精工'], ['C0106', 'ダミー産業']];
+  const EQUIPMENTS = ['鋳造1号', '熱間圧延1号', '冷間圧延1号', '冷間圧延2号', '焼鈍炉3号', 'スリッター1号', '検査ライン1号'];
+  const COURSES = ['HR→CR→AN→SL', 'CR→AN→SL', 'AN→SL', 'SL', 'CR→SL', '—'];
+  const STATUSES = ['仕掛中', '検査待ち', '検査済み', '出荷済み', '保留', '不適合'];
+  const WIP_CATEGORIES = ['仕掛', '完成', '出荷待ち'];
+  const HOLD_CATEGORIES = ['', '', '', '品質保留', '客先保留'];
+  const SHAPES = ['板', 'コイル', '条'];
+  const SURFACES = ['ミル', '研磨', 'ヘアライン'];
+
+  /** 主な項目の作り方。ctx は同じロット・BOX の行で共有する値 */
+  const VALUE_RULES = {
+    inspectionNo: (ctx) => `INS-${ctx.prefix.short}-${pad(ctx.serial, 6)}`,
+    castingNo: (ctx) => `CST-${ctx.prefix.cast}${pad(ctx.lotIndex, 6)}`,
+    orderNo: (ctx) => `ORD-${ctx.prefix.short}${pad(ctx.order, 4)}`,
+    customerCode: (ctx) => ctx.customer[0],
+    customerName: (ctx) => ctx.customer[1],
+    deliveryDestinationCode: (ctx) => ctx.customer[0].replace('C', 'D'),
+    deliveryDestinationName: (ctx) => `${ctx.customer[1]} 本社工場`,
+    shippingDestinationCode: (ctx) => ctx.customer[0].replace('C', 'S'),
+    shippingDestinationName: (ctx) => `${ctx.customer[1]} 物流センター`,
+    orderMaterial: (ctx) => ctx.material,
+    manufacturingMaterial: (ctx) => ctx.material,
+    orderTemper: (ctx) => ctx.temper,
+    manufacturingTemper: (ctx) => ctx.temper,
+    plannedEquipmentName: (ctx, rng) => rng.pick(EQUIPMENTS),
+    lastActualEquipmentName: (ctx, rng) => rng.pick(EQUIPMENTS),
+    remainingEquipmentCourse: (ctx, rng) => rng.pick(COURSES),
+    cfStatus: (ctx, rng) => rng.pick(STATUSES),
+    wipCategory: (ctx, rng) => rng.pick(WIP_CATEGORIES),
+    holdCategory: (ctx, rng) => rng.pick(HOLD_CATEGORIES),
+    shape: (ctx, rng) => rng.pick(SHAPES),
+    surface: (ctx, rng) => rng.pick(SURFACES),
+    specificGravity: () => '2.71',
+    factoryDeliveryDate: (ctx) => isoDate(ctx.dueOffset),
+    salesDeliveryDate: (ctx) => isoDate(ctx.dueOffset + 3),
+    promisedDeliveryDate: (ctx) => isoDate(ctx.dueOffset + 5),
+    shippingDate: (ctx) => isoDate(ctx.dueOffset - 1),
+  };
+
+  /** 項目名の形からの作り方（上から順に当てはめる） */
+  const NAME_RULES = [
+    [/Date$/, (ctx, rng) => isoDate(rng.int(-60, 90))],
+    [/Thickness$/, (ctx) => ctx.thickness],
+    [/Width$/, (ctx) => ctx.width],
+    [/Length$/, (ctx) => ctx.length],
+    [/Weight$/, (ctx, rng) => String(rng.int(300, 3000))],
+    [/(Count|Quantity)$/, (ctx, rng) => String(rng.int(1, 20))],
+    [/Time$/, (ctx, rng) => (rng.int(10, 900) / 10).toFixed(1)],
+    [/(Category|Flag)$/, (ctx, rng) => rng.pick(['0', '1', '2'])],
+    [/Code$/, (ctx, rng) => `${rng.pick(['A', 'B', 'K', 'M'])}${pad(rng.int(1, 99), 2)}`],
+    [/No$/, (ctx, rng, field) => `${field.replace(/No$/, '').replace(/[a-z]/g, '').toUpperCase() || 'N'}${pad(rng.int(1, 99999), 5)}`],
+    [/Course$/, (ctx, rng) => rng.pick(COURSES)],
+    [/Name$/, (ctx, rng, field) => `${field.replace(/Name$/, '')}-${rng.int(1, 9)}`],
+  ];
+
+  function valueOf(field, ctx, rng) {
+    if (VALUE_RULES[field]) return VALUE_RULES[field](ctx, rng);
+    const rule = NAME_RULES.find(([pattern]) => pattern.test(field));
+    return rule ? rule[1](ctx, rng, field) : `${field}-${rng.int(1, 9)}`;
+  }
+
+  function logicalFields() {
+    return (DS.sampleView && DS.sampleView.logicalFields) || [];
+  }
 
   /**
-   * 別のツールへ渡す「送り先」の登録簿。登録すると詳細の下にボタンが出る。
-   *   DS.handoffs.register({ id, order, label, icon, send(item) })   item は 12 項目の論理名のデータ
+   * ロットを lotCount 件つくる。1 ロットに BOX が 1〜3 件（行は BOX ごと）。
+   * prefix で番号の頭をそろえ、パターン同士で重ならないようにする。
    */
-  DS.handoffs = DS.core.createRegistry('handoffs');
-
-  function createDetailView(root, { store, bus, search, toast }) {
-    const { el, icon } = DS.util;
-
-    const title = el('div', { className: 'detail__title' });
-    const closeButton = el('button', { type: 'button', className: 'icon-btn', title: '詳細を閉じる（Esc）', 'aria-label': '詳細を閉じる' }, [icon('fa-xmark', '×')]);
-    const notice = el('div', { className: 'detail__notice' });
-    const body = el('div', { className: 'detail__body' });
-    const actions = el('div', { className: 'detail__actions' });
-    root.append(el('div', { className: 'detail__head' }, [title, closeButton]), notice, body, actions);
-    root.setAttribute('aria-label', '選んだデータの詳細');
-
-    closeButton.addEventListener('click', () => search.closeDetail());
-    root.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') search.closeDetail();
-    });
-
-    async function copy(value, button) {
-      try {
-        await navigator.clipboard.writeText(value);
-      } catch (error) {
-        // file:// などでクリップボード API が使えないときの代わり
-        const area = el('textarea', { style: 'position:fixed;opacity:0' });
-        area.value = value;
-        document.body.appendChild(area);
-        area.select();
-        document.execCommand('copy');
-        area.remove();
+  function buildRows(lotCount, seed, prefix, options) {
+    const rng = createRandom(seed);
+    const fields = logicalFields();
+    const rows = [];
+    let order = 0;
+    let orderLeft = 0;
+    let serial = 0;
+    for (let lotIndex = 1; lotIndex <= lotCount; lotIndex += 1) {
+      if (orderLeft === 0) {
+        order += 1;
+        orderLeft = rng.int(1, 4); // 1 つのオーダーに複数のロット
       }
-      button.replaceChildren(icon('fa-check', '✓'));
-      button.classList.add('is-done');
-      window.setTimeout(() => {
-        button.replaceChildren(icon('fa-copy', '⧉'));
-        button.classList.remove('is-done');
-      }, 1200);
-      toast.show({ tone: 'success', message: `「${value}」をコピーしました`, timeout: 2000 });
+      orderLeft -= 1;
+      const lotNo = (options && options.lotNo) ? options.lotNo(lotIndex) : `LOT-${prefix.year}-${pad(lotIndex, 5)}`;
+      const boxCount = (options && options.boxes) || rng.int(1, 3);
+      const lot = {
+        prefix, lotIndex, order,
+        customer: rng.pick(CUSTOMERS),
+        material: rng.pick(MATERIALS),
+        temper: rng.pick(TEMPERS),
+        thickness: rng.pick(['0.50', '1.00', '1.50', '2.00', '3.00', '5.00']),
+        width: String(rng.pick([1000, 1250, 1525])),
+        length: String(rng.pick([2000, 2500, 3000])),
+        dueOffset: rng.int(-45, 90),
+      };
+      for (let box = 1; box <= boxCount; box += 1) {
+        serial += 1;
+        const ctx = Object.assign({ serial, box }, lot);
+        const row = {};
+        fields.forEach((field) => { row[field] = valueOf(field, ctx, rng); });
+        row.lotNo = lotNo;
+        row.boxNo = pad(box, 2);
+        rows.push(row);
+      }
     }
-
-    function valueNode(field, value) {
-      if (DS.domain.hasBadge(field)) return DS.domain.badge(field, value);
-      if (value === null || value === undefined || value === '') return el('span', { className: 'muted', text: '—' });
-      return el('span', { className: field.mono ? 'mono' : '', text: String(value) });
-    }
-
-    function render(state) {
-      const selection = state.selection;
-      root.hidden = !selection.key;
-      if (!selection.key) return;
-      const item = selection.item;
-
-      // 見出し：1 件を特定する鍵の最初の項目（例：ロット番号）と、札を持つ項目（例：状態）
-      const headField = DS.domain.keyFields()[0];
-      const badgeField = DS.domain.detailFields().find((field) => DS.domain.hasBadge(field));
-      title.replaceChildren(
-        el('span', { className: 'detail__label', text: headField.label }),
-        el('strong', { className: 'detail__lot mono', text: item[headField.id] || '—' }),
-        badgeField ? DS.domain.badge(badgeField, item[badgeField.id]) : null,
-      );
-
-      const notices = [];
-      if (selection.status === 'loading') notices.push(el('p', { className: 'inline-note' }, [icon('fa-spinner', '…', 'fa-spin'), el('span', { text: ' 最新の内容を確かめています' })]));
-      if (selection.status === 'error') notices.push(el('p', { className: 'inline-note inline-note--danger' }, [icon('fa-circle-xmark', '×'), el('span', { text: ' ' + selection.error.userMessage })]));
-      if (selection.duplicated) notices.push(el('p', { className: 'inline-note inline-note--warning' }, [icon('fa-triangle-exclamation', '!'), el('span', { text: ' 同じロット番号・鋳造番号のデータが複数あります。最初の 1 件を表示しています。' })]));
-      notice.replaceChildren(...notices);
-
-      // 詳細に出す項目と順番は view の detailFields。まとまりは fields.<項目>.group
-      body.replaceChildren(...DS.domain.fieldGroups.list().flatMap((group) => {
-        const rows = DS.domain.detailFields().filter((field) => field.group === group.id).flatMap((field) => {
-          const value = item[field.id];
-          const copyButton = field.copy && value
-            ? el('button', { type: 'button', className: 'copy-btn', title: `${field.label}をコピー`, 'aria-label': `${field.label}をコピー` }, [icon('fa-copy', '⧉')])
-            : null;
-          if (copyButton) copyButton.addEventListener('click', () => copy(String(value), copyButton));
-          return [
-            el('dt', { text: field.label }),
-            el('dd', {}, [valueNode(field, value), copyButton]),
-          ];
-        });
-        if (rows.length === 0) return null;
-        return el('section', { className: 'detail__group' }, [
-          el('h3', { className: 'detail__group-title' }, [icon(group.icon, ''), el('span', { text: group.label })]),
-          el('dl', { className: 'facts facts--detail' }, rows),
-        ]);
-      }));
-      if (selection.status === 'done') DS.util.flash(title);
-
-      const targets = DS.handoffs.list();
-      actions.hidden = targets.length === 0;
-      actions.replaceChildren(...targets.map((target) => {
-        const button = el('button', { type: 'button', className: 'btn btn--secondary btn--block' }, [icon(target.icon || 'fa-share-from-square', ''), el('span', { text: target.label })]);
-        button.addEventListener('click', () => target.send(Object.assign({}, item)));
-        return button;
-      }));
-    }
-
-    bus.on('state', ({ state, changed }) => {
-      if (changed.includes('selection')) render(state);
-    });
-    render(store.get());
+    return rows;
   }
 
-  DS.views.createDetailView = createDetailView;
-})();
-```
+  // ── パターン ──
+  patterns.register({
+    id: 'standard',
+    group: 'basic',
+    order: 10,
+    icon: 'fa-table-list',
+    title: '標準のデータ',
+    description: 'ロット 300 件（1 ロットに BOX 1〜3 件）。1 つのオーダー番号に複数のロットがひも付きます。工場納期は今日の前後 3 か月に散らばります。',
+    build: () => buildRows(300, 1001, { year: '2026', short: '26', cast: '41' }),
+  });
 
-`src/js/views/results-view.js`
+  patterns.register({
+    id: 'symbols',
+    group: 'input',
+    order: 20,
+    icon: 'fa-language',
+    title: '日本語・記号を含む番号',
+    description: '「試作-α-001」「LOT_100%-A」など。全角で「ＬＯＴ＿１００」と入れても見つかることを確かめられます。',
+    build: () => {
+      const lots = ['試作-α-001', '試作-β-002', 'LOT_100%-A', 'LOT#5/特急', 'LOT(再)-12', "LOT'Q\"-1", 'LOT-全角確認-01', 'lot-lower-01'];
+      return buildRows(lots.length, 7001, { year: 'SP', short: 'SP', cast: '77' }, { lotNo: (i) => lots[i - 1], boxes: 1 });
+    },
+    demoQuery: { searchType: 'lotNo', keyword: 'ＬＯＴ＿１００', matchMode: 'partial' },
+  });
 
-```javascript
-/* =========================================================
-   検索結果（メイン領域）：要約・ページ送り・一覧・空のときの案内・出どころ
-   ========================================================= */
-(function () {
-  'use strict';
+  patterns.register({
+    id: 'multi-box',
+    group: 'input',
+    order: 30,
+    icon: 'fa-boxes-stacked',
+    title: '1 ロットに BOX が複数',
+    description: '同じロット番号で BOX 番号が違う 3 件。詳細は「ロット番号＋BOX番号」で 1 件に決まります。',
+    build: () => buildRows(1, 7101, { year: 'DUP', short: 'DP', cast: '88' }, { lotNo: () => 'LOT-DUP-0001', boxes: 3 }),
+    demoQuery: { searchType: 'lotNo', keyword: 'LOT-DUP-0001', matchMode: 'exact' },
+  });
 
-  const DS = window.DS;
+  patterns.register({
+    id: 'zero-hit',
+    group: 'abnormal',
+    order: 40,
+    icon: 'fa-circle-question',
+    title: '0 件になる検索',
+    description: '標準のデータを読み込み、存在しない番号で完全一致の検索をします。',
+    requires: ['standard'],
+    build: () => [],
+    demoQuery: { searchType: 'lotNo', keyword: 'LOT-9999-99999', matchMode: 'exact' },
+  });
 
-  function createResultsView(root, { store, bus, search, openPanel, refresh }) {
-    const { el, icon, escapeHtml, highlight, formatNumber } = DS.util;
+  patterns.register({
+    id: 'refresh-failure',
+    group: 'abnormal',
+    order: 50,
+    icon: 'fa-plug-circle-xmark',
+    title: '更新に失敗した状態',
+    description: '共有データに接続できず、前回のデータを使っている状態を再現します。データの更新も失敗します。',
+    requires: ['standard'],
+    effects: { refreshFailure: true },
+    build: () => [],
+  });
 
-    const summary = el('div', { className: 'results__summary', 'aria-live': 'polite' });
-    const pager = el('div', { className: 'pager' });
-    const head = el('div', { className: 'results__head' }, [summary, pager]);
-    const tableWrap = el('div', { className: 'table-wrap', tabindex: '0', 'aria-label': '検索結果の一覧（↑↓ で行を移動）' });
-    const empty = el('div', { className: 'empty' });
-    const foot = el('div', { className: 'results__foot' });
-    root.append(head, el('div', { className: 'results__body' }, [tableWrap, empty]), foot);
+  patterns.register({
+    id: 'large',
+    group: 'perf',
+    order: 60,
+    icon: 'fa-gauge-high',
+    title: '大量のデータ',
+    description: 'ロット 10,000 件（BOX 約 20,000 件）。検索とページ送りの速さを確かめられます。',
+    build: () => buildRows(10000, 4004, { year: '2025', short: '25', cast: '93' }),
+    demoQuery: { searchType: 'orderNo', keyword: 'ORD-25', matchMode: 'partial' },
+  });
 
-    let currentItems = [];
-
-    // ── 一覧 ──
-    function visibleFields(state) {
-      return DS.domain.listFields().filter((field) => state.columns.visible.includes(field.id));
-    }
-
-    function headerCell(field, state) {
-      const active = state.sort.key === field.id;
-      const sortIcon = !active ? 'fa-sort' : state.sort.order === 'asc' ? 'fa-sort-up' : 'fa-sort-down';
-      const ariaSort = !active ? 'none' : state.sort.order === 'asc' ? 'ascending' : 'descending';
-      const searched = state.search.request && state.search.request.searchType === field.id;
-      return `<th scope="col" aria-sort="${ariaSort}" style="min-width:${field.width}px" class="${searched ? 'is-searched' : ''}">` +
-        `<button type="button" class="th-btn" data-sort="${field.id}" title="${escapeHtml(field.listLabel)}で並べ替え">` +
-        `<span>${escapeHtml(field.listLabel)}</span><i class="fa-solid ${sortIcon} th-btn__icon${active ? ' is-active' : ''}" aria-hidden="true"></i></button></th>`;
-    }
-
-    function cell(field, item, request) {
-      const value = item[field.id];
-      if (DS.domain.hasBadge(field)) return `<td>${DS.domain.badge(field, value).outerHTML}</td>`;
-      const text = value === null || value === undefined || value === '' ? '<span class="muted">—</span>'
-        : request && request.searchType === field.id ? highlight(value, request.keyword) : escapeHtml(value);
-      return `<td class="${field.mono ? 'mono' : ''}${request && request.searchType === field.id ? ' is-searched' : ''}">${text}</td>`;
-    }
-
-    function renderTable(state) {
-      const result = state.search.result;
-      const request = state.search.request;
-      const fields = visibleFields(state);
-      currentItems = result ? result.items : [];
-      const rows = currentItems.map((item, index) => {
-        const key = DS.domain.recordKey(item);
-        const selected = key === state.selection.key;
-        return `<tr data-index="${index}" class="${selected ? 'is-selected' : ''}" aria-selected="${selected}">` +
-          fields.map((field) => cell(field, item, request)).join('') + '</tr>';
-      }).join('');
-      tableWrap.innerHTML = `<table class="grid"><thead><tr>${fields.map((field) => headerCell(field, state)).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
-    }
-
-    function renderSelection(state) {
-      tableWrap.querySelectorAll('tbody tr').forEach((row) => {
-        const item = currentItems[Number(row.dataset.index)];
-        const selected = DS.domain.recordKey(item) === state.selection.key;
-        row.classList.toggle('is-selected', selected);
-        row.setAttribute('aria-selected', String(selected));
-      });
-    }
-
-    tableWrap.addEventListener('click', (event) => {
-      const sortButton = event.target.closest('[data-sort]');
-      if (sortButton) {
-        search.toggleSort(sortButton.dataset.sort);
-        return;
-      }
-      const row = event.target.closest('tbody tr');
-      if (row) search.select(currentItems[Number(row.dataset.index)]);
-    });
-
-    tableWrap.addEventListener('keydown', (event) => {
-      if (!['ArrowDown', 'ArrowUp'].includes(event.key) || currentItems.length === 0) return;
-      event.preventDefault();
-      const selectedKey = store.get().selection.key;
-      const index = currentItems.findIndex((item) => DS.domain.recordKey(item) === selectedKey);
-      const next = index === -1 ? 0 : Math.min(currentItems.length - 1, Math.max(0, index + (event.key === 'ArrowDown' ? 1 : -1)));
-      search.select(currentItems[next]);
-      const row = tableWrap.querySelector(`tbody tr[data-index="${next}"]`);
-      if (row) row.scrollIntoView({ block: 'nearest' });
-    });
-
-    // ── 要約とページ送り ──
-    function renderHead(state) {
-      const result = state.search.result;
-      const request = state.search.request;
-      if (!result || !request) {
-        summary.replaceChildren(el('span', { className: 'results__title', text: '検索結果' }));
-        pager.replaceChildren();
-        return;
-      }
-      const count = el('strong', { className: 'results__count mono', text: `${formatNumber(result.totalCount)} 件` });
-      const title = request.keyword
-        ? el('span', { className: 'results__title' }, [
-          el('span', { text: `${DS.domain.fields.get(request.searchType).listLabel}が「` }),
-          el('span', { className: 'mono', text: request.keyword }),
-          el('span', { text: `」${request.matchMode === 'exact' ? 'と同じ' : 'を含む'}ロット` }),
-        ])
-        : el('span', { className: 'results__title', text: 'ロット一覧' });
-      summary.replaceChildren(title, count, activeFilterChips(request));
-      DS.util.flash(count);
-
-      const pages = Math.max(1, Math.ceil(result.totalCount / result.pageSize));
-      const from = result.totalCount === 0 ? 0 : (result.page - 1) * result.pageSize + 1;
-      const to = (result.page - 1) * result.pageSize + result.count;
-      const prev = el('button', { type: 'button', className: 'icon-btn', title: '前のページ', 'aria-label': '前のページ', disabled: result.page <= 1 }, [icon('fa-chevron-left', '<')]);
-      const next = el('button', { type: 'button', className: 'icon-btn', title: '次のページ', 'aria-label': '次のページ', disabled: result.page >= pages }, [icon('fa-chevron-right', '>')]);
-      prev.addEventListener('click', () => search.goToPage(result.page - 1));
-      next.addEventListener('click', () => search.goToPage(result.page + 1));
-      const parts = [el('span', { className: 'pager__range mono', text: result.totalCount ? `${formatNumber(from)}–${formatNumber(to)} 件目` : '' })];
-      if (pages > 1) parts.push(prev, el('span', { className: 'pager__pages mono', text: `${result.page} / ${formatNumber(pages)} ページ` }), next);
-      pager.replaceChildren(...parts);
-    }
-
-    /** 今かかっている絞り込みを札で出す。× で 1 つずつ外せる */
-    function activeFilterChips(request) {
-      const entries = Object.entries(request.filters || {});
-      const nodes = entries.map(([fieldId, spec]) => {
-        const field = DS.domain.fields.get(fieldId);
-        const remove = el('button', { type: 'button', className: 'filter-chip__remove', title: `${field.label}の絞り込みを外す`, 'aria-label': `${field.label}の絞り込みを外す` }, [icon('fa-xmark', '×')]);
-        remove.addEventListener('click', () => search.clearFilter(fieldId));
-        const label = el('button', { type: 'button', className: 'filter-chip__label', title: '絞り込みのパネルで直す' }, [
-          icon('fa-filter', ''),
-          el('span', { text: `${field.label}：${DS.domain.filters.describe(fieldId, spec)}` }),
-        ]);
-        label.addEventListener('click', () => openPanel('filters'));
-        return el('span', { className: 'filter-chip' }, [label, remove]);
-      });
-      return el('span', { className: 'filter-chips' }, nodes);
-    }
-
-    // ── 空のときの案内（次にすることを 1 つ示す） ──
-    function emptyCard(iconName, title, text, actions) {
-      return el('div', { className: 'empty__card' }, [
-        el('span', { className: 'empty__icon' }, [icon(iconName, '')]),
-        el('h2', { className: 'empty__title', text: title }),
-        text ? el('p', { className: 'empty__text', text }) : null,
-        actions && actions.length ? el('div', { className: 'empty__actions' }, actions) : null,
-      ]);
-    }
-
-    function actionButton(label, iconName, onClick, primary) {
-      const button = el('button', { type: 'button', className: `btn ${primary ? 'btn--primary' : 'btn--secondary'}` }, [icon(iconName, ''), el('span', { text: label })]);
-      button.addEventListener('click', onClick);
-      return button;
-    }
-
-    function renderEmpty(state) {
-      const status = state.search.status;
-      const result = state.search.result;
-      const cacheStatus = state.cache.status;
-      let card = null;
-
-      if (cacheStatus && !cacheStatus.available) {
-        card = state.mode.capabilities.sampleData
-          ? emptyCard('fa-flask', 'まずはサンプルデータを読み込みます', '左の「サンプル」から目的に合うデータを選ぶと、そのまま検索を試せます。',
-            [actionButton('サンプルを選ぶ', 'fa-flask', () => openPanel('samples'), false)])
-          : emptyCard('fa-database', '検索できるデータがまだありません', cacheStatus.message,
-            [actionButton('データを更新する', 'fa-rotate', refresh, false)]);
-      } else if (status === 'error') {
-        const error = state.search.error;
-        card = emptyCard('fa-circle-xmark', '検索できませんでした', error.userMessage + (error.detailId ? `（問い合わせ番号 ${error.detailId}）` : ''),
-          [actionButton('もう一度検索する', 'fa-rotate-right', () => search.run({ page: 1 }), false)]);
-      } else if (!result) {
-        card = status === 'loading' ? emptyCard('fa-spinner', '一覧を読み込んでいます', null) : null;
-      } else if (result && result.totalCount === 0) {
-        const request = state.search.request;
-        const actions = [];
-        const filterCount = Object.keys(request.filters || {}).length;
-        if (filterCount) {
-          actions.push(actionButton('絞り込みを外して探す', 'fa-filter-circle-xmark', () => search.setFilters({}), false));
-        }
-        if (!request.keyword) {
-          card = emptyCard('fa-filter', '絞り込みに当てはまるロットはありません', '条件をゆるめるか、外してください。上の札の × で 1 つずつ外せます。', actions);
-          empty.replaceChildren(card);
-          empty.hidden = false;
-          tableWrap.hidden = true;
-          root.classList.toggle('is-loading', false);
-          return;
-        }
-        const field = DS.domain.fields.get(request.searchType);
-        if (request.matchMode === 'exact') {
-          actions.push(actionButton('部分一致で探し直す', 'fa-magnifying-glass-plus', () => {
-            search.setQuery({ matchMode: 'partial' });
-            search.run({ page: 1 });
-          }, false));
-        }
-        DS.domain.searchableFields().filter((other) => other.id !== request.searchType).forEach((other) => {
-          actions.push(actionButton(`${other.listLabel}として探す`, 'fa-arrow-right-arrow-left', () => {
-            search.setQuery({ searchType: other.id });
-            search.run({ page: 1 });
-          }, false));
-        });
-        card = emptyCard('fa-circle-question', '一致するロットはありません',
-          `${field.listLabel}が「${request.keyword}」${request.matchMode === 'exact' ? 'と同じ' : 'を含む'}ロットは${filterCount ? '、今の絞り込みの中に' : ''}ありません。番号の種類や一致のしかたを確かめてください。`,
-          actions);
-      }
-      empty.replaceChildren(...(card ? [card] : []));
-      empty.hidden = !card;
-      tableWrap.hidden = Boolean(card) || !result;
-      root.classList.toggle('is-loading', status === 'loading');
-    }
-
-    // ── 出どころ ──
-    function renderFoot(state) {
-      const status = state.cache.status;
-      const result = state.search.result;
-      const parts = [el('span', {}, [icon(state.mode.mode === 'mock' ? 'fa-flask' : 'fa-database', ''), el('span', { text: ` ${state.mode.label}` })])];
-      if (status && status.cacheUpdatedAt) parts.push(el('span', { className: 'mono', text: `${DS.util.formatDateTime(status.cacheUpdatedAt)} 時点のデータ` }));
-      if (result && typeof result.elapsedMs === 'number') parts.push(el('span', { className: 'mono', text: `検索 ${result.elapsedMs} ms` }));
-      const typed = DS.util.normalize(state.query.keyword);
-      if (result && state.search.request && /[！-～　]/.test(state.query.keyword) && typed === state.search.request.keyword) {
-        parts.push(el('span', { text: '全角の英数字・記号は半角にそろえて検索しました' }));
-      }
-      const request = state.search.request;
-      if (result && request && Object.values(request.filters || {}).some((spec) => spec.type === 'date' && spec.mode === 'relative')) {
-        parts.push(el('span', { className: 'mono', text: `日付は今日（${DS.domain.filters.slashOf(result.today)}）を基準に絞り込み` }));
-      }
-      if (status && status.usingPreviousCache) {
-        parts.push(el('span', { className: 'is-warning' }, [icon('fa-triangle-exclamation', '!'), el('span', { text: ' 前回のデータを使用中' })]));
-      }
-      foot.replaceChildren(...parts.flatMap((part, index) => (index ? [el('span', { className: 'results__sep', text: '·' }), part] : [part])));
-    }
-
-    bus.on('state', ({ state, changed }) => {
-      const tableKeys = ['search', 'columns', 'sort'];
-      if (changed.some((key) => tableKeys.includes(key))) {
-        renderTable(state);
-        renderHead(state);
-      } else if (changed.includes('selection')) {
-        renderSelection(state);
-      }
-      if (changed.some((key) => ['search', 'cache', 'mode'].includes(key))) renderEmpty(state);
-      if (changed.some((key) => ['search', 'cache', 'query'].includes(key))) renderFoot(state);
-      if (changed.includes('columns')) DS.util.flash(tableWrap.querySelector('thead'));
-    });
-
-    bus.on('search:done', () => {
-      tableWrap.scrollTop = 0;
-    });
-
-    const initial = store.get();
-    renderTable(initial);
-    renderHead(initial);
-    renderEmpty(initial);
-    renderFoot(initial);
-
-    return { focusTable: () => tableWrap.focus() };
-  }
-
-  DS.views.createResultsView = createResultsView;
-})();
-```
-
-`src/js/views/search-bar.js`
-
-```javascript
-/* =========================================================
-   上部バー：番号の種類・入力欄・一致のしかた・主要動作（CTA）
-   主要動作は右端の 1 つだけ。位置は固定し、状態に応じてラベルだけを変える。
-   ========================================================= */
-(function () {
-  'use strict';
-
-  const DS = window.DS;
-
-  function createSearchBar(root, { store, bus, search, openPanel, refresh }) {
-    const { el, icon } = DS.util;
-    const searchable = DS.domain.searchableFields();
-
-    // ── 番号の種類（常に見えるボタン。Alt+1〜4 でも切り替え） ──
-    const typeButtons = searchable.map((field, index) =>
-      el('button', {
-        type: 'button',
-        className: 'seg__item',
-        role: 'radio',
-        dataset: { type: field.id },
-        title: `${field.listLabel}で検索（Alt+${index + 1}）`,
-      }, [el('span', { text: field.listLabel }), el('kbd', { className: 'seg__kbd', text: String(index + 1) })]));
-    const typeGroup = el('div', { className: 'seg', role: 'radiogroup', 'aria-label': '番号の種類' }, typeButtons);
-
-    // ── 入力欄 ──
-    const input = el('input', {
-      type: 'text',
-      id: 'search-input',
-      className: 'search__input mono',
-      autocomplete: 'off',
-      spellcheck: 'false',
-      maxlength: '100',
-      list: 'search-history',
-      'aria-describedby': 'search-hint',
-    });
-    const history = el('datalist', { id: 'search-history' });
-    const clearButton = el('button', { type: 'button', className: 'search__clear', title: '入力を消す（Esc）', 'aria-label': '入力を消す' }, [icon('fa-xmark', '×')]);
-    const inputLabel = el('label', { className: 'sr-only', for: 'search-input' });
-    const inputBox = el('div', { className: 'search__box' }, [
-      icon('fa-magnifying-glass', '', 'search__icon'), inputLabel, input, clearButton, history,
-    ]);
-
-    // ── 一致のしかた ──
-    const MATCH = [
-      { id: 'partial', label: '部分一致', title: '入力した文字を含むものを探す' },
-      { id: 'exact', label: '完全一致', title: '入力した文字と同じものだけを探す' },
-    ];
-    const matchButtons = MATCH.map((mode) =>
-      el('button', { type: 'button', className: 'seg__item', role: 'radio', dataset: { match: mode.id }, title: mode.title, text: mode.label }));
-    const matchGroup = el('div', { className: 'seg seg--compact', role: 'radiogroup', 'aria-label': '一致のしかた' }, matchButtons);
-
-    // ── 主要動作 ──
-    const ctaIcon = el('span', { className: 'cta__icon' });
-    const ctaLabel = el('span', { className: 'cta__label' });
-    const cta = el('button', { type: 'button', className: 'btn btn--primary btn--lg cta', id: 'cta' }, [ctaIcon, ctaLabel]);
-
-    const hint = el('p', { className: 'search__hint', id: 'search-hint' });
-
-    root.appendChild(el('div', { className: 'search' }, [
-      el('div', { className: 'search__row' }, [typeGroup, inputBox, matchGroup, cta]),
-      hint,
-    ]));
-
-    // ── 操作 ──
-    function chooseType(type) {
-      search.setQuery({ searchType: type });
-      input.focus();
-    }
-
-    typeButtons.forEach((button) => button.addEventListener('click', () => chooseType(button.dataset.type)));
-    matchButtons.forEach((button) => button.addEventListener('click', () => {
-      search.setQuery({ matchMode: button.dataset.match });
-      DS.util.flash(button);
-      if (DS.util.normalize(store.get().query.keyword)) search.run({ page: 1 });
-    }));
-
-    input.addEventListener('input', () => search.setQuery({ keyword: input.value }));
-    input.addEventListener('focus', () => window.setTimeout(() => { if (document.activeElement === input) input.select(); }, 0));
-    input.addEventListener('keydown', (event) => {
-      // 日本語の変換中の Enter では検索しない
-      if (event.isComposing || event.keyCode === 229) return;
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        doPrimary();
-      } else if (event.key === 'Escape' && input.value) {
-        event.preventDefault();
-        event.stopPropagation();
-        clearKeyword();
-      }
-    });
-    clearButton.addEventListener('click', () => {
-      clearKeyword();
-      input.focus();
-    });
-
-    /** 入力を消す。番号で探していた途中なら、一覧に戻す */
-    function clearKeyword() {
-      input.value = '';
-      const request = store.get().search.request;
-      if (request && request.keyword) search.clearKeyword();
-      else search.setQuery({ keyword: '' });
-    }
-    cta.addEventListener('click', doPrimary);
-
-    function doPrimary() {
-      const ready = search.readiness();
-      if (ready.ok) search.run({ page: 1 });
-      else if (ready.action === 'open-samples') openPanel('samples');
-      else if (ready.action === 'refresh') refresh();
-      else {
-        DS.util.flash(hint);
-        input.focus();
-      }
-    }
-
-    // Alt+1〜4：種類の切り替え / 「/」：入力欄へ
-    document.addEventListener('keydown', (event) => {
-      if (event.altKey && !event.ctrlKey && /^[1-9]$/.test(event.key)) {
-        const field = searchable[Number(event.key) - 1];
-        if (field) {
-          event.preventDefault();
-          chooseType(field.id);
-          DS.util.flash(typeButtons[Number(event.key) - 1]);
-        }
-      } else if (event.key === '/' && !event.ctrlKey && !event.altKey && !isTyping(event.target)) {
-        event.preventDefault();
-        input.focus();
-      }
-    });
-
-    function isTyping(target) {
-      return target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
-    }
-
-    // ── 表示の更新 ──
-    function render(state) {
-      const field = DS.domain.fields.get(state.query.searchType);
-      typeButtons.forEach((button) => button.setAttribute('aria-checked', String(button.dataset.type === state.query.searchType)));
-      matchButtons.forEach((button) => button.setAttribute('aria-checked', String(button.dataset.match === state.query.matchMode)));
-      if (input.value !== state.query.keyword) input.value = state.query.keyword;
-      input.placeholder = `例：${field.example}`;
-      inputLabel.textContent = field.listLabel;
-      clearButton.hidden = !state.query.keyword;
-
-      const items = (state.history[state.query.searchType] || []);
-      history.replaceChildren(...items.map((value) => el('option', { value })));
-
-      const ready = search.readiness();
-      cta.disabled = !ready.ok && !ready.action;
-      cta.classList.toggle('is-busy', Boolean(ready.busy));
-      ctaIcon.replaceChildren(ready.busy
-        ? icon('fa-spinner', '…', 'fa-spin')
-        : icon(ready.icon || (ready.action === 'open-samples' ? 'fa-flask' : ready.action === 'refresh' ? 'fa-rotate' : 'fa-magnifying-glass'), ''));
-      ctaLabel.textContent = ready.busy ? '読み込み中…' : ready.action ? ready.actionLabel : ready.label || '検索する';
-
-      hint.replaceChildren(...(ready.ok
-        ? [el('span', { text: 'Enter で検索' }), sep(), el('span', { text: 'Alt+1〜4 で番号の種類を切り替え' }), sep(), el('span', { text: '/ で入力欄へ' })]
-        : [icon('fa-circle-info', 'i'), el('span', { text: ready.reason })]));
-      hint.classList.toggle('is-blocked', !ready.ok && !ready.busy && !ready.quiet);
-    }
-
-    function sep() {
-      return el('span', { className: 'search__sep', 'aria-hidden': 'true', text: '·' });
-    }
-
-    bus.on('state', ({ state, changed }) => {
-      if (changed.some((key) => ['query', 'search', 'cache', 'history', 'mode'].includes(key))) render(state);
-    });
-    render(store.get());
-
-    return { focus: () => input.focus() };
-  }
-
-  DS.views.createSearchBar = createSearchBar;
-})();
-```
-
-`src/js/views/status-chips.js`
-
-```javascript
-/* =========================================================
-   上部バー右：どのデータを見ているか（出どころ）と、その鮮度
-   押すと「データ」パネルが開き、詳しい根拠を確かめられる。
-   ========================================================= */
-(function () {
-  'use strict';
-
-  const DS = window.DS;
-
-  /** キャッシュの状態を「アイコン＋文字＋色」の 1 組にまとめる（パネルと共通で使う） */
-  function describeCache(cacheState) {
-    const status = cacheState.status;
-    if (cacheState.refreshing) return { tone: 'info', icon: 'fa-rotate', spin: true, fallback: '…', text: '更新しています' };
-    if (!status) return { tone: 'neutral', icon: 'fa-circle-notch', spin: true, fallback: '…', text: '確認しています' };
-    if (!status.available) return { tone: 'danger', icon: 'fa-database', fallback: '×', text: 'データなし' };
-    if (status.usingPreviousCache) return { tone: 'warning', icon: 'fa-triangle-exclamation', fallback: '!', text: '前回のデータを使用中' };
-    if (status.sourceHasUpdate) return { tone: 'warning', icon: 'fa-cloud-arrow-down', fallback: '!', text: '新しい更新があります' };
-    return { tone: 'success', icon: 'fa-circle-check', fallback: '✓', text: '最新' };
-  }
-
-  function createStatusChips(root, { store, bus, openPanel }) {
-    const { el, icon } = DS.util;
-    const mode = store.get().mode;
-
-    const modeChip = el('span', {
-      className: `chip chip--mode chip--mode-${mode.mode}`,
-      title: mode.description,
-    }, [icon(mode.mode === 'mock' ? 'fa-flask' : 'fa-database', ''), el('span', { text: mode.label })]);
-
-    const cacheText = el('span', { className: 'chip__text' });
-    const cacheSub = el('span', { className: 'chip__sub mono' });
-    const cacheIcon = el('span', { className: 'chip__icon' });
-    const cacheChip = el('button', {
-      type: 'button',
-      className: 'chip chip--status',
-      title: 'データの状態を見る',
-    }, [cacheIcon, cacheText, cacheSub]);
-    cacheChip.addEventListener('click', () => openPanel('data'));
-
-    root.append(modeChip, cacheChip);
-
-    function render(state) {
-      const view = describeCache(state.cache);
-      cacheChip.className = `chip chip--status chip--${view.tone}`;
-      cacheIcon.replaceChildren(icon(view.icon, view.fallback, view.spin ? 'fa-spin' : ''));
-      cacheText.textContent = view.text;
-      const status = state.cache.status;
-      cacheSub.textContent = status && status.cacheUpdatedAt ? DS.util.formatDateTime(status.cacheUpdatedAt) + ' 時点' : '';
-    }
-
-    bus.on('state', ({ state, changed }) => {
-      if (changed.includes('cache')) render(state);
-    });
-    render(store.get());
-  }
-
-  DS.views.describeCache = describeCache;
-  DS.views.createStatusChips = createStatusChips;
+  DS.sample = {
+    groups,
+    patterns,
+    createRandom,
+    /** requires を含めて、読み込むべきパターンの id をそろえる */
+    expand(ids) {
+      const result = [];
+      const visit = (id) => {
+        const pattern = patterns.get(id);
+        if (!pattern || result.includes(id)) return;
+        (pattern.requires || []).forEach(visit);
+        result.push(id);
+      };
+      ids.forEach(visit);
+      return result;
+    },
+  };
 })();
 ```
 

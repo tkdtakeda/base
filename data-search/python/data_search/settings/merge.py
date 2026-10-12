@@ -47,6 +47,17 @@ def _compatible(base_value, value):
     return type_name(base_value) == type_name(value)
 
 
+def fill_defaults(sample, defaults):
+    """サンプルにないキーだけを内部の既定値で補う（サンプルの値が常に優先）。新しいオブジェクトを返す。"""
+    result = copy.deepcopy(sample)
+    for key, value in defaults.items():
+        if key not in result:
+            result[key] = copy.deepcopy(value)
+        elif isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = fill_defaults(result[key], value)
+    return result
+
+
 def deep_merge(base, override, open_maps=(), path=""):
     """base（サンプル）に override（ローカル）を重ねた結果を返す。"""
     result = MergeResult(value=copy.deepcopy(base))

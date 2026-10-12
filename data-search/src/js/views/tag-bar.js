@@ -51,7 +51,7 @@
         type: 'text',
         className: 'input input--sm tag-editor__input',
         maxlength: String(tags.NAME_MAX),
-        placeholder: 'タグの名前（例：今週納期の仕掛品）',
+        placeholder: 'タグの名前（例：架空商事の仕掛品）',
         'aria-label': 'タグの名前',
       });
       input.value = initial || '';

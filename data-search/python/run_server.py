@@ -83,8 +83,12 @@ def main():
     cache_service = CacheService(config, logger)
     context = AppContext(config, cache_service, LotService(config, cache_service, logger), logger)
 
+    has_cache = os.path.isfile(config.cache_path)
+    if has_cache and not cache_service.verify_existing():
+        print("手元のキャッシュが今の schema（テーブル名・列名）と合わないため、作り直します…")
     if not cache_service.cache_available():
-        print("初回のため、共有データからキャッシュを作成しています…")
+        if not has_cache:
+            print("初回のため、共有データからキャッシュを作成しています…")
         try:
             result = cache_service.refresh()
             print(f"  完了：{result['rowCount']:,} 件")
