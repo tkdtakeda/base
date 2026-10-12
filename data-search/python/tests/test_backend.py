@@ -1,0 +1,304 @@
+"""Python 版バックエンドのテスト（実データは使わない）。
+
+実行: python -m unittest discover -s python/tests
+"""
+
+import json
+import logging
+import os
+import shutil
+import sqlite3
+import sys
+import tempfile
+import threading
+import unittest
+import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from data_search.cache_service import CacheService  # noqa: E402
+from data_search.config_loader import load_config  # noqa: E402
+from data_search.errors import AppError  # noqa: E402
+from data_search.http_server import AppContext, create_server  # noqa: E402
+from data_search.lot_service import LotService  # noqa: E402
+
+COLUMNS = {
+    "lotNo": "LOT_NO", "inspectionNo": "KENSA_NO", "castingNo": "CHUZO_NO", "orderNo": "JUCHU_NO",
+    "material": "ZAISHITSU", "temper": "SHITSUBETSU", "size": "SUNPO", "customer": "得意先名",
+    "deliveryDate": "NOUKI", "process": "KOUTEI", "equipment": "SETSUBI", "status": "JOUTAI",
+}
+ROWS = [
+    ("LOT-001", "INS-001", "CST-001", "ORD-1", "A5052", "H14", "t1×1000×2000", "サンプル工業", "2026-10-01", "検査", "QC-01", "検査済み"),
+    ("LOT-002", "INS-002", "CST-002", "ORD-1", "A6061", "T6", "t2×1000×2000", "テスト金属", "2026-10-02", "切断", "SL-01", "仕掛中"),
+    ("LOT_100%-A", "INS-003", "CST-003", "ORD-2", "A1100", "O", "t1×1000×2000", "見本製作所", "2026-10-03", "鋳造", "CST-01", "保留"),
+    ("試作-α-001", "INS-004", "CST-004", "ORD-3", "A7075", "T651", "t5×1250×2500", "架空商事", "2026-10-04", "焼鈍", "AN-01", "不適合"),
+    ("LOT-DUP", "INS-005", "CST-005", "ORD-4", "A3003", "H24", "t1×1000×2000", "例示精工", "2026-10-05", "検査", "QC-02", "検査待ち"),
+    ("LOT-DUP", "INS-006", "CST-006", "ORD-4", "A3003", "H24", "t1×1000×2000", "例示精工", "2026-10-05", "検査", "QC-02", "出荷済み"),
+]
+SILENT = logging.getLogger("test-silent")
+SILENT.addHandler(logging.NullHandler())
+SILENT.propagate = False
+
+
+def make_db(path, variant="normal"):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if os.path.exists(path):
+        os.remove(path)
+    if variant == "corrupt":
+        with open(path, "wb") as fp:
+            fp.write(b"broken" * 200)
+        return
+    columns = list(COLUMNS.values())
+    if variant == "missing-column":
+        columns = columns[:-1]
+    table = "other" if variant == "missing-table" else "t_lot"
+    conn = sqlite3.connect(path)
+    conn.execute(f'CREATE TABLE "{table}" ({", ".join(chr(34) + c + chr(34) for c in columns)})')
+    conn.executemany(
+        f'INSERT INTO "{table}" VALUES ({", ".join("?" for _ in columns)})',
+        [row[: len(columns)] for row in ROWS],
+    )
+    conn.commit()
+    conn.close()
+
+
+class BackendTestCase(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        os.makedirs(os.path.join(self.root, "config"))
+        self.source = os.path.join(self.root, "shared", "source.sqlite3")
+        make_db(self.source)
+        self.config_path = self.write_config()
+        self.config = load_config(self.config_path)
+        self.cache = CacheService(self.config, SILENT)
+        self.service = LotService(self.config, self.cache, SILENT)
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def write_config(self, **overrides):
+        config = {
+            "application": {"id": "data-search", "name": "Data Search", "version": "0.1.0"},
+            "dataSource": {
+                "id": "target-data", "enabled": True, "sourcePath": "./shared/source.sqlite3",
+                "cachePath": "./data/cache/cache.sqlite3", "tableName": "t_lot", "readOnly": True,
+            },
+            "fieldMappings": dict(COLUMNS),
+            "cache": {"temporaryExtension": ".tmp", "keepPreviousOnFailure": True},
+            "search": {"defaultMatchMode": "partial", "pageSize": 100, "maxPageSize": 500},
+            "logging": {"directory": "./logs", "level": "info"},
+        }
+        for path, value in overrides.items():
+            node = config
+            keys = path.split(".")
+            for key in keys[:-1]:
+                node = node[key]
+            node[keys[-1]] = value
+        path = os.path.join(self.root, "config", "config.test.json")
+        with open(path, "w", encoding="utf-8") as fp:
+            json.dump(config, fp, ensure_ascii=False)
+        return path
+
+    def search(self, keyword, search_type="lotNo", match_mode="partial", **extra):
+        return self.service.search({"searchType": search_type, "keyword": keyword, "matchMode": match_mode, **extra})
+
+
+class ConfigTest(BackendTestCase):
+    def test_relative_paths_resolve_from_app_root(self):
+        self.assertEqual(self.config.source_path, os.path.normpath(self.source))
+
+    def test_placeholder_is_rejected(self):
+        path = self.write_config(**{"dataSource.tableName": "<TARGET_TABLE_NAME>"})
+        with self.assertRaises(AppError) as ctx:
+            load_config(path)
+        self.assertEqual(ctx.exception.code, "CONFIG_INVALID")
+        self.assertIn("プレースホルダー", ctx.exception.detail)
+
+    def test_sample_config_is_rejected_as_is(self):
+        sample = os.path.join(os.path.dirname(__file__), "..", "..", "config", "config.sample.json")
+        with self.assertRaises(AppError):
+            load_config(sample)
+
+    def test_missing_config(self):
+        with self.assertRaises(AppError) as ctx:
+            load_config(os.path.join(self.root, "nothing.json"))
+        self.assertEqual(ctx.exception.code, "CONFIG_NOT_FOUND")
+
+
+class CacheTest(BackendTestCase):
+    def test_refresh_creates_cache_and_removes_temp(self):
+        result = self.cache.refresh()
+        self.assertTrue(result["success"])
+        self.assertEqual(result["rowCount"], len(ROWS))
+        self.assertTrue(os.path.isfile(self.config.cache_path))
+        self.assertFalse(os.path.exists(self.cache.temp_path))
+        status = self.cache.status()
+        self.assertTrue(status["available"])
+        self.assertFalse(status["usingPreviousCache"])
+
+    def test_unreachable_source_keeps_previous_cache(self):
+        self.cache.refresh()
+        os.remove(self.source)
+        with self.assertRaises(AppError) as ctx:
+            self.cache.refresh()
+        self.assertEqual(ctx.exception.code, "SOURCE_UNAVAILABLE")
+        status = self.cache.status()
+        self.assertTrue(status["available"])
+        self.assertTrue(status["usingPreviousCache"])
+        self.assertFalse(status["sourceReachable"])
+        self.assertEqual(self.search("LOT")["totalCount"], 5)
+
+    def assert_variant_rejected(self, variant, code):
+        self.cache.refresh()
+        make_db(self.source, variant)
+        with self.assertRaises(AppError) as ctx:
+            self.cache.refresh()
+        self.assertEqual(ctx.exception.code, code)
+        self.assertFalse(os.path.exists(self.cache.temp_path))
+        self.assertEqual(self.search("LOT-001")["totalCount"], 1)
+
+    def test_corrupt_copy_is_rejected(self):
+        self.assert_variant_rejected("corrupt", "CACHE_INVALID")
+
+    def test_missing_table_is_rejected(self):
+        self.assert_variant_rejected("missing-table", "CACHE_TABLE_MISSING")
+
+    def test_missing_column_is_rejected(self):
+        self.assert_variant_rejected("missing-column", "CACHE_COLUMN_MISSING")
+
+    def test_search_without_cache(self):
+        with self.assertRaises(AppError) as ctx:
+            self.search("LOT")
+        self.assertEqual(ctx.exception.code, "CACHE_UNAVAILABLE")
+
+    def test_source_is_not_modified(self):
+        before = os.stat(self.source).st_mtime_ns
+        self.cache.refresh()
+        self.search("LOT")
+        self.assertEqual(os.stat(self.source).st_mtime_ns, before)
+
+
+class SearchTest(BackendTestCase):
+    def setUp(self):
+        super().setUp()
+        self.cache.refresh()
+
+    def test_partial_and_exact(self):
+        self.assertEqual(self.search("LOT-00")["totalCount"], 2)
+        self.assertEqual(self.search("LOT-00", match_mode="exact")["totalCount"], 0)
+        self.assertEqual(self.search("lot-001", match_mode="exact")["totalCount"], 1)
+
+    def test_items_use_logical_names(self):
+        item = self.search("LOT-001")["items"][0]
+        self.assertEqual(set(item), set(COLUMNS))
+        self.assertEqual(item["customer"], "サンプル工業")
+
+    def test_zero_results_is_success(self):
+        result = self.search("NOTHING")
+        self.assertTrue(result["success"])
+        self.assertEqual(result["totalCount"], 0)
+        self.assertEqual(result["items"], [])
+
+    def test_like_wildcards_are_literal(self):
+        self.assertEqual(self.search("%")["totalCount"], 1)
+        self.assertEqual(self.search("_")["totalCount"], 1)
+        self.assertEqual(self.search("LOT_100%-A", match_mode="exact")["totalCount"], 1)
+
+    def test_japanese_and_full_width_keyword(self):
+        self.assertEqual(self.search("試作")["totalCount"], 1)
+        self.assertEqual(self.search("ＬＯＴ－００１")["totalCount"], 1)
+        self.assertEqual(self.search("  LOT-001  ", match_mode="exact")["keyword"], "LOT-001")
+
+    def test_injection_like_keyword_is_harmless(self):
+        result = self.search("'; DROP TABLE t_lot; --")
+        self.assertEqual(result["totalCount"], 0)
+        self.assertEqual(self.search("LOT")["totalCount"], 5)
+
+    def test_other_search_types(self):
+        self.assertEqual(self.search("INS-003", "inspectionNo", "exact")["items"][0]["lotNo"], "LOT_100%-A")
+        self.assertEqual(self.search("CST-004", "castingNo")["totalCount"], 1)
+        self.assertEqual(self.search("ORD-1", "orderNo", "exact")["totalCount"], 2)
+
+    def test_paging_and_sort(self):
+        first = self.search("LOT", pageSize=2, page=1, sortKey="lotNo", sortOrder="desc")
+        self.assertEqual(first["totalCount"], 5)
+        self.assertEqual(first["count"], 2)
+        second = self.search("LOT", pageSize=2, page=3)
+        self.assertEqual(second["count"], 1)
+
+    def test_invalid_requests(self):
+        bad = [
+            {"searchType": "material", "keyword": "A"},
+            {"searchType": "lotNo", "keyword": ""},
+            {"searchType": "lotNo", "keyword": "A", "matchMode": "regex"},
+            {"searchType": "lotNo", "keyword": "A", "sortKey": "LOT_NO"},
+            {"searchType": "lotNo", "keyword": "A", "pageSize": 501},
+            {"searchType": "lotNo", "keyword": "A", "page": 0},
+            {"searchType": "lotNo", "keyword": "x" * 101},
+        ]
+        for payload in bad:
+            with self.subTest(payload=payload), self.assertRaises(AppError) as ctx:
+                self.service.search(payload)
+            self.assertEqual(ctx.exception.code, "INVALID_REQUEST")
+
+    def test_detail_by_lot_and_casting(self):
+        result = self.service.detail({"lotNo": "LOT-DUP", "castingNo": "CST-006"})
+        self.assertEqual(result["item"]["inspectionNo"], "INS-006")
+        with self.assertRaises(AppError) as ctx:
+            self.service.detail({"lotNo": "LOT-DUP", "castingNo": "CST-999"})
+        self.assertEqual(ctx.exception.code, "NOT_FOUND")
+
+
+class HttpTest(BackendTestCase):
+    def setUp(self):
+        super().setUp()
+        self.cache.refresh()
+        context = AppContext(self.config, self.cache, self.service, SILENT)
+        static = os.path.join(os.path.dirname(__file__), "..", "..", "src")
+        self.server = create_server(context, static, "127.0.0.1", 0)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        super().tearDown()
+
+    def post(self, name, payload, headers=None):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/{name}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", **(headers or {})},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request) as response:
+                return response.status, json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read())
+
+    def test_commands(self):
+        status, body = self.post("search_lots", {"searchType": "lotNo", "keyword": "LOT-001"})
+        self.assertEqual((status, body["totalCount"]), (200, 1))
+        status, body = self.post("get_application_info", {})
+        self.assertEqual(body["id"], "data-search")
+        status, body = self.post("get_cache_status", {})
+        self.assertTrue(body["available"])
+
+    def test_error_shape_hides_internal_detail(self):
+        status, body = self.post("search_lots", {"searchType": "LOT_NO", "keyword": "x"})
+        self.assertFalse(body["success"])
+        self.assertEqual(set(body["error"]), {"code", "userMessage", "detailId"})
+        self.assertNotIn("LOT_NO", json.dumps(body, ensure_ascii=False))
+
+    def test_unknown_command_and_foreign_origin(self):
+        self.assertEqual(self.post("drop_table", {})[0], 404)
+        self.assertEqual(self.post("search_lots", {}, {"Origin": "http://evil.example"})[0], 403)
+
+    def test_static_files_are_served_with_js_mime(self):
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/js/app.js") as response:
+            self.assertIn("javascript", response.headers["Content-Type"])
+
+
+if __name__ == "__main__":
+    unittest.main()

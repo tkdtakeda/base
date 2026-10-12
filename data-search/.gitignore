@@ -1,0 +1,10 @@
+# 実環境の設定・データ・ログはリポジトリへ登録しない
+config/config.local.json
+config/config.dummy.json
+data/
+logs/
+*.tmp
+*.sqlite3-wal
+*.sqlite3-shm
+__pycache__/
+*.pyc

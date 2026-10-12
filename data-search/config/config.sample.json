@@ -1,0 +1,47 @@
+{
+  "application": {
+    "id": "data-search",
+    "name": "Data Search",
+    "version": "0.1.0"
+  },
+  "dataSource": {
+    "id": "target-data",
+    "enabled": true,
+    "sourcePath": "<SHARED_SQLITE_PATH>",
+    "cachePath": "./data/cache/<CACHE_FILE_NAME>.sqlite3",
+    "tableName": "<TARGET_TABLE_NAME>",
+    "readOnly": true
+  },
+  "fieldMappings": {
+    "lotNo": "<LOT_NUMBER_COLUMN>",
+    "inspectionNo": "<INSPECTION_NUMBER_COLUMN>",
+    "castingNo": "<CASTING_NUMBER_COLUMN>",
+    "orderNo": "<ORDER_NUMBER_COLUMN>",
+    "material": "<MATERIAL_COLUMN>",
+    "temper": "<TEMPER_COLUMN>",
+    "size": "<SIZE_COLUMN>",
+    "customer": "<CUSTOMER_COLUMN>",
+    "deliveryDate": "<DELIVERY_DATE_COLUMN>",
+    "process": "<PROCESS_COLUMN>",
+    "equipment": "<EQUIPMENT_COLUMN>",
+    "status": "<STATUS_COLUMN>"
+  },
+  "cache": {
+    "temporaryExtension": ".tmp",
+    "keepPreviousOnFailure": true
+  },
+  "search": {
+    "defaultMatchMode": "partial",
+    "pageSize": 100,
+    "maxPageSize": 500
+  },
+  "logging": {
+    "directory": "./logs",
+    "level": "info"
+  },
+  "devServer": {
+    "host": "127.0.0.1",
+    "port": 8765,
+    "openBrowser": true
+  }
+}
