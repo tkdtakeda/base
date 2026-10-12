@@ -1,0 +1,527 @@
+/* =========================================================
+   部品：ボタン・切り替え・入力・札・通知・パネルの中身・説明書
+   値はすべてトークン（tokens.css）を参照する。
+   ========================================================= */
+
+/* ── 反映の合図 ── */
+@keyframes flash {
+  0% { background-color: var(--color-flash); }
+  100% { background-color: transparent; }
+}
+
+.is-flash {
+  animation: flash var(--dur-flash) var(--ease);
+}
+
+.muted {
+  color: var(--color-text-subtle);
+}
+
+/* ── ボタン ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  height: var(--h-control);
+  padding: 0 var(--sp-4);
+  border: var(--bw) solid transparent;
+  border-radius: var(--r-md);
+  font-weight: var(--fw-bold);
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.btn--sm {
+  height: var(--h-control-sm);
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-sm);
+}
+
+.btn--lg {
+  height: var(--h-control-lg);
+  padding: 0 var(--sp-5);
+}
+
+.btn--block {
+  width: 100%;
+}
+
+.btn--primary {
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+
+.btn--primary:active:not(:disabled) {
+  background: var(--color-primary-active);
+}
+
+.btn--primary:disabled {
+  background: var(--color-surface-sunken);
+  color: var(--color-text-subtle);
+  border-color: var(--color-border);
+}
+
+.btn--secondary {
+  background: var(--color-surface);
+  border-color: var(--color-primary-border);
+  color: var(--color-primary);
+}
+
+.btn--secondary:hover:not(:disabled) {
+  background: var(--color-primary-soft);
+}
+
+.btn--secondary:disabled,
+.btn--ghost:disabled,
+.btn--danger-ghost:disabled {
+  color: var(--color-text-subtle);
+  border-color: var(--color-border);
+  background: var(--color-surface-alt);
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: var(--color-surface-sunken);
+}
+
+.btn--danger-ghost {
+  background: transparent;
+  border-color: var(--color-border-strong);
+  color: var(--color-danger);
+}
+
+.btn--danger-ghost:hover:not(:disabled) {
+  background: var(--color-danger-bg);
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--h-control-sm);
+  height: var(--h-control-sm);
+  padding: 0;
+  border: var(--bw) solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
+}
+
+.icon-btn:disabled {
+  color: var(--color-border-strong);
+}
+
+/* ── 切り替え（セグメント） ── */
+.seg {
+  display: inline-flex;
+  flex-shrink: 0;
+  padding: 2px;
+  border-radius: var(--r-md);
+  background: var(--color-surface-sunken);
+}
+
+.seg__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  height: calc(var(--h-control-lg) - 4px);
+  padding: 0 var(--sp-3);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.seg__item:hover {
+  color: var(--color-text);
+}
+
+.seg__item[aria-checked="true"] {
+  background: var(--color-surface);
+  color: var(--color-primary);
+  font-weight: var(--fw-bold);
+  box-shadow: var(--shadow-1);
+}
+
+.seg__kbd {
+  font-size: var(--fs-xs);
+  line-height: 1.2;
+  opacity: 0.8;
+}
+
+.seg--compact .seg__item {
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-sm);
+}
+
+/* ── 入力 ── */
+.input {
+  height: var(--h-control);
+  padding: 0 var(--sp-3);
+  border: var(--bw) solid var(--color-border-strong);
+  border-radius: var(--r-md);
+  background: var(--color-surface);
+}
+
+.input--sm {
+  height: var(--h-control-sm);
+  font-size: var(--fs-sm);
+  width: 100%;
+}
+
+.input:focus {
+  border-color: var(--color-focus);
+  outline: none;
+  box-shadow: 0 0 0 var(--bw-strong) var(--color-primary-soft-strong);
+}
+
+.check-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-1) var(--sp-2);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.check:hover {
+  background: var(--color-surface-sunken);
+}
+
+.check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--color-primary);
+}
+
+/* ── 札（状態） ── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-pill);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+  line-height: 1.8;
+  white-space: nowrap;
+}
+
+.badge--success { background: var(--color-success-bg); color: var(--color-success); }
+.badge--warning { background: var(--color-warning-bg); color: var(--color-warning); }
+.badge--danger { background: var(--color-danger-bg); color: var(--color-danger); }
+.badge--info { background: var(--color-info-bg); color: var(--color-info); }
+.badge--neutral { background: var(--color-neutral-bg); color: var(--color-neutral); }
+
+/* ── チップ（上部バー右） ── */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: var(--h-control);
+  padding: 0 var(--sp-3);
+  border: var(--bw) solid var(--color-border);
+  border-radius: var(--r-pill);
+  background: var(--color-surface);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.chip--mode-mock { background: var(--color-mode-mock-bg); border-color: transparent; color: var(--color-mode-mock); font-weight: var(--fw-bold); }
+.chip--mode-http,
+.chip--mode-tauri { background: var(--color-primary-soft); border-color: transparent; color: var(--color-primary); font-weight: var(--fw-bold); }
+
+.chip--status { cursor: pointer; }
+.chip--status:hover { border-color: var(--color-border-strong); }
+.chip__text { font-weight: var(--fw-bold); }
+.chip__sub { color: var(--color-text-muted); }
+.chip--success .chip__icon { color: var(--color-success); }
+.chip--warning { background: var(--color-warning-bg); }
+.chip--warning .chip__icon,
+.chip--warning .chip__text { color: var(--color-warning); }
+.chip--danger { background: var(--color-danger-bg); }
+.chip--danger .chip__icon,
+.chip--danger .chip__text { color: var(--color-danger); }
+.chip--info .chip__icon { color: var(--color-info); }
+.chip--neutral .chip__icon { color: var(--color-neutral); }
+
+/* ── 通知 ── */
+.toast-host {
+  position: fixed;
+  right: var(--sp-5);
+  bottom: var(--sp-5);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  width: var(--w-toast);
+  max-width: calc(100vw - 2 * var(--sp-5));
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-3) var(--sp-3) var(--sp-4);
+  border-left: var(--bw-bar) solid var(--color-info);
+  border-radius: var(--r-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-2);
+  animation: toast-in var(--dur-base) var(--ease);
+  transition: opacity var(--dur-base) var(--ease);
+}
+
+.toast.is-leaving { opacity: 0; }
+.toast--success { border-left-color: var(--color-success); }
+.toast--success .toast__icon { color: var(--color-success); }
+.toast--warning { border-left-color: var(--color-warning); }
+.toast--warning .toast__icon { color: var(--color-warning); }
+.toast--danger { border-left-color: var(--color-danger); }
+.toast--danger .toast__icon { color: var(--color-danger); }
+.toast--info .toast__icon { color: var(--color-info); }
+
+.toast__icon { font-size: var(--fs-lg); line-height: var(--lh-base); }
+.toast__body { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.toast__detail { color: var(--color-text-subtle); font-size: var(--fs-xs); }
+
+.toast__action {
+  flex-shrink: 0;
+  height: var(--h-control-sm);
+  padding: 0 var(--sp-3);
+  border: var(--bw) solid var(--color-primary-border);
+  border-radius: var(--r-md);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-weight: var(--fw-bold);
+}
+
+.toast__close {
+  flex-shrink: 0;
+  width: var(--h-control-sm);
+  height: var(--h-control-sm);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--color-text-subtle);
+}
+
+.toast__close:hover { background: var(--color-surface-sunken); }
+
+/* ── パネルの中身 ── */
+.pane-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3) 0;
+  border-top: var(--bw) solid var(--color-border);
+}
+
+.pane-section--end { margin-top: var(--sp-2); }
+
+.pane-section__title {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+  color: var(--color-text-muted);
+}
+
+.pane-note {
+  font-size: var(--fs-sm);
+  color: var(--color-text-muted);
+  line-height: var(--lh-base);
+}
+
+.status-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--color-neutral-bg);
+}
+
+.status-card__icon { font-size: var(--fs-xl); line-height: 1.2; color: var(--color-neutral); }
+.status-card__title { display: block; }
+.status-card__text { font-size: var(--fs-sm); color: var(--color-text-muted); }
+.status-card--success { background: var(--color-success-bg); }
+.status-card--success .status-card__icon,
+.status-card--success .status-card__title { color: var(--color-success); }
+.status-card--warning { background: var(--color-warning-bg); }
+.status-card--warning .status-card__icon,
+.status-card--warning .status-card__title { color: var(--color-warning); }
+.status-card--danger { background: var(--color-danger-bg); }
+.status-card--danger .status-card__icon,
+.status-card--danger .status-card__title { color: var(--color-danger); }
+.status-card--info { background: var(--color-info-bg); }
+.status-card--info .status-card__icon,
+.status-card--info .status-card__title { color: var(--color-info); }
+
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--sp-1) var(--sp-3);
+  font-size: var(--fs-sm);
+}
+
+.facts dt { color: var(--color-text-muted); white-space: nowrap; }
+.facts dd { min-width: 0; overflow-wrap: anywhere; }
+.facts .is-warning { color: var(--color-warning); }
+
+.sample-list { display: flex; flex-direction: column; gap: var(--sp-2); }
+
+.sample {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  border: var(--bw) solid var(--color-border);
+  border-radius: var(--r-md);
+  background: var(--color-surface);
+}
+
+.sample.is-loaded { border-color: var(--color-primary-border); background: var(--color-primary-soft); }
+.sample__icon { width: 20px; color: var(--color-primary); text-align: center; line-height: var(--lh-base); }
+.sample__body { display: flex; flex-direction: column; min-width: 0; }
+.sample__title { font-size: var(--fs-md); }
+.sample__desc { font-size: var(--fs-sm); color: var(--color-text-muted); }
+.sample__meta { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); color: var(--color-text-subtle); }
+.sample__state { display: inline-flex; gap: var(--sp-1); color: var(--color-success); font-weight: var(--fw-bold); }
+
+.inline-note {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--color-info-bg);
+  color: var(--color-info);
+  font-size: var(--fs-sm);
+}
+
+.inline-note--warning { background: var(--color-warning-bg); color: var(--color-warning); }
+.inline-note--danger { background: var(--color-danger-bg); color: var(--color-danger); }
+
+.copy-btn {
+  margin-left: var(--sp-1);
+  padding: 0 var(--sp-1);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--color-text-subtle);
+}
+
+.copy-btn:hover { background: var(--color-surface-sunken); color: var(--color-primary); }
+.copy-btn.is-done { color: var(--color-success); }
+
+/* ── 取扱説明書（背景を覆わない窓） ── */
+.manual {
+  position: fixed;
+  right: var(--sp-5);
+  bottom: var(--sp-5);
+  z-index: var(--z-manual);
+  display: flex;
+  flex-direction: column;
+  width: var(--w-manual);
+  max-width: calc(100vw - 2 * var(--sp-5));
+  height: var(--h-manual);
+  max-height: calc(100dvh - 2 * var(--sp-5));
+  border: var(--bw) solid var(--color-border);
+  border-radius: var(--r-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-2);
+}
+
+.manual__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-2) var(--sp-3) var(--sp-2) var(--sp-4);
+  border-bottom: var(--bw) solid var(--color-border);
+}
+
+.manual__title { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-lg); color: var(--color-primary); }
+.manual__main { display: grid; grid-template-columns: 200px 1fr; min-height: 0; flex: 1; }
+.manual__side { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3); border-right: var(--bw) solid var(--color-border); overflow: auto; background: var(--color-surface-alt); }
+.manual__toc { display: flex; flex-direction: column; }
+.manual__group { margin-top: var(--sp-2); font-size: var(--fs-xs); color: var(--color-text-subtle); }
+
+.manual__link {
+  padding: var(--sp-1) var(--sp-2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  text-align: left;
+}
+
+.manual__link:hover { background: var(--color-surface-sunken); }
+.manual__link.is-active { background: var(--color-primary-soft); color: var(--color-primary); font-weight: var(--fw-bold); }
+.manual__content { padding: var(--sp-4) var(--sp-5); overflow: auto; }
+.manual__content p,
+.manual__content ul,
+.manual__content ol,
+.manual__content table { margin: 0 0 var(--sp-3); }
+.manual__content ul,
+.manual__content ol { padding-left: var(--sp-5); list-style: revert; }
+.manual__content li { margin-bottom: var(--sp-1); }
+.manual__chapter { margin-bottom: var(--sp-3); font-size: var(--fs-xl); }
+.manual-table { border-collapse: collapse; font-size: var(--fs-sm); }
+.manual-table th,
+.manual-table td { padding: var(--sp-1) var(--sp-3); border: var(--bw) solid var(--color-border); text-align: left; }
+.manual-table th { background: var(--color-surface-alt); }
+.manual-icon { font-family: var(--font-mono); color: var(--color-primary); }
+
+/* ── 設定の注意（データのパネル） ── */
+.config-help__item { padding: var(--sp-2); border-left: var(--bw-bar) solid var(--color-warning); border-radius: var(--r-sm); background: var(--color-warning-bg); }
+.config-help__where { font-size: var(--fs-xs); font-weight: var(--fw-bold); color: var(--color-warning); overflow-wrap: anywhere; }
+
+/* ── 読み込み先（データ パネル） ── */
+.source { display: flex; flex-direction: column; gap: var(--sp-2); }
+.source__path { margin: 0; font-size: var(--fs-sm); word-break: break-all; padding: var(--sp-1) var(--sp-2); border-radius: var(--r-sm); background: var(--color-surface-sunken); }
+.source__actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.source__actions[hidden], .source__edit[hidden] { display: none; }
+.source__edit { display: flex; flex-direction: column; gap: var(--sp-2); }
+.source__input { width: 100%; }
+.pane-note.is-warning { color: var(--color-warning); }
+.source-result.is-stale { opacity: 0.5; }
+.source-result__summary { margin: 0 0 var(--sp-1); font-weight: 600; font-size: var(--fs-sm); }
+.source-result__summary.is-ok { color: var(--color-success); }
+.source-result__summary.is-ng { color: var(--color-danger); }
+.source-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
+.source-step { display: grid; grid-template-columns: 1.4em 1fr; gap: var(--sp-1); font-size: var(--fs-sm); }
+.source-step__mark { line-height: 1.5; }
+.source-step--ok .source-step__mark { color: var(--color-success); }
+.source-step--ng .source-step__mark { color: var(--color-danger); }
+.source-step--skip { color: var(--color-text-muted); }
+.source-step__label { display: block; }
+.source-step__text, .source-step__action { margin: 0; }
+.source-step--ng .source-step__action { color: var(--color-danger); }

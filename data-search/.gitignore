@@ -1,0 +1,13 @@
+# 社内固有の設定（実際のパス・テーブル名・列名など）はフォルダごと管理しない
+config/local/
+# ダミーデータ用の上書き設定（make_dummy_db.py が作る）
+config/dummy/
+
+# データ・ログ・一時ファイル
+data/
+logs/
+*.tmp
+*.sqlite3-wal
+*.sqlite3-shm
+__pycache__/
+*.pyc

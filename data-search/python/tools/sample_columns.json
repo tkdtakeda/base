@@ -1,0 +1,269 @@
+{
+  "_comment": "ダミーの共有 SQLite（make_dummy_db.py）と、画面だけで試すモードのサンプル（sync_sample_view.py）が使う列の一覧。実データとは無関係。name は DB の列名（この順が DB の列の順）、role は schema.sample.json の論理名（役割のある列だけ）。",
+  "table": "t_dummy_lot_box",
+  "columns": [
+    {
+      "name": "ロット番号",
+      "role": "lotNo"
+    },
+    {
+      "name": "BOX番号",
+      "role": "boxNo"
+    },
+    {
+      "name": "検査番号",
+      "role": "inspectionNo"
+    },
+    {
+      "name": "鋳造番号",
+      "role": "castingNo"
+    },
+    {
+      "name": "オーダー番号",
+      "role": "orderNo"
+    },
+    {
+      "name": "plannedEquipmentName"
+    },
+    {
+      "name": "businessUnitCode"
+    },
+    {
+      "name": "demandFieldCode"
+    },
+    {
+      "name": "applicationCode"
+    },
+    {
+      "name": "applicationName"
+    },
+    {
+      "name": "orderMaterial"
+    },
+    {
+      "name": "orderTemper"
+    },
+    {
+      "name": "orderThickness"
+    },
+    {
+      "name": "orderWidth"
+    },
+    {
+      "name": "orderLength"
+    },
+    {
+      "name": "製造材質",
+      "role": "manufacturingMaterial"
+    },
+    {
+      "name": "製造調質",
+      "role": "manufacturingTemper"
+    },
+    {
+      "name": "manufacturingThickness"
+    },
+    {
+      "name": "manufacturingWidth"
+    },
+    {
+      "name": "manufacturingLength"
+    },
+    {
+      "name": "productUnitWeight"
+    },
+    {
+      "name": "specificGravity"
+    },
+    {
+      "name": "shape"
+    },
+    {
+      "name": "surface"
+    },
+    {
+      "name": "processing"
+    },
+    {
+      "name": "surfaceProcessing"
+    },
+    {
+      "name": "cleaning"
+    },
+    {
+      "name": "deliverySpecificationNo"
+    },
+    {
+      "name": "仕掛区分",
+      "role": "wipCategory"
+    },
+    {
+      "name": "allocationCategory"
+    },
+    {
+      "name": "保留区分",
+      "role": "holdCategory"
+    },
+    {
+      "name": "holdReleaseDate"
+    },
+    {
+      "name": "temporaryPackingFlag"
+    },
+    {
+      "name": "urgentCategory"
+    },
+    {
+      "name": "状態",
+      "role": "cfStatus"
+    },
+    {
+      "name": "allocationCode"
+    },
+    {
+      "name": "allocationMethod"
+    },
+    {
+      "name": "allocationQuantity"
+    },
+    {
+      "name": "allocationAdjustmentNo"
+    },
+    {
+      "name": "salesDeliveryDate"
+    },
+    {
+      "name": "工場納期",
+      "role": "factoryDeliveryDate"
+    },
+    {
+      "name": "promisedDeliveryDate"
+    },
+    {
+      "name": "shippingDate"
+    },
+    {
+      "name": "wipRetentionTime"
+    },
+    {
+      "name": "deliveryDestinationCode"
+    },
+    {
+      "name": "customerCode"
+    },
+    {
+      "name": "shippingDestinationCode"
+    },
+    {
+      "name": "deliveryDestinationName"
+    },
+    {
+      "name": "取引先名",
+      "role": "customerName"
+    },
+    {
+      "name": "shippingDestinationName"
+    },
+    {
+      "name": "districtCode"
+    },
+    {
+      "name": "salespersonCode"
+    },
+    {
+      "name": "plannedEquipmentCourse"
+    },
+    {
+      "name": "actualEquipmentCourse"
+    },
+    {
+      "name": "残仕掛設備コース",
+      "role": "remainingEquipmentCourse"
+    },
+    {
+      "name": "totalProcessCount"
+    },
+    {
+      "name": "pitPlannedDate"
+    },
+    {
+      "name": "pitActualDate"
+    },
+    {
+      "name": "specialSpecification"
+    },
+    {
+      "name": "masterNo"
+    },
+    {
+      "name": "specificationNo"
+    },
+    {
+      "name": "qualityNo"
+    },
+    {
+      "name": "manufacturingNo"
+    },
+    {
+      "name": "testNo"
+    },
+    {
+      "name": "personInCharge"
+    },
+    {
+      "name": "boxPlannedThickness"
+    },
+    {
+      "name": "boxPlannedWidth"
+    },
+    {
+      "name": "boxPlannedLength"
+    },
+    {
+      "name": "boxPlannedWorkPattern"
+    },
+    {
+      "name": "boxPlannedWeight"
+    },
+    {
+      "name": "boxPlannedCount"
+    },
+    {
+      "name": "qualityCode"
+    },
+    {
+      "name": "annealingScheduleCategory"
+    },
+    {
+      "name": "annealingFurnaceNo"
+    },
+    {
+      "name": "lastActualProcessBoxNo"
+    },
+    {
+      "name": "最終実績設備",
+      "role": "lastActualEquipmentName"
+    },
+    {
+      "name": "lastActualThickness"
+    },
+    {
+      "name": "lastActualWidth"
+    },
+    {
+      "name": "lastActualLength"
+    },
+    {
+      "name": "lastActualGoodWeight"
+    },
+    {
+      "name": "lastActualCount"
+    },
+    {
+      "name": "workStartDate"
+    },
+    {
+      "name": "workEndDate"
+    }
+  ]
+}

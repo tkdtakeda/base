@@ -1,0 +1,49 @@
+{
+  "searchFields": [
+    "lotNo",
+    "boxNo",
+    "inspectionNo",
+    "castingNo",
+    "orderNo",
+    "customerName"
+  ],
+  "hiddenColumns": [],
+  "filters": [
+    {
+      "field": "manufacturingMaterial",
+      "type": "values"
+    },
+    {
+      "field": "manufacturingTemper",
+      "type": "values"
+    },
+    {
+      "field": "customerName",
+      "type": "values"
+    },
+    {
+      "field": "remainingEquipmentCourse",
+      "type": "values"
+    },
+    {
+      "field": "lastActualEquipmentName",
+      "type": "values"
+    },
+    {
+      "field": "wipCategory",
+      "type": "values"
+    },
+    {
+      "field": "holdCategory",
+      "type": "values"
+    },
+    {
+      "field": "cfStatus",
+      "type": "values"
+    }
+  ],
+  "defaultSort": {
+    "field": "factoryDeliveryDate",
+    "order": "asc"
+  }
+}
