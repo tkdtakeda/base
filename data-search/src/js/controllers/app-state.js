@@ -22,6 +22,7 @@
       mode,
       appInfo: null,
       cache: { status: null, refreshing: false, refreshStartedAt: null },
+      source: { path: null, editable: false, localFile: '', loaded: false, loadError: null, status: 'idle', result: null, testedPath: null },
       query: {
         searchType: searchable.includes(prefs.searchType) ? prefs.searchType : searchable[0],
         keyword: '',

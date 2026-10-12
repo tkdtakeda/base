@@ -28,6 +28,8 @@ from data_search.errors import AppError  # noqa: E402
 from data_search.http_server import AppContext, create_server  # noqa: E402
 from data_search.lot_service import LotService  # noqa: E402
 from data_search.settings.labels import plan_labels  # noqa: E402
+from data_search.source_service import SourceService  # noqa: E402
+from data_search import commands  # noqa: E402
 
 APP_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SAMPLE_DIR = os.path.join(APP_ROOT, "config", "sample")
@@ -633,6 +635,103 @@ class LabelTest(BackendTestCase):
         self.assertFalse(os.path.exists(os.path.join(self.local_dir, "view.local.json")))
         self.remove_local("schema")
         self.assertEqual(self.run_tool().returncode, 1)
+
+
+class SourceTest(BackendTestCase):
+    """読み込み先の接続テストと変更（get/test/update_data_source）"""
+
+    def setUp(self):
+        super().setUp()
+        self.context = AppContext(self.config, self.cache, self.service, SILENT)
+        self.context.source_service = SourceService(self.context, self.root, None)
+
+    def call(self, name, payload=None):
+        return commands.dispatch(name, self.context, payload or {})
+
+    def statuses(self, result):
+        return {step["id"]: step["status"] for step in result["steps"]}
+
+    def first_ng(self, path):
+        result = self.call("test_data_source", {"sourcePath": path})
+        self.assertFalse(result["ok"])
+        return next(step for step in result["steps"] if step["status"] == "ng")
+
+    def test_current_source_passes_all_steps(self):
+        result = self.call("test_data_source")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(set(self.statuses(result).values()), {"ok"})
+        self.assertEqual(result["rowCount"], len(ROWS))
+        self.assertTrue(result["modifiedAt"])
+        described = self.call("get_data_source")
+        self.assertEqual(described["sourcePath"], self.config.source_path)
+        self.assertEqual(described["localFile"], "config/local/config.local.json")
+
+    def test_quotes_from_explorer_are_removed(self):
+        result = self.call("test_data_source", {"sourcePath": f'  "{self.source}"  '})
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["normalizedPath"], self.source)
+
+    def test_each_step_reports_its_own_failure(self):
+        self.assertEqual(self.first_ng("")["id"], "format")
+        self.assertEqual(self.first_ng("<SHARED_SQLITE_PATH>")["id"], "format")
+        self.assertEqual(self.first_ng(os.path.join(self.root, "no-such-folder", "x.sqlite3"))["id"], "reach")
+        self.assertEqual(self.first_ng(os.path.join(self.root, "shared", "missing.sqlite3"))["id"], "reach")
+        self.assertEqual(self.first_ng(os.path.join(self.root, "shared"))["id"], "reach")
+        text = os.path.join(self.root, "shared", "note.txt")
+        with open(text, "w", encoding="utf-8") as fp:
+            fp.write("not sqlite")
+        self.assertEqual(self.first_ng(text)["id"], "sqlite")
+        for variant in ("missing-table", "missing-column"):
+            other = os.path.join(self.root, "shared", f"{variant}.sqlite3")
+            make_db(other, variant)
+            step = self.first_ng(other)
+            self.assertEqual(step["id"], "table")
+            self.assertTrue(step["action"])
+        result = self.call("test_data_source", {"sourcePath": ""})
+        self.assertEqual(self.statuses(result)["rows"], "skip")       # × の後は確かめない
+
+    def test_relative_path_is_from_app_root(self):
+        self.assertTrue(self.call("test_data_source", {"sourcePath": "./shared/source.sqlite3"})["ok"])
+
+    def test_failed_check_does_not_save(self):
+        def read():
+            with open(os.path.join(self.local_dir, "config.local.json"), encoding="utf-8") as fp:
+                return fp.read()
+        before = read()
+        result = self.call("update_data_source", {"sourcePath": os.path.join(self.root, "none.sqlite3")})
+        self.assertFalse(result["saved"])
+        self.assertEqual(read(), before)
+
+    def test_update_saves_path_keeps_other_keys_and_rebuilds_cache(self):
+        self.write_local("config", {"application": {"name": "残す名前"}, "dataSource": {"sourcePath": "./shared/source.sqlite3"}})
+        self.cache.refresh()
+        other = os.path.join(self.root, "shared2", "other.sqlite3")
+        make_db(other, rows=ROWS[:2])
+        result = self.call("update_data_source", {"sourcePath": f'"{other}"'})
+        self.assertTrue(result["saved"] and result["refreshed"], result)
+        with open(os.path.join(self.local_dir, "config.local.json"), encoding="utf-8") as fp:
+            saved = json.load(fp)
+        self.assertEqual(saved, {"application": {"name": "残す名前"}, "dataSource": {"sourcePath": other}})
+        self.assertTrue(os.path.isfile(os.path.join(self.local_dir, "config.local.json.bak")))
+        self.assertEqual(self.context.config.source_path, os.path.normpath(other))
+        self.assertEqual(self.search("LOT")["totalCount"], 2)                # 新しい読み込み先のデータ
+        self.assertEqual(self.call("get_data_source")["sourcePath"], os.path.normpath(other))
+
+    def test_cache_from_previous_source_is_not_used(self):
+        self.cache.refresh()
+        other = os.path.join(self.root, "shared2", "other.sqlite3")
+        make_db(other, rows=ROWS[:2])
+        self.write_local("config", {"dataSource": {"sourcePath": other}})
+        moved = load_settings(self.root)
+        self.cache.use_config(moved)
+        self.assertFalse(self.cache.cache_available())
+        self.assertIn("前の読み込み先", self.cache.status()["message"])
+        # 起動し直したときも同じ（状態ファイルの印で見分ける）
+        restarted = CacheService(moved, SILENT)
+        self.assertFalse(restarted.verify_existing())
+        restarted.refresh()
+        self.assertTrue(restarted.cache_available())
+        self.assertTrue(restarted.verify_existing())
 
 
 if __name__ == "__main__":

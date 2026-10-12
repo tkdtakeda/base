@@ -4,6 +4,7 @@
 失敗したときは直前の正常なキャッシュを使い続ける。
 """
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -14,6 +15,11 @@ from datetime import datetime
 from . import cache_copier
 from .cache_validator import open_readonly, validate_cache_file
 from .errors import AppError
+
+
+def source_id(path):
+    """読み込み先を見分ける印（パスそのものは状態ファイルに残さない）。"""
+    return hashlib.sha256(os.path.normcase(os.path.abspath(path)).encode("utf-8")).hexdigest()[:16]
 
 
 def to_iso(timestamp):
@@ -50,12 +56,28 @@ class CacheService:
             json.dump(state, fp, ensure_ascii=False, indent=2)
         os.replace(temp, self.state_path)
 
+    def use_config(self, config):
+        """読み込み先の変更などで設定を差し替える。前の読み込み先から作ったキャッシュは使わない。"""
+        with self.lock:
+            self.config = config
+            if not self._same_source():
+                self.stale = True
+
+    def _same_source(self):
+        recorded = self._read_state().get("sourceId")
+        # 印がない（この仕組みより前に作った）キャッシュは、今の読み込み先のものとみなす
+        return recorded is None or recorded == source_id(self.config.source_path)
+
     def cache_available(self):
         return os.path.isfile(self.cache_path) and not self.stale
 
     def verify_existing(self):
         """手元のキャッシュが今の schema と合うかを確かめる（起動時）。合わなければ使わない印を付けて False。"""
         if not os.path.isfile(self.cache_path):
+            return False
+        if not self._same_source():
+            self.stale = True
+            self.logger.warning("existing cache was built from another source")
             return False
         try:
             validate_cache_file(self.cache_path, self.config.table_name, self.config.field_mappings)
@@ -95,7 +117,7 @@ class CacheService:
                 raise
             except OSError as exc:
                 cache_copier.remove_quietly(self.temp_path)
-                raise AppError("CACHE_COPY_FAILED", f"replace failed: {exc}") from exc
+                raise AppError("CACHE_COPY_FAILED", f"replace failed: {type(exc).__name__} errno={exc.errno}") from exc
 
             now = datetime.now().timestamp()
             state = {
@@ -106,6 +128,7 @@ class CacheService:
                 "cacheUpdatedAt": to_iso(now),
                 "usingPreviousCache": False,
                 "rowCount": row_count,
+                "sourceId": source_id(self.config.source_path),
                 "errorCode": None,
                 "errorMessage": None,
             }
@@ -136,7 +159,9 @@ class CacheService:
         succeeded = state.get("lastRefreshSucceeded", available)
 
         if not available and self.stale:
-            message = "手元のキャッシュが今の設定（テーブル名・列名）と合わないため使っていません。データを更新してください。"
+            message = ("手元のキャッシュは前の読み込み先から作ったため使っていません。データを更新してください。"
+                       if not self._same_source() else
+                       "手元のキャッシュが今の設定（テーブル名・列名）と合わないため使っていません。データを更新してください。")
         elif not available:
             message = "検索できるデータがまだありません。データを更新してください。"
         elif not succeeded:

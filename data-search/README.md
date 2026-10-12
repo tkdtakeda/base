@@ -38,7 +38,8 @@
    - 初回はキャッシュを自動で作成します。以後は画面左の「データ」→「データを更新する」で更新します。
    - 設定に誤りがあると、**対象ファイル・項目・理由・対応**をすべて表示して止まります（ウィンドウは開いたまま）。
    - 終了は黒いウィンドウを閉じます。
-6. 実データなしで流れを確かめるときは `start-dummy.bat`（ダミーの共有 SQLite と `config/dummy/` の上書き設定を自動で作ります）。
+6. 読み込み先（共有 SQLite のパス）は、画面左の「データ」→「読み込み先」で確かめて直せます（詳しくは「読み込み先の確認と変更」）。
+7. 実データなしで流れを確かめるときは `start-dummy.bat`（ダミーの共有 SQLite と `config/dummy/` の上書き設定を自動で作ります）。
 
 ---
 
@@ -172,8 +173,31 @@ python python/tools/make_view_labels.py --overwrite  # すでにある表示名�
 - **すでに表示名がある項目は残します**。書き写した表示名は手で直してよく、直した表示名は次に実行しても消えません。
 - schema に項目が増えたら、もう一度実行すると足りない分だけ入ります。
 - 列名が仮の値（`<...>`）・空・論理名と同じ項目は書きません。
-- 画面での表示名の優先順：view の表示名 → 論理名。一覧の見出しと検索の種類は `listColumns[].label` が、詳細・絞り込みは `fields.<項目>.label` が先です。
+- 画面での表示名は、詳細・一覧の見出し・検索の種類・絞り込みのすべてで同じです。優先順：`fields.<項目>.label`（このツールで書き写したものを含む）→ `listColumns[].label` → 論理名。
 - コンソールには列名そのものは出さず、件数と項目名だけを表示します。
+
+### 読み込み先の確認と変更
+
+画面左の「データ」→「読み込み先」で、今の共有 SQLite のパスを確かめ、変更できます（Python 版・デスクトップ版。サンプルのモードでは模擬の動き）。
+
+- **接続を確かめる**：次の順に確かめ、段階ごとに ○ × と、× のときは理由・対応を出します。コピーも書き込みもしません（共有側にロックや一時ファイルも作りません）。
+
+  | 順 | 段階 | × の例 |
+  |---|---|---|
+  | ① | パスの書き方 | 空・仮の値・フォルダのパス |
+  | ② | 場所に届くか | フォルダに届かない（ネットワーク・VPN）・ファイルがない |
+  | ③ | 読めるか | 権限がない・使用中 |
+  | ④ | SQLite として開けるか | SQLite ではない・壊れている |
+  | ⑤ | テーブルと列 | schema の tableName / columns がない（足りない論理項目名を表示） |
+  | ⑥ | 件数 | 結果として件数と更新日時を表示 |
+
+- **変更**：エクスプローラーでファイルを Shift＋右クリック →「パスとしてコピー」して貼り付け（前後の `"` は自動で外す）→ `Enter` で確かめる → すべて ○ なら「保存して更新」にフォーカスが移り、`Enter` で保存。
+  - 保存先は `config/local/config.local.json` の `dataSource.sourcePath`（ほかの項目はそのまま。書き換え前は `.bak` に残す）。
+  - 保存後に設定を読み直して検証し、誤りが出たら保存を取り消します。問題がなければ、そのままデータを更新します。
+  - 確かめた後に入力を変えると、もう一度確かめるまで保存できません。
+- 前の読み込み先から作ったキャッシュは使いません（キャッシュの状態に読み込み先の印を残して見分ける。パスそのものは残さない）。
+- 起動時にキャッシュを作れなかったときも、黒いウィンドウに同じ接続テストの結果を出します。
+- 変更できる人の制限（権限）は今後の課題です。
 
 ### 絞り込みとタグ
 
@@ -259,7 +283,8 @@ Python 版は Rust 版の構成（`05_directory_structure.md`）に合わせて�
 | `cache_copier.py` / `cache_validator.py` / `cache_service.py` | `cache/copier.rs` / `cache/validator.rs` / `cache/mod.rs` |
 | `query.py` | `db/query.rs` |
 | `lot_service.py` | `services/lot_service.rs` |
-| `commands.py` | `commands/search.rs`・`commands/cache.rs`・`commands/view.rs` |
+| `source_check.py` / `source_service.py` / `settings/local_writer.py` | `cache/source_check.rs` / `services/source_service.rs` / `config/local_writer.rs` |
+| `commands.py` | `commands/search.rs`・`commands/cache.rs`・`commands/view.rs`・`commands/source.rs` |
 | `errors.py` / `logging_setup.py` | `errors/mod.rs` / `logging/mod.rs` |
 | `http_server.py`（Python 版だけ） | 不要（Tauri の invoke に置き換わる） |
 
@@ -280,6 +305,9 @@ Tauri 版の画面側は `js/api/remote-adapters.js` の `tauri` アダプター
 | `search_lots` | 入力に `sortKey`（論理名・既定は view の defaultSort）・`sortOrder`（asc/desc）・`filters` を追加（省略可） | 見出しでの並べ替えをページをまたいで正しく行うため |
 | `search_lots` / `list_lots` | 戻り値に `keyword`（正規化後）・`today`（日付の基準日）・`elapsedMs` を追加。`items` は schema の全論理項目 | 画面に根拠（全角→半角・基準日・検索時間）を出すため |
 | `get_lot_detail` | 入力は schema の `recordKey` の項目（標準は `{ lotNo, boxNo }`）。戻り値は `{ success, item, duplicated }` | ロット番号＋BOX番号で 1 件に決まるため |
+| `get_data_source`（新規） | 戻り値 `{ success, sourcePath, editable, localFile }` | 画面で今の読み込み先を示すため |
+| `test_data_source`（新規） | 入力 `{ sourcePath? }`（省くと今の読み込み先）。戻り値 `{ success, ok, steps: [{ id, label, status: ok/ng/skip, message, action }], rowCount, modifiedAt, normalizedPath }` | 段階ごとに接続を確かめるため |
+| `update_data_source`（新規） | 入力 `{ sourcePath }`。接続テストがすべて ○ のときだけ保存してデータを更新。戻り値は test の結果＋`{ saved, refreshed, message, localFile }` | 読み込み先を画面から直すため |
 | `get_cache_status` | `rowCount`・`sourceReachable`・`sourceHasUpdate`・`lastRefreshAt`・`errorCode`・`errorMessage`・`settingsWarnings` を追加 | 「データ」パネルで状態の根拠と設定の注意を示すため |
 | `refresh_cache` | 戻り値に `rowCount` を追加 | 更新の結果を件数で示すため |
 | 設定 | `devServer`（host / port / openBrowser）・`cache`（temporaryExtension / keepPreviousOnFailure）は sample に書かなくてもアプリ内の既定値を使う。変えたいときだけ sample か local に書く | sample を簡潔に保つため。`devServer` は Python 版のみ |

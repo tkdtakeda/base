@@ -100,8 +100,40 @@
       };
     }
 
+    // ── 読み込み先（このモードでは画面の動きを試すための模擬。ファイルには届かず、保存もしない） ──
+    let sourcePath = '\\\\example-server\\share\\sample.sqlite3';
+    const SOURCE_STEPS = [['format', 'パスの書き方'], ['reach', '場所に届くか'], ['read', '読めるか'], ['sqlite', 'SQLite として開けるか'], ['table', 'テーブルと列'], ['rows', '件数']];
+    function simulateCheck(path) {
+      const value = DS.controllers.normalizeSourcePath(path);
+      // 模擬の決まり：.sqlite3 / .sqlite / .db は ○、拡張子なしは「ファイルがない」、ほかは「SQLite ではない」
+      let failAt = null;
+      let failure = null;
+      if (!value) [failAt, failure] = ['format', ['パスが空です。', '共有 SQLite のファイルのパスを入力してください。']];
+      else if (!/\.[^\\/.]+$/.test(value)) [failAt, failure] = ['reach', ['フォルダはありますが、ファイルがありません。', 'ファイル名（拡張子を含む）を確認してください。']];
+      else if (!/\.(sqlite3?|db)$/i.test(value)) [failAt, failure] = ['sqlite', ['SQLite のファイルではありません。', '指定したファイルが共有 SQLite（.sqlite3 / .db など）か確認してください。']];
+      let failed = false;
+      const steps = SOURCE_STEPS.map(([id, label]) => {
+        if (failed) return { id, label, status: 'skip', message: '前の段階が × のため確かめていません。', action: '' };
+        if (id === failAt) {
+          failed = true;
+          return { id, label, status: 'ng', message: failure[0], action: failure[1] };
+        }
+        return { id, label, status: 'ok', message: id === 'rows' ? `${rows.length.toLocaleString('ja-JP')} 件あります。（模擬）` : '問題ありません。（模擬）', action: '' };
+      });
+      return { success: true, ok: !failed, steps, rowCount: failed ? null : rows.length, modifiedAt: failed ? null : nowIso(), normalizedPath: value };
+    }
+
     // ── 命令 ──
     const commands = {
+      get_data_source: () => ({ success: true, sourcePath, editable: true, localFile: '（サンプルのモードでは保存しません）' }),
+      test_data_source: (payload) => simulateCheck(payload.sourcePath == null ? sourcePath : payload.sourcePath),
+      update_data_source(payload) {
+        const result = simulateCheck(payload.sourcePath);
+        if (!result.ok) return Object.assign(result, { saved: false, message: '接続テストで × があるため、保存していません。' });
+        sourcePath = result.normalizedPath;
+        return Object.assign(result, { saved: true, refreshed: true, message: '読み込み先を変更しました（サンプルのモードのため、データは変わりません）。' });
+      },
+
       get_application_info: () => ({ id: 'data-search', name: 'Data Search', version: '0.1.0' }),
 
       // 表示定義：config/sample/view.sample.json から自動生成した js/sample/sample-view.js

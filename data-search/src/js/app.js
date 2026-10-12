@@ -54,12 +54,13 @@
     const search = DS.controllers.createSearchController({ store, bus, api, toast });
     const cache = DS.controllers.createCacheController({ store, api, toast, search });
     const samples = DS.controllers.createSampleController({ store, api, toast, search, cache });
+    const source = DS.controllers.createSourceController({ store, api, toast, search, cache });
     const tags = DS.controllers.createTagController({ store, bus, toast, search });
 
     const manual = DS.views.createManualView(document.getElementById('manual-host'));
     const openPanel = (id) => store.merge('ui', { panel: id });
     const refresh = () => cache.refresh();
-    const ctx = { store, bus, api, toast, search, cache, samples, tags };
+    const ctx = { store, bus, api, toast, search, cache, samples, tags, source };
 
     DS.views.createSidePanel({
       rail: document.getElementById('rail'),
@@ -88,11 +89,11 @@
     } catch (error) {
       toast.show({ tone: 'danger', message: error.userMessage, detailId: error.detailId });
     }
-    await cache.loadStatus();
+    await Promise.all([cache.loadStatus(), source.load()]);
     await search.run({ page: 1 }); // 起動したらすぐ一覧を出す（入力は不要）
     searchBar.focus();
 
-    DS.app = { store, bus, api, search, cache, samples, tags, manual }; // 確認用スクリプト（tests/ui-check.js）から使う
+    DS.app = { store, bus, api, search, cache, samples, tags, source, manual }; // 確認用スクリプト（tests/ui-check.js）から使う
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);

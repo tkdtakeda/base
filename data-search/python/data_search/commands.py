@@ -56,6 +56,24 @@ def get_cache_status(ctx, payload):
     return ctx.cache_service.status()
 
 
+@command("get_data_source")
+def get_data_source(ctx, payload):
+    """今の読み込み先（共有 SQLite のパス）。手元の画面にだけ出す（ログには残さない）。"""
+    return ctx.source_service.describe()
+
+
+@command("test_data_source")
+def test_data_source(ctx, payload):
+    """接続テスト。sourcePath を省くと今の読み込み先を確かめる。コピーも書き込みもしない。"""
+    return ctx.source_service.test(payload)
+
+
+@command("update_data_source")
+def update_data_source(ctx, payload):
+    """接続テストがすべて ○ なら config.local.json に保存し、キャッシュを作り直す。"""
+    return ctx.source_service.update(payload)
+
+
 @command("get_view_config")
 def get_view_config(ctx, payload):
     """画面の表示定義（view と、schema の論理情報）。物理名は含めない。"""

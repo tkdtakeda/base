@@ -45,9 +45,10 @@
       fields.register({
         id,
         order: (index + 1) * 10,
-        // label：詳細・絞り込みなどで使う名前（fields.<項目>.label）。listLabel：一覧の見出し・検索の種類（listColumns の label）
+        // 表示名はすべての画面で同じ（詳細・一覧の見出し・検索の種類・絞り込み）。
+        // 優先順：fields.<項目>.label（DB の列名から作った表示名を含む）→ listColumns の label → 論理名
         label: option.label || column.label || id,
-        listLabel: column.label || option.label || id,
+        listLabel: option.label || column.label || id,
         short: option.short || null,
         group: groupId,
         // 番号で探せる項目は、指定がなければ等幅で表示し、コピーできるようにする（0 と O を見分けやすく、転記しやすく）

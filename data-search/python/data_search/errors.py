@@ -16,6 +16,7 @@ USER_MESSAGES = {
     "CACHE_TABLE_MISSING": "取得したデータに必要な表がないため、使用しませんでした。schema.local.json の tableName を確認してください。",
     "CACHE_COLUMN_MISSING": "取得したデータに必要な列がないため、使用しませんでした。schema.local.json の columns を確認してください。",
     "CACHE_UNAVAILABLE": "検索できるデータがまだありません。データを更新してください。",
+    "SETTINGS_WRITE_FAILED": "設定ファイルに書き込めませんでした。config/local フォルダの権限と、ほかのアプリで開いていないかを確認してください。",
     "INVALID_REQUEST": "検索の条件が正しくありません。入力内容を確認してください。",
     "NOT_FOUND": "選んだデータが見つかりません。データが更新された可能性があります。もう一度検索してください。",
     "UNKNOWN_COMMAND": "この操作には対応していません。",

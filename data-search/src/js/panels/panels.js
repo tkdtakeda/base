@@ -21,6 +21,7 @@
     icon: 'fa-database',
     label: 'データ',
     title: 'データの状態と更新',
+    watch: ['source'],
     badge(state) {
       const view = DS.views.describeCache(state.cache);
       if (view.tone === 'warning' || view.tone === 'danger') return { tone: view.tone, text: '!', title: view.text };
@@ -33,11 +34,13 @@
       const progress = el('p', { className: 'pane-note', 'aria-live': 'polite' });
       const sourceNote = el('p', { className: 'pane-note' });
       const configBox = el('div', { className: 'config-help', hidden: true });
+      const sourceEditor = DS.views.createSourceEditor(ctx);
       refreshButton.addEventListener('click', () => ctx.cache.refresh());
 
       container.append(
         summary,
         configBox,
+        section('読み込み先', [sourceEditor.element]),
         section('根拠', [facts]),
         section('共有データから更新', [
           el('p', { className: 'pane-note', text: '共有データを手元にコピーし、検証してから入れ替えます。失敗したときは前回のデータをそのまま使います。' }),
@@ -95,6 +98,7 @@
           tick(state);
           if (refreshing) timer = window.setInterval(() => tick(ctx.store.get()), 1000);
           sourceNote.textContent = state.mode.description;
+          sourceEditor.update(state);
 
           // 設定の注意（ローカルの設定にある未知のキーなど）は、ファイル名と項目を出す
           const warnings = status.settingsWarnings || [];

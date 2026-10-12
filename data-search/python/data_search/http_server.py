@@ -38,6 +38,7 @@ class AppContext:
     cache_service: object
     lot_service: object
     logger: object
+    source_service: object = None   # 読み込み先の確認・変更（SourceService）。作成後に入れる
 
 
 class RequestHandler(SimpleHTTPRequestHandler):

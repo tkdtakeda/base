@@ -215,7 +215,14 @@ flowchart TD
 - `schema.columns` の値は DB の列名（物理名）。画面（`get_view_config`）には渡さない。
 - DB の列名が利用者向けの名前になっている場合は、`python/tools/make_view_labels.py`（処理は `settings/labels.py`）で
   `view.local.json` の `fields.<項目>.label` に書き写す。既存の表示名は残し（`--overwrite` のときだけ置き換え）、仮の値・空・論理名と同じ列名は書かない。
-- 実行時の表示名は view だけで決まる（`fields.<項目>.label` → `listColumns[].label` → 論理名。一覧の見出しと検索の種類は `listColumns[].label` が先）。
+- 実行時の表示名は view だけで決まり、すべての画面で同じ（`fields.<項目>.label` → `listColumns[].label` → 論理名）。
+
+## 9.1 画面からの書き込み（読み込み先）
+
+- 画面から書き換えるのは `config.local.json` の `dataSource.sourcePath` だけ（`update_data_source`）。sample は書き換えない。
+- 接続テスト（`source_check.py`）がすべて ○ のときだけ書き込む。ほかのキーは残し、書き換え前を `.bak` に残し、一時ファイル → 置き換えで書く（`settings/local_writer.py`）。
+- 書き込み後に `load_settings` で読み直して検証し、誤りがあれば `.bak` に戻す。
+- キャッシュの状態ファイルに読み込み先の印（パスのハッシュ）を残し、前の読み込み先のキャッシュは使わない。
 
 ## 10. 設定項目を足すときの手順
 
@@ -258,6 +265,81 @@ Rust/Tauri 版へ移植しやすいよう、モジュール構成を src-tauri/s
 """
 ```
 
+`python/data_search/cache_copier.py`
+
+```python
+"""共有 SQLite を一時ファイルへコピーする。共有側には書き込まない。"""
+
+import os
+import shutil
+import sqlite3
+
+from .errors import AppError
+
+SIDE_FILE_SUFFIXES = ("-wal",)
+
+
+def source_modified_at(source_path):
+    """共有データの更新時刻（UNIX 秒）。接続できなければ None。"""
+    try:
+        return os.stat(source_path).st_mtime
+    except OSError:
+        return None
+
+
+def remove_quietly(path):
+    for target in (path, path + "-wal", path + "-shm", path + "-journal"):
+        try:
+            os.remove(target)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+
+def copy_to_temp(source_path, temp_path):
+    """共有データを temp_path へコピーし、コピー開始時の共有データの更新時刻を返す。
+
+    コピー中に共有データが更新された場合は、中途半端な状態を避けるため失敗とする。
+    """
+    before = source_modified_at(source_path)
+    if before is None or not os.path.isfile(source_path):
+        raise AppError("SOURCE_UNAVAILABLE", "source not reachable")  # パスはログに残さない
+
+    os.makedirs(os.path.dirname(temp_path) or ".", exist_ok=True)
+    remove_quietly(temp_path)
+    try:
+        shutil.copyfile(source_path, temp_path)
+        for suffix in SIDE_FILE_SUFFIXES:
+            if os.path.isfile(source_path + suffix):
+                shutil.copyfile(source_path + suffix, temp_path + suffix)
+    except OSError as exc:
+        remove_quietly(temp_path)
+        raise AppError("CACHE_COPY_FAILED", f"copy failed: {type(exc).__name__} errno={exc.errno}") from exc
+
+    if source_modified_at(source_path) != before:
+        remove_quietly(temp_path)
+        raise AppError("SOURCE_BUSY", "source modified during copy")
+
+    _merge_wal(temp_path)
+    return before
+
+
+def _merge_wal(temp_path):
+    """WAL を一緒にコピーした場合は一時ファイルへ取り込み、キャッシュを 1 ファイルにする。"""
+    if not os.path.isfile(temp_path + "-wal"):
+        return
+    try:
+        conn = sqlite3.connect(temp_path)
+        try:
+            conn.execute("PRAGMA journal_mode=DELETE")
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError:
+        # 壊れている場合は検証で弾く
+        pass
+```
+
 `python/data_search/cache_service.py`
 
 ```python
@@ -267,6 +349,7 @@ Rust/Tauri 版へ移植しやすいよう、モジュール構成を src-tauri/s
 失敗したときは直前の正常なキャッシュを使い続ける。
 """
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -277,6 +360,11 @@ from datetime import datetime
 from . import cache_copier
 from .cache_validator import open_readonly, validate_cache_file
 from .errors import AppError
+
+
+def source_id(path):
+    """読み込み先を見分ける印（パスそのものは状態ファイルに残さない）。"""
+    return hashlib.sha256(os.path.normcase(os.path.abspath(path)).encode("utf-8")).hexdigest()[:16]
 
 
 def to_iso(timestamp):
@@ -313,12 +401,28 @@ class CacheService:
             json.dump(state, fp, ensure_ascii=False, indent=2)
         os.replace(temp, self.state_path)
 
+    def use_config(self, config):
+        """読み込み先の変更などで設定を差し替える。前の読み込み先から作ったキャッシュは使わない。"""
+        with self.lock:
+            self.config = config
+            if not self._same_source():
+                self.stale = True
+
+    def _same_source(self):
+        recorded = self._read_state().get("sourceId")
+        # 印がない（この仕組みより前に作った）キャッシュは、今の読み込み先のものとみなす
+        return recorded is None or recorded == source_id(self.config.source_path)
+
     def cache_available(self):
         return os.path.isfile(self.cache_path) and not self.stale
 
     def verify_existing(self):
         """手元のキャッシュが今の schema と合うかを確かめる（起動時）。合わなければ使わない印を付けて False。"""
         if not os.path.isfile(self.cache_path):
+            return False
+        if not self._same_source():
+            self.stale = True
+            self.logger.warning("existing cache was built from another source")
             return False
         try:
             validate_cache_file(self.cache_path, self.config.table_name, self.config.field_mappings)
@@ -358,7 +462,7 @@ class CacheService:
                 raise
             except OSError as exc:
                 cache_copier.remove_quietly(self.temp_path)
-                raise AppError("CACHE_COPY_FAILED", f"replace failed: {exc}") from exc
+                raise AppError("CACHE_COPY_FAILED", f"replace failed: {type(exc).__name__} errno={exc.errno}") from exc
 
             now = datetime.now().timestamp()
             state = {
@@ -369,6 +473,7 @@ class CacheService:
                 "cacheUpdatedAt": to_iso(now),
                 "usingPreviousCache": False,
                 "rowCount": row_count,
+                "sourceId": source_id(self.config.source_path),
                 "errorCode": None,
                 "errorMessage": None,
             }
@@ -399,7 +504,9 @@ class CacheService:
         succeeded = state.get("lastRefreshSucceeded", available)
 
         if not available and self.stale:
-            message = "手元のキャッシュが今の設定（テーブル名・列名）と合わないため使っていません。データを更新してください。"
+            message = ("手元のキャッシュは前の読み込み先から作ったため使っていません。データを更新してください。"
+                       if not self._same_source() else
+                       "手元のキャッシュが今の設定（テーブル名・列名）と合わないため使っていません。データを更新してください。")
         elif not available:
             message = "検索できるデータがまだありません。データを更新してください。"
         elif not succeeded:
@@ -501,6 +608,24 @@ def get_cache_status(ctx, payload):
     return ctx.cache_service.status()
 
 
+@command("get_data_source")
+def get_data_source(ctx, payload):
+    """今の読み込み先（共有 SQLite のパス）。手元の画面にだけ出す（ログには残さない）。"""
+    return ctx.source_service.describe()
+
+
+@command("test_data_source")
+def test_data_source(ctx, payload):
+    """接続テスト。sourcePath を省くと今の読み込み先を確かめる。コピーも書き込みもしない。"""
+    return ctx.source_service.test(payload)
+
+
+@command("update_data_source")
+def update_data_source(ctx, payload):
+    """接続テストがすべて ○ なら config.local.json に保存し、キャッシュを作り直す。"""
+    return ctx.source_service.update(payload)
+
+
 @command("get_view_config")
 def get_view_config(ctx, payload):
     """画面の表示定義（view と、schema の論理情報）。物理名は含めない。"""
@@ -537,6 +662,7 @@ USER_MESSAGES = {
     "CACHE_TABLE_MISSING": "取得したデータに必要な表がないため、使用しませんでした。schema.local.json の tableName を確認してください。",
     "CACHE_COLUMN_MISSING": "取得したデータに必要な列がないため、使用しませんでした。schema.local.json の columns を確認してください。",
     "CACHE_UNAVAILABLE": "検索できるデータがまだありません。データを更新してください。",
+    "SETTINGS_WRITE_FAILED": "設定ファイルに書き込めませんでした。config/local フォルダの権限と、ほかのアプリで開いていないかを確認してください。",
     "INVALID_REQUEST": "検索の条件が正しくありません。入力内容を確認してください。",
     "NOT_FOUND": "選んだデータが見つかりません。データが更新された可能性があります。もう一度検索してください。",
     "UNKNOWN_COMMAND": "この操作には対応していません。",
@@ -588,6 +714,165 @@ MATCH_MODES = ("partial", "exact")
 SORT_ORDERS = ("asc", "desc")
 
 KEYWORD_MAX_LENGTH = 100
+```
+
+`python/data_search/http_server.py`
+
+```python
+"""画面（src/）の配信と、命令（POST /api/<命令名>）の受付を行うローカル専用サーバー。
+
+・127.0.0.1 だけで待ち受け、ほかの PC からは接続させない。
+・Host / Origin を確かめ、ほかのサイトから命令を呼ばれないようにする。
+・ファイルの配信は src/ の中だけに限る（任意のファイルパスは受け付けない）。
+"""
+
+import json
+import os
+from dataclasses import dataclass
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+from . import commands
+from .errors import AppError, error_response, new_detail_id
+
+MAX_BODY_BYTES = 64 * 1024
+API_PREFIX = "/api/"
+
+# Windows のレジストリ次第で .js が text/plain になるのを防ぐ
+CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
+    ".txt": "text/plain; charset=utf-8",
+}
+
+
+@dataclass
+class AppContext:
+    config: object
+    cache_service: object
+    lot_service: object
+    logger: object
+    source_service: object = None   # 読み込み先の確認・変更（SourceService）。作成後に入れる
+
+
+class RequestHandler(SimpleHTTPRequestHandler):
+    extensions_map = CONTENT_TYPES
+    server_version = "DataSearchDev"
+    sys_version = ""
+
+    def __init__(self, *args, context=None, **kwargs):
+        self.context = context
+        super().__init__(*args, **kwargs)
+
+    # ── 共通 ──
+    def _allowed_hosts(self):
+        port = self.server.server_address[1]
+        return {f"127.0.0.1:{port}", f"localhost:{port}"}
+
+    def _host_ok(self):
+        return self.headers.get("Host", "") in self._allowed_hosts()
+
+    def _origin_ok(self):
+        origin = self.headers.get("Origin")
+        if origin is None:
+            return True
+        return origin.split("://", 1)[-1] in self._allowed_hosts()
+
+    def _send_json(self, status, body):
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _send_error_json(self, status, code, detail):
+        detail_id = new_detail_id()
+        self.context.logger.warning("request rejected id=%s code=%s detail=%s", detail_id, code, detail)
+        self._send_json(status, error_response(AppError(code, detail), detail_id))
+
+    def end_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        super().end_headers()
+
+    def list_directory(self, path):
+        # フォルダの中身の一覧は見せない
+        self.send_error(404)
+        return None
+
+    def log_message(self, fmt, *args):
+        self.context.logger.debug("http " + fmt, *args)
+
+    # ── 画面の配信 ──
+    def do_GET(self):
+        if not self._host_ok():
+            self.send_error(403)
+            return
+        if self.path.startswith(API_PREFIX):
+            self.send_error(405)
+            return
+        super().do_GET()
+
+    def do_HEAD(self):
+        if not self._host_ok():
+            self.send_error(403)
+            return
+        super().do_HEAD()
+
+    # ── 命令の受付 ──
+    def do_POST(self):
+        if not self._host_ok() or not self._origin_ok():
+            self._send_error_json(403, "INVALID_REQUEST", "host or origin not allowed")
+            return
+        if not self.path.startswith(API_PREFIX):
+            self._send_error_json(404, "UNKNOWN_COMMAND", "not an api path")
+            return
+        name = self.path[len(API_PREFIX):].split("?", 1)[0]
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = -1
+        if length < 0 or length > MAX_BODY_BYTES:
+            self._send_error_json(413, "INVALID_REQUEST", "body too large")
+            return
+        if "application/json" not in self.headers.get("Content-Type", ""):
+            self._send_error_json(415, "INVALID_REQUEST", "content-type must be application/json")
+            return
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+        except ValueError:
+            self._send_error_json(400, "INVALID_REQUEST", "invalid json")
+            return
+
+        try:
+            result = commands.dispatch(name, self.context, payload)
+            self._send_json(200, result)
+        except AppError as error:
+            detail_id = new_detail_id()
+            self.context.logger.warning(
+                "command failed id=%s command=%s code=%s detail=%s", detail_id, name, error.code, error.detail
+            )
+            status = 404 if error.code == "UNKNOWN_COMMAND" else 200
+            self._send_json(status, error_response(error, detail_id))
+        except Exception:  # noqa: BLE001 - 想定外の例外も利用者向けの形にして返す
+            detail_id = new_detail_id()
+            self.context.logger.exception("unexpected error id=%s command=%s", detail_id, name)
+            self._send_json(500, error_response(AppError("INTERNAL_ERROR"), detail_id))
+
+
+def create_server(context, static_dir, host, port):
+    handler = partial(RequestHandler, context=context, directory=os.path.abspath(static_dir))
+    server = ThreadingHTTPServer((host, port), handler)
+    server.daemon_threads = True
+    return server
 ```
 
 `python/data_search/lot_service.py`
@@ -751,7 +1036,8 @@ class LotService:
                 cursor = conn.execute(sql, params)
                 return cursor.fetchone() if fetch == "one" else cursor.fetchall()
             except sqlite3.Error as exc:
-                raise AppError("CACHE_INVALID", f"query failed: {exc}") from exc
+                # SQLite の文面には列名が入るため、ログには種類だけを残す
+                raise AppError("CACHE_INVALID", f"query failed: {type(exc).__name__}") from exc
 
     def search(self, payload):
         """番号で検索する（04_api_spec.md の search_lots。番号は必須）"""
@@ -1030,360 +1316,57 @@ def plan_labels(columns, existing_fields, overwrite=False):
     return plan
 ```
 
-`python/tools/make_dummy_db.py`
+`python/data_search/settings/local_writer.py`
 
 ```python
-"""動作確認用のダミー共有 SQLite と、それを指す上書き設定（config/dummy/）を作る。
+"""ローカルの上書きファイル（config/local/*.local.json）へ、必要な項目だけを書き込む。
 
-  config/dummy/config.local.json … 共有 SQLite のパスだけ
-  config/dummy/schema.local.json … テーブル名と列名だけ
-  （view は上書きしない。config/sample/view.sample.json をそのまま使う）
-
-実データは使わない。列は config/sample/schema.sample.json の論理項目すべてについて作り、
-物理名はわざと論理名と違う名前（大文字のスネークケース。1 列は日本語）にして、
-schema の columns（論理名 → 物理列名）が効いていることを確かめられるようにしている。
-
-使い方:
-    python python/tools/make_dummy_db.py                    … 正常なダミー（ロット 2,500 件・BOX 約 5,000 件）
-    python python/tools/make_dummy_db.py --lots 50000       … 大量データ
-    python python/tools/make_dummy_db.py --variant corrupt  … 壊れたファイル（異常系の確認）
-        variant: normal / missing-table / missing-column / corrupt
-    python python/tools/make_dummy_db.py --if-missing       … すでにあれば何もしない
-起動: python python/run_server.py --local-dir config/dummy
+ほかの項目はそのまま残し、書き換える前の内容は <ファイル>.bak に残す。
+書き込みは一時ファイル → 置き換えの順で行い、途中で止まっても壊れたファイルを残さない。
 """
 
-import argparse
-import json
-import os
-import random
-import re
-import sqlite3
-from datetime import date, timedelta
-
-APP_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SCHEMA_SAMPLE = os.path.join(APP_ROOT, "config", "sample", "schema.sample.json")
-SHARED_PATH = os.path.join(APP_ROOT, "data", "dummy", "shared", "dummy_shared.sqlite3")
-DUMMY_DIR = os.path.join(APP_ROOT, "config", "dummy")
-CONFIG_PATH = os.path.join(DUMMY_DIR, "config.local.json")
-SCHEMA_PATH = os.path.join(DUMMY_DIR, "schema.local.json")
-TABLE = "t_dummy_lot_box"
-SEED = 20261011
-
-# 物理名を日本語にする列（引用符で囲む処理の確認用）
-JAPANESE_COLUMNS = {"customerName": "取引先_名称"}
-# missing-column の確認で消す論理項目
-DROP_FOR_MISSING = "cfStatus"
-
-MATERIALS = ["A1100", "A3003", "A5052", "A6061", "A6063", "A7075"]
-TEMPERS = ["O", "H14", "H24", "H32", "T5", "T6", "T651"]
-CUSTOMERS = [("C0101", "サンプル工業"), ("C0102", "テスト金属"), ("C0103", "見本製作所"),
-             ("C0104", "架空商事"), ("C0105", "例示精工"), ("C0106", "ダミー産業")]
-EQUIPMENTS = ["鋳造1号", "熱間圧延1号", "冷間圧延1号", "冷間圧延2号", "焼鈍炉3号", "スリッター1号", "検査ライン1号"]
-COURSES = ["HR→CR→AN→SL", "CR→AN→SL", "AN→SL", "SL", "CR→SL", "—"]
-STATUSES = ["仕掛中", "検査待ち", "検査済み", "出荷済み", "保留", "不適合"]
-SPECIAL_LOTS = ["試作-α-001", "LOT_100%-A", "LOT#5/特急", "LOT(再)-12", "LOT'Q\"-1"]
-
-
-def physical_name(logical):
-    if logical in JAPANESE_COLUMNS:
-        return JAPANESE_COLUMNS[logical]
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", logical).upper()
-
-
-def value_of(field, ctx, rng, today):
-    """主な項目は候補から、それ以外は項目名の形から値を作る（画面のサンプルと同じ考え方）。"""
-    fixed = {
-        "inspectionNo": f"INS-26-{ctx['serial']:06d}",
-        "castingNo": f"CST-{ctx['cast']}{ctx['lot']:06d}",
-        "orderNo": f"ORD-{ctx['order']:05d}",
-        "customerCode": ctx["customer"][0],
-        "customerName": ctx["customer"][1],
-        "orderMaterial": ctx["material"], "manufacturingMaterial": ctx["material"],
-        "orderTemper": ctx["temper"], "manufacturingTemper": ctx["temper"],
-        "factoryDeliveryDate": (today + timedelta(days=ctx["due"])).isoformat(),
-        "salesDeliveryDate": (today + timedelta(days=ctx["due"] + 3)).isoformat(),
-        "specificGravity": "2.71",
-    }
-    if field in fixed:
-        return fixed[field]
-    choices = {
-        "plannedEquipmentName": EQUIPMENTS, "lastActualEquipmentName": EQUIPMENTS,
-        "remainingEquipmentCourse": COURSES, "cfStatus": STATUSES,
-        "wipCategory": ["仕掛", "完成", "出荷待ち"], "holdCategory": ["", "", "", "品質保留", "客先保留"],
-    }
-    if field in choices:
-        return rng.choice(choices[field])
-    rules = [
-        (r"Date$", lambda: (today + timedelta(days=rng.randint(-60, 90))).isoformat()),
-        (r"Thickness$", lambda: ctx["thickness"]),
-        (r"Width$", lambda: ctx["width"]),
-        (r"Length$", lambda: ctx["length"]),
-        (r"Weight$", lambda: str(rng.randint(300, 3000))),
-        (r"(Count|Quantity)$", lambda: str(rng.randint(1, 20))),
-        (r"Time$", lambda: f"{rng.randint(10, 900) / 10:.1f}"),
-        (r"(Category|Flag)$", lambda: rng.choice(["0", "1", "2"])),
-        (r"Code$", lambda: f"{rng.choice('ABKM')}{rng.randint(1, 99):02d}"),
-        (r"No$", lambda: f"{re.sub('[a-z]', '', field[:-2]).upper() or 'N'}{rng.randint(1, 99999):05d}"),
-        (r"Course$", lambda: rng.choice(COURSES)),
-        (r"Name$", lambda: f"{field[:-4]}-{rng.randint(1, 9)}"),
-    ]
-    for pattern, make in rules:
-        if re.search(pattern, field):
-            return make()
-    return f"{field}-{rng.randint(1, 9)}"
-
-
-def build_rows(lot_count, logical_fields, rng):
-    today = date.today()  # 日付の絞り込み（今日〜7 日後など）をいつでも試せるよう、今日を基準にする
-    rows, order, order_left, serial = [], 0, 0, 0
-    for lot in range(1, lot_count + 1):
-        if order_left == 0:
-            order += 1
-            order_left = rng.randint(1, 4)
-        order_left -= 1
-        lot_no = SPECIAL_LOTS[lot - 1] if lot <= len(SPECIAL_LOTS) else f"LOT-2026-{lot:05d}"
-        ctx = {
-            "lot": lot, "order": order, "cast": rng.randint(10, 99),
-            "customer": rng.choice(CUSTOMERS), "material": rng.choice(MATERIALS), "temper": rng.choice(TEMPERS),
-            "thickness": rng.choice(["0.50", "1.00", "1.50", "2.00", "3.00", "5.00"]),
-            "width": str(rng.choice([1000, 1250, 1525])), "length": str(rng.choice([2000, 2500, 3000])),
-            "due": rng.randint(-45, 90),
-        }
-        for box in range(1, rng.randint(1, 3) + 1):
-            serial += 1
-            ctx["serial"] = serial
-            row = {field: value_of(field, ctx, rng, today) for field in logical_fields}
-            row["lotNo"], row["boxNo"] = lot_no, f"{box:02d}"
-            rows.append(row)
-    return rows
-
-
-def write_database(path, rows, logical_fields, variant):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    for suffix in ("", "-wal", "-shm", "-journal"):
-        if os.path.exists(path + suffix):
-            os.remove(path + suffix)
-    if variant == "corrupt":
-        with open(path, "wb") as fp:
-            fp.write(b"this is not a sqlite database" * 100)
-        return
-
-    fields = [f for f in logical_fields if not (variant == "missing-column" and f == DROP_FOR_MISSING)]
-    table = "t_other" if variant == "missing-table" else TABLE
-    columns = [physical_name(f) for f in fields] + ["UPDATED_AT"]
-    conn = sqlite3.connect(path)
-    try:
-        conn.execute(f'CREATE TABLE "{table}" ({", ".join(f"""\"{c}\" TEXT""" for c in columns)})')
-        conn.executemany(
-            f'INSERT INTO "{table}" VALUES ({", ".join("?" for _ in columns)})',
-            ([row[f] for f in fields] + ["2026-10-11T08:00:00"] for row in rows),
-        )
-        conn.execute(f'CREATE INDEX "idx_lot" ON "{table}" ("{physical_name("lotNo")}")')
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def write_config(logical_fields):
-    # config/local と同じく、サンプルから変えたい項目だけを書く
-    os.makedirs(DUMMY_DIR, exist_ok=True)
-    config = {
-        "application": {"name": "Data Search (Dummy)"},
-        "dataSource": {"sourcePath": "./data/dummy/shared/dummy_shared.sqlite3", "cachePath": "./data/cache/dummy_cache.sqlite3"},
-    }
-    schema = {"tableName": TABLE, "columns": {f: physical_name(f) for f in logical_fields}}
-    for path, data in ((CONFIG_PATH, config), (SCHEMA_PATH, schema)):
-        with open(path, "w", encoding="utf-8") as fp:
-            json.dump(data, fp, ensure_ascii=False, indent=2)
-
-
-def main():
-    parser = argparse.ArgumentParser(description="ダミーの共有 SQLite を作る")
-    parser.add_argument("--lots", type=int, default=2500, help="ロットの数（1 ロットに BOX 1〜3 件）")
-    parser.add_argument("--variant", choices=["normal", "missing-table", "missing-column", "corrupt"], default="normal")
-    parser.add_argument("--if-missing", action="store_true")
-    args = parser.parse_args()
-
-    if args.if_missing and all(os.path.isfile(p) for p in (SHARED_PATH, CONFIG_PATH, SCHEMA_PATH)):
-        print("ダミーデータはすでにあります。")
-        return
-    with open(SCHEMA_SAMPLE, encoding="utf-8") as fp:
-        logical_fields = list(json.load(fp)["columns"])
-    rows = build_rows(args.lots, logical_fields, random.Random(SEED))
-    write_database(SHARED_PATH, rows, logical_fields, args.variant)
-    write_config(logical_fields)
-    print(f"ダミーの共有データを作成しました（{args.variant}・ロット {args.lots:,} 件・BOX {len(rows):,} 件）: {SHARED_PATH}")
-    print(f"上書き設定: {DUMMY_DIR}（config.local.json / schema.local.json）")
-
-
-if __name__ == "__main__":
-    main()
-```
-
-`python/tools/make_view_labels.py`
-
-```python
-"""schema の列名から、詳細・一覧・検索・絞り込みで使う表示名の下書きを作る。
-
-  読む   : config/sample/schema.sample.json ＋ <上書きフォルダ>/schema.local.json（columns の列名）
-  書き出す: <上書きフォルダ>/view.local.json の fields.<項目>.label（ほかの設定はそのまま残す）
-
-  ・すでに表示名がある項目は残す（手で直した表示名は消えない）。schema に項目が増えたら、もう一度実行すれば足りない分だけ入る
-  ・--overwrite で、すでにある表示名も列名で置き換える
-  ・書き換える前の view.local.json は view.local.json.bak に残す
-  ・画面での優先順：view の表示名（このツールで入れたものを含む）→ 論理名
-
-使い方:
-    python python/tools/make_view_labels.py                         … config/local に書く
-    python python/tools/make_view_labels.py --local-dir config/dummy
-    python python/tools/make_view_labels.py --dry-run               … 書き込まずに件数だけ見る
-    python python/tools/make_view_labels.py --overwrite
-"""
-
-import argparse
 import json
 import os
 import shutil
-import sys
-
-APP_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(APP_ROOT, "python"))
-
-from data_search.settings.labels import plan_labels  # noqa: E402
-from data_search.settings.loader import read_settings_json  # noqa: E402
-
-SAMPLE_DIR = os.path.join(APP_ROOT, "config", "sample")
 
 
-def shown(path):
-    relative = os.path.relpath(path, APP_ROOT)
-    return path if relative.startswith("..") else relative
+def local_file(local_dir, kind):
+    return os.path.join(local_dir, f"{kind}.local.json")
 
 
-def read_or_stop(path, required):
-    if not os.path.isfile(path):
-        if required:
-            print(f"[止めました] {shown(path)} がありません。")
-            sys.exit(1)
-        return {}
-    issues = []
-    data = read_settings_json(path, shown(path), issues)
-    if issues:
-        print("[止めました] 設定ファイルを読めません。")
-        for issue in issues:
-            print()
-            print(issue.format())
-        sys.exit(1)
-    return data
-
-
-def preview(names, limit=8):
-    shown = "、".join(names[:limit])
-    return f"{shown} ほか {len(names) - limit} 項目" if len(names) > limit else shown
-
-
-def main():
-    parser = argparse.ArgumentParser(description="schema の列名から表示名の下書きを作る")
-    parser.add_argument("--local-dir", default=os.path.join(APP_ROOT, "config", "local"), help="上書きフォルダ（既定：config/local）")
-    parser.add_argument("--overwrite", action="store_true", help="すでにある表示名も列名で置き換える")
-    parser.add_argument("--dry-run", action="store_true", help="書き込まずに件数だけ表示する")
-    args = parser.parse_args()
-
-    local_dir = os.path.abspath(args.local_dir)
-    sample_schema = read_or_stop(os.path.join(SAMPLE_DIR, "schema.sample.json"), required=True)
-    local_schema = read_or_stop(os.path.join(local_dir, "schema.local.json"), required=True)
-    view_path = os.path.join(local_dir, "view.local.json")
-    view = read_or_stop(view_path, required=False)
-
-    # 項目の並びはサンプルの schema、列名はローカルの schema を優先（社内だけで足した項目も含める）
-    columns = dict(sample_schema.get("columns") or {})
-    columns.update(local_schema.get("columns") or {})
-    plan = plan_labels(columns, view.get("fields"), overwrite=args.overwrite)
-
-    # 列名そのものは表示しない（画面に出すのは書き込み後の表示名だけ）。項目名と件数だけ
-    print(f"新しく入れる: {len(plan.added)} 項目")
-    if args.overwrite:
-        print(f"置き換える  : {len(plan.replaced)} 項目")
-    print(f"そのまま残す: {len(plan.kept)} 項目（すでに表示名あり）")
-    if plan.skipped:
-        print(f"書かない    : {len(plan.skipped)} 項目（列名が仮の値・空・論理名と同じ）: {preview(plan.skipped)}")
-    if args.dry_run:
-        print("（--dry-run のため書き込んでいません）")
-        return 0
-    if not plan.added and not plan.replaced:
-        print("変更はありません。")
-        return 0
-
-    if os.path.isfile(view_path):
-        shutil.copyfile(view_path, view_path + ".bak")
-    view["fields"] = plan.fields
+def set_local_value(local_dir, kind, path, value):
+    """path（例：("dataSource", "sourcePath")）の値を書き込む。書き込んだファイルのパスを返す。"""
+    target = local_file(local_dir, kind)
+    data = {}
+    if os.path.isfile(target):
+        with open(target, encoding="utf-8-sig") as fp:
+            data = json.load(fp)
+        if not isinstance(data, dict):
+            raise ValueError("local file is not an object")
+        shutil.copyfile(target, target + ".bak")
+    node = data
+    for key in path[:-1]:
+        child = node.get(key)
+        if not isinstance(child, dict):
+            child = {}
+            node[key] = child
+        node = child
+    node[path[-1]] = value
     os.makedirs(local_dir, exist_ok=True)
-    with open(view_path, "w", encoding="utf-8") as fp:
-        json.dump(view, fp, ensure_ascii=False, indent=2)
+    temp = target + ".writing"
+    with open(temp, "w", encoding="utf-8") as fp:
+        json.dump(data, fp, ensure_ascii=False, indent=2)
         fp.write("\n")
-    print(f"書き込みました: {shown(view_path)}（表示名は手で直せます。直した表示名は次回も残ります）")
-    return 0
+    os.replace(temp, target)
+    return target
 
 
-if __name__ == "__main__":
-    sys.exit(main())
-```
-
-`python/tools/sync_sample_view.py`
-
-```python
-"""画面だけで試すモード（index.html を直接開いたとき）用の表示定義を、公開サンプルから作り直す。
-
-file:// で開いた画面は JSON ファイルを読めないため、config/sample/schema.sample.json と
-view.sample.json の論理情報を src/js/sample/sample-view.js に書き写して使う。
-サンプルの view / schema を変えたら、このスクリプトを実行する（テストで一致を確かめている）。
-
-使い方: python python/tools/sync_sample_view.py
-"""
-
-import json
-import os
-import sys
-
-APP_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(APP_ROOT, "python"))
-
-from data_search.settings import public_view_of  # noqa: E402
-from data_search.settings.defaults import BUILTIN_DEFAULTS  # noqa: E402
-from data_search.settings.merge import fill_defaults  # noqa: E402
-
-SAMPLE_DIR = os.path.join(APP_ROOT, "config", "sample")
-OUTPUT = os.path.join(APP_ROOT, "src", "js", "sample", "sample-view.js")
-
-TEMPLATE = """/* =========================================================
-   画面だけで試すモード用の表示定義（自動生成。手で直さない）
-   元: config/sample/view.sample.json と schema.sample.json の論理情報
-   作り直し: python python/tools/sync_sample_view.py
-   ========================================================= */
-(function () {{
-  'use strict';
-
-  window.DS = window.DS || {{}};
-  window.DS.sampleView = /*VIEW_JSON_START*/{json}/*VIEW_JSON_END*/;
-}})();
-"""
-
-
-def main():
-    with open(os.path.join(SAMPLE_DIR, "schema.sample.json"), encoding="utf-8") as fp:
-        schema = json.load(fp)
-    with open(os.path.join(SAMPLE_DIR, "view.sample.json"), encoding="utf-8") as fp:
-        view = json.load(fp)
-    # サンプルから省かれた任意の項目は、起動時と同じく内部の既定値で補う
-    schema = fill_defaults(schema, BUILTIN_DEFAULTS["schema"])
-    view = fill_defaults(view, BUILTIN_DEFAULTS["view"])
-    text = json.dumps(public_view_of(schema, view), ensure_ascii=False, indent=2)
-    with open(OUTPUT, "w", encoding="utf-8", newline="\n") as fp:
-        fp.write(TEMPLATE.format(json=text))
-    print(f"書き出しました: {OUTPUT}")
-
-
-if __name__ == "__main__":
-    main()
+def restore_backup(local_dir, kind, existed):
+    """書き込みを取り消す（.bak に戻す。元のファイルがなかったときは消す）。"""
+    target = local_file(local_dir, kind)
+    if existed and os.path.isfile(target + ".bak"):
+        shutil.copyfile(target + ".bak", target)
+    elif not existed and os.path.isfile(target):
+        os.remove(target)
 ```
 

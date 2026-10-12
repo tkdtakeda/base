@@ -156,7 +156,8 @@ class LotService:
                 cursor = conn.execute(sql, params)
                 return cursor.fetchone() if fetch == "one" else cursor.fetchall()
             except sqlite3.Error as exc:
-                raise AppError("CACHE_INVALID", f"query failed: {exc}") from exc
+                # SQLite の文面には列名が入るため、ログには種類だけを残す
+                raise AppError("CACHE_INVALID", f"query failed: {type(exc).__name__}") from exc
 
     def search(self, payload):
         """番号で検索する（04_api_spec.md の search_lots。番号は必須）"""

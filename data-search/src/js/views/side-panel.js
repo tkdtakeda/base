@@ -1,7 +1,8 @@
 /* =========================================================
    左のアイコン列と、そこから開く脇のパネル
    パネルは登録簿（DS.panels）に register() するだけで増やせる。
-     { id, order, icon, label, title, mount(container, ctx) → { update(state) } , badge?(state) }
+     { id, order, icon, label, title, mount(container, ctx) → { update(state) } , badge?(state), watch?: [状態のキー] }
+   watch に書いた状態が変わったときも描き直す（共通のキーは WATCHED）。
    最初は閉じておき、押したときに開く。開いたパネルは 1 つだけ。
    ========================================================= */
 (function () {
@@ -83,7 +84,8 @@
       if (entry.view && entry.view.update) entry.view.update(state);
     }
 
-    const WATCHED = ['ui', 'cache', 'columns', 'samplesVersion', 'filters', 'search', 'tags'];
+    const WATCHED = DS.panels.list().reduce((keys, panel) => keys.concat(panel.watch || []),
+      ['ui', 'cache', 'columns', 'samplesVersion', 'filters', 'search', 'tags']);
     bus.on('state', ({ state, changed }) => {
       if (changed.some((key) => WATCHED.includes(key))) render(state);
     });

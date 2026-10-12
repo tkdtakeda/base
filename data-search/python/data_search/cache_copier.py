@@ -34,7 +34,7 @@ def copy_to_temp(source_path, temp_path):
     """
     before = source_modified_at(source_path)
     if before is None or not os.path.isfile(source_path):
-        raise AppError("SOURCE_UNAVAILABLE", f"source not reachable: {source_path}")
+        raise AppError("SOURCE_UNAVAILABLE", "source not reachable")  # パスはログに残さない
 
     os.makedirs(os.path.dirname(temp_path) or ".", exist_ok=True)
     remove_quietly(temp_path)
@@ -45,7 +45,7 @@ def copy_to_temp(source_path, temp_path):
                 shutil.copyfile(source_path + suffix, temp_path + suffix)
     except OSError as exc:
         remove_quietly(temp_path)
-        raise AppError("CACHE_COPY_FAILED", f"copy failed: {exc}") from exc
+        raise AppError("CACHE_COPY_FAILED", f"copy failed: {type(exc).__name__} errno={exc.errno}") from exc
 
     if source_modified_at(source_path) != before:
         remove_quietly(temp_path)

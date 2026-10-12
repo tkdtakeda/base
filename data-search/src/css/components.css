@@ -503,3 +503,25 @@
 /* ── 設定の注意（データのパネル） ── */
 .config-help__item { padding: var(--sp-2); border-left: var(--bw-bar) solid var(--color-warning); border-radius: var(--r-sm); background: var(--color-warning-bg); }
 .config-help__where { font-size: var(--fs-xs); font-weight: var(--fw-bold); color: var(--color-warning); overflow-wrap: anywhere; }
+
+/* ── 読み込み先（データ パネル） ── */
+.source { display: flex; flex-direction: column; gap: var(--sp-2); }
+.source__path { margin: 0; font-size: var(--fs-sm); word-break: break-all; padding: var(--sp-1) var(--sp-2); border-radius: var(--r-sm); background: var(--color-surface-sunken); }
+.source__actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.source__actions[hidden], .source__edit[hidden] { display: none; }
+.source__edit { display: flex; flex-direction: column; gap: var(--sp-2); }
+.source__input { width: 100%; }
+.pane-note.is-warning { color: var(--color-warning); }
+.source-result.is-stale { opacity: 0.5; }
+.source-result__summary { margin: 0 0 var(--sp-1); font-weight: 600; font-size: var(--fs-sm); }
+.source-result__summary.is-ok { color: var(--color-success); }
+.source-result__summary.is-ng { color: var(--color-danger); }
+.source-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
+.source-step { display: grid; grid-template-columns: 1.4em 1fr; gap: var(--sp-1); font-size: var(--fs-sm); }
+.source-step__mark { line-height: 1.5; }
+.source-step--ok .source-step__mark { color: var(--color-success); }
+.source-step--ng .source-step__mark { color: var(--color-danger); }
+.source-step--skip { color: var(--color-text-muted); }
+.source-step__label { display: block; }
+.source-step__text, .source-step__action { margin: 0; }
+.source-step--ng .source-step__action { color: var(--color-danger); }

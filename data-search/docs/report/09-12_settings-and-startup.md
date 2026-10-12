@@ -796,6 +796,7 @@ from data_search.http_server import AppContext, create_server  # noqa: E402
 from data_search.logging_setup import setup_logging  # noqa: E402
 from data_search.lot_service import LotService  # noqa: E402
 from data_search.settings import SettingsError, load_settings  # noqa: E402
+from data_search.source_service import SourceService  # noqa: E402
 
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PORT_TRIES = 10
@@ -820,6 +821,17 @@ def print_issues(issues):
     for issue in issues:
         print()
         print(issue.format())
+
+
+def print_source_check(result):
+    """接続テストの結果を段階ごとに出す（パスは出さない）。"""
+    print("  読み込み先の接続テスト:")
+    marks = {"ok": "○", "ng": "×", "skip": "－"}
+    for step in result["steps"]:
+        print(f"    {marks[step['status']]} {step['label']}：{step['message']}")
+        if step["action"]:
+            print(f"        対応：{step['action']}")
+    print("    （画面左の「データ」→「読み込み先」から、パスを確かめて直せます）")
 
 
 def bind(context, host, port):
@@ -855,10 +867,11 @@ def main():
     )
     cache_service = CacheService(config, logger)
     context = AppContext(config, cache_service, LotService(config, cache_service, logger), logger)
+    context.source_service = SourceService(context, APP_ROOT, local_dir)
 
     has_cache = os.path.isfile(config.cache_path)
     if has_cache and not cache_service.verify_existing():
-        print("手元のキャッシュが今の schema（テーブル名・列名）と合わないため、作り直します…")
+        print("手元のキャッシュが今の設定（読み込み先・テーブル名・列名）と合わないため、作り直します…")
     if not cache_service.cache_available():
         if not has_cache:
             print("初回のため、共有データからキャッシュを作成しています…")
@@ -867,6 +880,7 @@ def main():
             print(f"  完了：{result['rowCount']:,} 件")
         except AppError as error:
             print(f"  失敗：{error.user_message}（画面の「データ」から再度更新できます）")
+            print_source_check(context.source_service.test({}))
 
     try:
         server = bind(context, config.server_host, args.port or config.server_port)
@@ -982,12 +996,13 @@ if errorlevel 1 pause
     const search = DS.controllers.createSearchController({ store, bus, api, toast });
     const cache = DS.controllers.createCacheController({ store, api, toast, search });
     const samples = DS.controllers.createSampleController({ store, api, toast, search, cache });
+    const source = DS.controllers.createSourceController({ store, api, toast, search, cache });
     const tags = DS.controllers.createTagController({ store, bus, toast, search });
 
     const manual = DS.views.createManualView(document.getElementById('manual-host'));
     const openPanel = (id) => store.merge('ui', { panel: id });
     const refresh = () => cache.refresh();
-    const ctx = { store, bus, api, toast, search, cache, samples, tags };
+    const ctx = { store, bus, api, toast, search, cache, samples, tags, source };
 
     DS.views.createSidePanel({
       rail: document.getElementById('rail'),
@@ -1016,11 +1031,11 @@ if errorlevel 1 pause
     } catch (error) {
       toast.show({ tone: 'danger', message: error.userMessage, detailId: error.detailId });
     }
-    await cache.loadStatus();
+    await Promise.all([cache.loadStatus(), source.load()]);
     await search.run({ page: 1 }); // 起動したらすぐ一覧を出す（入力は不要）
     searchBar.focus();
 
-    DS.app = { store, bus, api, search, cache, samples, tags, manual }; // 確認用スクリプト（tests/ui-check.js）から使う
+    DS.app = { store, bus, api, search, cache, samples, tags, source, manual }; // 確認用スクリプト（tests/ui-check.js）から使う
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
@@ -1066,20 +1081,25 @@ if errorlevel 1 pause
 | 修正 | `docs/config-design.md` |
 | 新規 | `make-labels.bat` |
 | 修正 | `python/data_search/__init__.py` |
+| 修正 | `python/data_search/cache_copier.py` |
 | 修正 | `python/data_search/cache_service.py` |
 | 修正 | `python/data_search/cache_validator.py` |
 | 修正 | `python/data_search/commands.py` |
 | 削除 | `python/data_search/config_loader.py` |
 | 修正 | `python/data_search/errors.py` |
 | 修正 | `python/data_search/fields.py` |
+| 修正 | `python/data_search/http_server.py` |
 | 修正 | `python/data_search/lot_service.py` |
 | 修正 | `python/data_search/query.py` |
 | 新規 | `python/data_search/settings/__init__.py` |
 | 新規 | `python/data_search/settings/defaults.py` |
 | 新規 | `python/data_search/settings/labels.py` |
 | 新規 | `python/data_search/settings/loader.py` |
+| 新規 | `python/data_search/settings/local_writer.py` |
 | 新規 | `python/data_search/settings/merge.py` |
 | 新規 | `python/data_search/settings/validation.py` |
+| 新規 | `python/data_search/source_check.py` |
+| 新規 | `python/data_search/source_service.py` |
 | 修正 | `python/run_server.py` |
 | 修正 | `python/tests/test_backend.py` |
 | 修正 | `python/tools/make_dummy_db.py` |
@@ -1093,6 +1113,7 @@ if errorlevel 1 pause
 | 修正 | `src/js/app.js` |
 | 修正 | `src/js/controllers/app-state.js` |
 | 修正 | `src/js/controllers/search-controller.js` |
+| 新規 | `src/js/controllers/source-controller.js` |
 | 修正 | `src/js/domain/fields.js` |
 | 修正 | `src/js/domain/status-tones.js` |
 | 修正 | `src/js/manual/manual-content.js` |
@@ -1102,6 +1123,8 @@ if errorlevel 1 pause
 | 修正 | `src/js/views/detail-view.js` |
 | 修正 | `src/js/views/results-view.js` |
 | 修正 | `src/js/views/search-bar.js` |
+| 修正 | `src/js/views/side-panel.js` |
+| 新規 | `src/js/views/source-editor.js` |
 | 修正 | `src/js/views/status-chips.js` |
 | 修正 | `src/js/views/tag-bar.js` |
 | 修正 | `start-dummy.bat` |

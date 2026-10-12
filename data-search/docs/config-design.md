@@ -210,7 +210,14 @@ flowchart TD
 - `schema.columns` の値は DB の列名（物理名）。画面（`get_view_config`）には渡さない。
 - DB の列名が利用者向けの名前になっている場合は、`python/tools/make_view_labels.py`（処理は `settings/labels.py`）で
   `view.local.json` の `fields.<項目>.label` に書き写す。既存の表示名は残し（`--overwrite` のときだけ置き換え）、仮の値・空・論理名と同じ列名は書かない。
-- 実行時の表示名は view だけで決まる（`fields.<項目>.label` → `listColumns[].label` → 論理名。一覧の見出しと検索の種類は `listColumns[].label` が先）。
+- 実行時の表示名は view だけで決まり、すべての画面で同じ（`fields.<項目>.label` → `listColumns[].label` → 論理名）。
+
+## 9.1 画面からの書き込み（読み込み先）
+
+- 画面から書き換えるのは `config.local.json` の `dataSource.sourcePath` だけ（`update_data_source`）。sample は書き換えない。
+- 接続テスト（`source_check.py`）がすべて ○ のときだけ書き込む。ほかのキーは残し、書き換え前を `.bak` に残し、一時ファイル → 置き換えで書く（`settings/local_writer.py`）。
+- 書き込み後に `load_settings` で読み直して検証し、誤りがあれば `.bak` に戻す。
+- キャッシュの状態ファイルに読み込み先の印（パスのハッシュ）を残し、前の読み込み先のキャッシュは使わない。
 
 ## 10. 設定項目を足すときの手順
 

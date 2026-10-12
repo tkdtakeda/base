@@ -1,4 +1,258 @@
-## 付録：画面側の修正ファイルの全文（3/3）
+## 付録：画面側の修正ファイルの全文（3/4）
+
+`src/js/sample/sample-data.js`
+
+```javascript
+/* =========================================================
+   サンプルデータ（画面だけで試すモード用）
+   乱数の種を固定しているので、毎回同じデータができる。日付だけは「今日」を基準にする
+   （日付の絞り込み「今日〜7 日後」などをいつ開いても試せるように）。
+   パターンを増やすときは patterns.register() を足すだけでよい。
+
+   行の項目は、表示定義の論理項目（DS.sampleView.logicalFields）すべてを埋める。
+   主な項目は値の候補（VALUE_RULES）から、それ以外は項目名の形（〜Date・〜Width など）から作る。
+   論理項目が増えても、項目名の形に当てはまればそのままサンプルが作られる。
+   ========================================================= */
+(function () {
+  'use strict';
+
+  const DS = window.DS;
+  const groups = DS.core.createRegistry('sampleGroups');
+  const patterns = DS.core.createRegistry('samplePatterns');
+
+  [
+    { id: 'basic', label: '基本の動き', order: 10 },
+    { id: 'input', label: '入力の確認', order: 20 },
+    { id: 'abnormal', label: '0 件・異常のとき', order: 30 },
+    { id: 'perf', label: '速さの確認', order: 40 },
+  ].forEach((group) => groups.register(group));
+
+  // ── 乱数（種を固定） ──
+  function createRandom(seed) {
+    let a = seed >>> 0;
+    const next = () => {
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    return {
+      next,
+      int: (min, max) => min + Math.floor(next() * (max - min + 1)),
+      pick: (list) => list[Math.floor(next() * list.length)],
+    };
+  }
+
+  const now = new Date();
+  const BASE_DATE = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const pad = (n, width) => String(n).padStart(width, '0');
+
+  function isoDate(offsetDays) {
+    const date = new Date(BASE_DATE.getTime() + offsetDays * 86400000);
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1, 2)}-${pad(date.getDate(), 2)}`;
+  }
+
+  // ── 値の候補（架空の値だけ） ──
+  const MATERIALS = ['A1100', 'A3003', 'A5052', 'A6061', 'A6063', 'A7075'];
+  const TEMPERS = ['O', 'H14', 'H24', 'H32', 'T5', 'T6', 'T651'];
+  const CUSTOMERS = [['C0101', 'サンプル工業'], ['C0102', 'テスト金属'], ['C0103', '見本製作所'], ['C0104', '架空商事'], ['C0105', '例示精工'], ['C0106', 'ダミー産業']];
+  const EQUIPMENTS = ['鋳造1号', '熱間圧延1号', '冷間圧延1号', '冷間圧延2号', '焼鈍炉3号', 'スリッター1号', '検査ライン1号'];
+  const COURSES = ['HR→CR→AN→SL', 'CR→AN→SL', 'AN→SL', 'SL', 'CR→SL', '—'];
+  const STATUSES = ['仕掛中', '検査待ち', '検査済み', '出荷済み', '保留', '不適合'];
+  const WIP_CATEGORIES = ['仕掛', '完成', '出荷待ち'];
+  const HOLD_CATEGORIES = ['', '', '', '品質保留', '客先保留'];
+  const SHAPES = ['板', 'コイル', '条'];
+  const SURFACES = ['ミル', '研磨', 'ヘアライン'];
+
+  /** 主な項目の作り方。ctx は同じロット・BOX の行で共有する値 */
+  const VALUE_RULES = {
+    inspectionNo: (ctx) => `INS-${ctx.prefix.short}-${pad(ctx.serial, 6)}`,
+    castingNo: (ctx) => `CST-${ctx.prefix.cast}${pad(ctx.lotIndex, 6)}`,
+    orderNo: (ctx) => `ORD-${ctx.prefix.short}${pad(ctx.order, 4)}`,
+    customerCode: (ctx) => ctx.customer[0],
+    customerName: (ctx) => ctx.customer[1],
+    deliveryDestinationCode: (ctx) => ctx.customer[0].replace('C', 'D'),
+    deliveryDestinationName: (ctx) => `${ctx.customer[1]} 本社工場`,
+    shippingDestinationCode: (ctx) => ctx.customer[0].replace('C', 'S'),
+    shippingDestinationName: (ctx) => `${ctx.customer[1]} 物流センター`,
+    orderMaterial: (ctx) => ctx.material,
+    manufacturingMaterial: (ctx) => ctx.material,
+    orderTemper: (ctx) => ctx.temper,
+    manufacturingTemper: (ctx) => ctx.temper,
+    plannedEquipmentName: (ctx, rng) => rng.pick(EQUIPMENTS),
+    lastActualEquipmentName: (ctx, rng) => rng.pick(EQUIPMENTS),
+    remainingEquipmentCourse: (ctx, rng) => rng.pick(COURSES),
+    cfStatus: (ctx, rng) => rng.pick(STATUSES),
+    wipCategory: (ctx, rng) => rng.pick(WIP_CATEGORIES),
+    holdCategory: (ctx, rng) => rng.pick(HOLD_CATEGORIES),
+    shape: (ctx, rng) => rng.pick(SHAPES),
+    surface: (ctx, rng) => rng.pick(SURFACES),
+    specificGravity: () => '2.71',
+    factoryDeliveryDate: (ctx) => isoDate(ctx.dueOffset),
+    salesDeliveryDate: (ctx) => isoDate(ctx.dueOffset + 3),
+    promisedDeliveryDate: (ctx) => isoDate(ctx.dueOffset + 5),
+    shippingDate: (ctx) => isoDate(ctx.dueOffset - 1),
+  };
+
+  /** 項目名の形からの作り方（上から順に当てはめる） */
+  const NAME_RULES = [
+    [/Date$/, (ctx, rng) => isoDate(rng.int(-60, 90))],
+    [/Thickness$/, (ctx) => ctx.thickness],
+    [/Width$/, (ctx) => ctx.width],
+    [/Length$/, (ctx) => ctx.length],
+    [/Weight$/, (ctx, rng) => String(rng.int(300, 3000))],
+    [/(Count|Quantity)$/, (ctx, rng) => String(rng.int(1, 20))],
+    [/Time$/, (ctx, rng) => (rng.int(10, 900) / 10).toFixed(1)],
+    [/(Category|Flag)$/, (ctx, rng) => rng.pick(['0', '1', '2'])],
+    [/Code$/, (ctx, rng) => `${rng.pick(['A', 'B', 'K', 'M'])}${pad(rng.int(1, 99), 2)}`],
+    [/No$/, (ctx, rng, field) => `${field.replace(/No$/, '').replace(/[a-z]/g, '').toUpperCase() || 'N'}${pad(rng.int(1, 99999), 5)}`],
+    [/Course$/, (ctx, rng) => rng.pick(COURSES)],
+    [/Name$/, (ctx, rng, field) => `${field.replace(/Name$/, '')}-${rng.int(1, 9)}`],
+  ];
+
+  function valueOf(field, ctx, rng) {
+    if (VALUE_RULES[field]) return VALUE_RULES[field](ctx, rng);
+    const rule = NAME_RULES.find(([pattern]) => pattern.test(field));
+    return rule ? rule[1](ctx, rng, field) : `${field}-${rng.int(1, 9)}`;
+  }
+
+  function logicalFields() {
+    return (DS.sampleView && DS.sampleView.logicalFields) || [];
+  }
+
+  /**
+   * ロットを lotCount 件つくる。1 ロットに BOX が 1〜3 件（行は BOX ごと）。
+   * prefix で番号の頭をそろえ、パターン同士で重ならないようにする。
+   */
+  function buildRows(lotCount, seed, prefix, options) {
+    const rng = createRandom(seed);
+    const fields = logicalFields();
+    const rows = [];
+    let order = 0;
+    let orderLeft = 0;
+    let serial = 0;
+    for (let lotIndex = 1; lotIndex <= lotCount; lotIndex += 1) {
+      if (orderLeft === 0) {
+        order += 1;
+        orderLeft = rng.int(1, 4); // 1 つのオーダーに複数のロット
+      }
+      orderLeft -= 1;
+      const lotNo = (options && options.lotNo) ? options.lotNo(lotIndex) : `LOT-${prefix.year}-${pad(lotIndex, 5)}`;
+      const boxCount = (options && options.boxes) || rng.int(1, 3);
+      const lot = {
+        prefix, lotIndex, order,
+        customer: rng.pick(CUSTOMERS),
+        material: rng.pick(MATERIALS),
+        temper: rng.pick(TEMPERS),
+        thickness: rng.pick(['0.50', '1.00', '1.50', '2.00', '3.00', '5.00']),
+        width: String(rng.pick([1000, 1250, 1525])),
+        length: String(rng.pick([2000, 2500, 3000])),
+        dueOffset: rng.int(-45, 90),
+      };
+      for (let box = 1; box <= boxCount; box += 1) {
+        serial += 1;
+        const ctx = Object.assign({ serial, box }, lot);
+        const row = {};
+        fields.forEach((field) => { row[field] = valueOf(field, ctx, rng); });
+        row.lotNo = lotNo;
+        row.boxNo = pad(box, 2);
+        rows.push(row);
+      }
+    }
+    return rows;
+  }
+
+  // ── パターン ──
+  patterns.register({
+    id: 'standard',
+    group: 'basic',
+    order: 10,
+    icon: 'fa-table-list',
+    title: '標準のデータ',
+    description: 'ロット 300 件（1 ロットに BOX 1〜3 件）。1 つのオーダー番号に複数のロットがひも付きます。工場納期は今日の前後 3 か月に散らばります。',
+    build: () => buildRows(300, 1001, { year: '2026', short: '26', cast: '41' }),
+  });
+
+  patterns.register({
+    id: 'symbols',
+    group: 'input',
+    order: 20,
+    icon: 'fa-language',
+    title: '日本語・記号を含む番号',
+    description: '「試作-α-001」「LOT_100%-A」など。全角で「ＬＯＴ＿１００」と入れても見つかることを確かめられます。',
+    build: () => {
+      const lots = ['試作-α-001', '試作-β-002', 'LOT_100%-A', 'LOT#5/特急', 'LOT(再)-12', "LOT'Q\"-1", 'LOT-全角確認-01', 'lot-lower-01'];
+      return buildRows(lots.length, 7001, { year: 'SP', short: 'SP', cast: '77' }, { lotNo: (i) => lots[i - 1], boxes: 1 });
+    },
+    demoQuery: { searchType: 'lotNo', keyword: 'ＬＯＴ＿１００', matchMode: 'partial' },
+  });
+
+  patterns.register({
+    id: 'multi-box',
+    group: 'input',
+    order: 30,
+    icon: 'fa-boxes-stacked',
+    title: '1 ロットに BOX が複数',
+    description: '同じロット番号で BOX 番号が違う 3 件。詳細は「ロット番号＋BOX番号」で 1 件に決まります。',
+    build: () => buildRows(1, 7101, { year: 'DUP', short: 'DP', cast: '88' }, { lotNo: () => 'LOT-DUP-0001', boxes: 3 }),
+    demoQuery: { searchType: 'lotNo', keyword: 'LOT-DUP-0001', matchMode: 'exact' },
+  });
+
+  patterns.register({
+    id: 'zero-hit',
+    group: 'abnormal',
+    order: 40,
+    icon: 'fa-circle-question',
+    title: '0 件になる検索',
+    description: '標準のデータを読み込み、存在しない番号で完全一致の検索をします。',
+    requires: ['standard'],
+    build: () => [],
+    demoQuery: { searchType: 'lotNo', keyword: 'LOT-9999-99999', matchMode: 'exact' },
+  });
+
+  patterns.register({
+    id: 'refresh-failure',
+    group: 'abnormal',
+    order: 50,
+    icon: 'fa-plug-circle-xmark',
+    title: '更新に失敗した状態',
+    description: '共有データに接続できず、前回のデータを使っている状態を再現します。データの更新も失敗します。',
+    requires: ['standard'],
+    effects: { refreshFailure: true },
+    build: () => [],
+  });
+
+  patterns.register({
+    id: 'large',
+    group: 'perf',
+    order: 60,
+    icon: 'fa-gauge-high',
+    title: '大量のデータ',
+    description: 'ロット 10,000 件（BOX 約 20,000 件）。検索とページ送りの速さを確かめられます。',
+    build: () => buildRows(10000, 4004, { year: '2025', short: '25', cast: '93' }),
+    demoQuery: { searchType: 'orderNo', keyword: 'ORD-25', matchMode: 'partial' },
+  });
+
+  DS.sample = {
+    groups,
+    patterns,
+    createRandom,
+    /** requires を含めて、読み込むべきパターンの id をそろえる */
+    expand(ids) {
+      const result = [];
+      const visit = (id) => {
+        const pattern = patterns.get(id);
+        if (!pattern || result.includes(id)) return;
+        (pattern.requires || []).forEach(visit);
+        result.push(id);
+      };
+      ids.forEach(visit);
+      return result;
+    },
+  };
+})();
+```
 
 `src/js/sample/sample-view.js`
 
@@ -1057,270 +1311,6 @@
   }
 
   DS.views.createSearchBar = createSearchBar;
-})();
-```
-
-`src/js/views/status-chips.js`
-
-```javascript
-/* =========================================================
-   上部バー右：どのデータを見ているか（出どころ）と、その鮮度
-   押すと「データ」パネルが開き、詳しい根拠を確かめられる。
-   ========================================================= */
-(function () {
-  'use strict';
-
-  const DS = window.DS;
-
-  /** キャッシュの状態を「アイコン＋文字＋色」の 1 組にまとめる（パネルと共通で使う） */
-  function describeCache(cacheState) {
-    const status = cacheState.status;
-    if (cacheState.refreshing) return { tone: 'info', icon: 'fa-rotate', spin: true, fallback: '…', text: '更新しています' };
-    if (!status) return { tone: 'neutral', icon: 'fa-circle-notch', spin: true, fallback: '…', text: '確認しています' };
-    if (!status.available) return { tone: 'danger', icon: 'fa-database', fallback: '×', text: 'データなし' };
-    if (status.usingPreviousCache) return { tone: 'warning', icon: 'fa-triangle-exclamation', fallback: '!', text: '前回のデータを使用中' };
-    if (status.sourceHasUpdate) return { tone: 'warning', icon: 'fa-cloud-arrow-down', fallback: '!', text: '新しい更新があります' };
-    return { tone: 'success', icon: 'fa-circle-check', fallback: '✓', text: '最新' };
-  }
-
-  function createStatusChips(root, { store, bus, openPanel }) {
-    const { el, icon } = DS.util;
-    const mode = store.get().mode;
-
-    const modeChip = el('span', {
-      className: `chip chip--mode chip--mode-${mode.mode}`,
-      title: mode.description,
-    }, [icon(mode.mode === 'mock' ? 'fa-flask' : 'fa-database', ''), el('span', { text: mode.label })]);
-
-    const cacheText = el('span', { className: 'chip__text' });
-    const cacheSub = el('span', { className: 'chip__sub mono' });
-    const cacheIcon = el('span', { className: 'chip__icon' });
-    const cacheChip = el('button', {
-      type: 'button',
-      className: 'chip chip--status',
-      title: 'データの状態を見る',
-    }, [cacheIcon, cacheText, cacheSub]);
-    cacheChip.addEventListener('click', () => openPanel('data'));
-
-    root.append(modeChip, cacheChip);
-
-    function render(state) {
-      const view = describeCache(state.cache);
-      cacheChip.className = `chip chip--status chip--${view.tone}`;
-      cacheIcon.replaceChildren(icon(view.icon, view.fallback, view.spin ? 'fa-spin' : ''));
-      cacheText.textContent = view.text;
-      const status = state.cache.status;
-      cacheSub.textContent = status && status.cacheUpdatedAt ? DS.util.formatDateTime(status.cacheUpdatedAt) + ' 時点' : '';
-    }
-
-    bus.on('state', ({ state, changed }) => {
-      if (changed.includes('cache')) render(state);
-    });
-    render(store.get());
-  }
-
-  DS.views.describeCache = describeCache;
-  DS.views.createStatusChips = createStatusChips;
-})();
-```
-
-`src/js/views/tag-bar.js`
-
-```javascript
-/* =========================================================
-   タグの列（一覧のすぐ上・いつも見える）
-   [すべて] [タグ…] [＋今の条件を保存]
-   よく使う操作（タグを押す）は 1 クリック。名前の変更・並べ替え・削除は選んだタグの ⋮ の中。
-   ========================================================= */
-(function () {
-  'use strict';
-
-  const DS = window.DS;
-
-  function createTagBar(root, { store, bus, tags, openPanel }) {
-    const { el, icon } = DS.util;
-    let editing = null; // { mode: 'save' } | { mode: 'rename', id }
-    let menuFor = null;
-    let pendingFocus = null;
-
-    const list = el('div', { className: 'tagbar__list', role: 'toolbar', 'aria-label': '絞り込みタグ' });
-    const tools = el('div', { className: 'tagbar__tools' });
-    root.append(el('span', { className: 'tagbar__label' }, [icon('fa-tags', ''), el('span', { text: 'タグ' })]), list, tools);
-
-    // Esc：開いているタグの操作メニューだけを閉じる（パネルや詳細は閉じない）
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && menuFor) {
-        event.preventDefault();
-        menuFor = null;
-        render(store.get());
-      }
-    }, true);
-
-    document.addEventListener('click', (event) => {
-      if (menuFor && !event.target.closest('.tag-menu, .tag__more')) {
-        menuFor = null;
-        render(store.get());
-      }
-    });
-
-    function chip(label, active, onClick, extra) {
-      const button = el('button', {
-        type: 'button',
-        className: `tag${active ? ' is-active' : ''}`,
-        'aria-pressed': String(active),
-        title: active && extra && extra.title ? extra.title : label,
-      }, [active ? icon('fa-check', '✓') : null, el('span', { className: 'tag__name', text: label })]);
-      button.addEventListener('click', onClick);
-      return button;
-    }
-
-    /** 名前を入れる欄（保存・名前の変更で共通） */
-    function nameEditor(initial, onSubmit) {
-      const input = el('input', {
-        type: 'text',
-        className: 'input input--sm tag-editor__input',
-        maxlength: String(tags.NAME_MAX),
-        placeholder: 'タグの名前（例：架空商事の仕掛品）',
-        'aria-label': 'タグの名前',
-      });
-      input.value = initial || '';
-      const message = el('span', { className: 'tag-editor__msg' });
-      const ok = el('button', { type: 'button', className: 'btn btn--primary btn--sm' }, [icon('fa-check', '✓'), el('span', { text: '保存' })]);
-      const cancel = el('button', { type: 'button', className: 'icon-btn', title: 'やめる（Esc）', 'aria-label': 'やめる' }, [icon('fa-xmark', '×')]);
-      const submit = () => {
-        const result = onSubmit(input.value);
-        if (result && !result.ok) {
-          message.textContent = result.reason;
-          DS.util.flash(message);
-          input.focus();
-          return;
-        }
-        editing = null;
-        render(store.get());
-      };
-      input.addEventListener('keydown', (event) => {
-        if (event.isComposing || event.keyCode === 229) return;
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          submit();
-        } else if (event.key === 'Escape') {
-          event.preventDefault();
-          event.stopPropagation();
-          editing = null;
-          render(store.get());
-        }
-      });
-      ok.addEventListener('click', submit);
-      cancel.addEventListener('click', () => {
-        editing = null;
-        render(store.get());
-      });
-      pendingFocus = input; // 画面に置いた直後に入力欄へ移す（打ち始めた文字を取りこぼさない）
-      return el('div', { className: 'tag-editor' }, [input, ok, cancel, message]);
-    }
-
-    function menu(tag, index, count) {
-      const item = (iconName, label, onClick, options) => {
-        const button = el('button', { type: 'button', className: `tag-menu__item${options && options.danger ? ' is-danger' : ''}`, disabled: options && options.disabled }, [icon(iconName, ''), el('span', { text: label })]);
-        button.addEventListener('click', () => {
-          menuFor = null;
-          onClick();
-          render(store.get());
-        });
-        return button;
-      };
-      return el('div', { className: 'tag-menu', role: 'menu' }, [
-        item('fa-pen', '名前を変える', () => { editing = { mode: 'rename', id: tag.id }; }),
-        item('fa-arrow-left', '左へ動かす', () => tags.move(tag.id, -1), { disabled: index === 0 }),
-        item('fa-arrow-right', '右へ動かす', () => tags.move(tag.id, 1), { disabled: index === count - 1 }),
-        el('hr', { className: 'tag-menu__sep' }),
-        item('fa-trash-can', 'このタグを消す', () => tags.remove(tag.id), { danger: true }),
-      ]);
-    }
-
-    function render(state) {
-      const activeId = state.tags.activeId;
-      const items = state.tags.items;
-      const modified = tags.isModified();
-      const nodes = [chip('すべて', !activeId, () => tags.apply(null), { title: '絞り込みをしない' })];
-
-      items.forEach((tag, index) => {
-        if (editing && editing.mode === 'rename' && editing.id === tag.id) {
-          nodes.push(nameEditor(tag.name, (name) => tags.rename(tag.id, name)));
-          return;
-        }
-        const active = tag.id === activeId;
-        const describe = Object.entries(tag.filters).map(([fieldId, spec]) =>
-          `${DS.domain.fields.get(fieldId).label}：${DS.domain.filters.describe(fieldId, spec)}`).join(' / ');
-        const group = el('span', { className: `tag-group${active ? ' is-active' : ''}` }, [
-          chip(tag.name, active, () => tags.apply(tag.id), { title: describe }),
-        ]);
-        group.firstChild.title = describe;
-        if (active) {
-          if (modified) {
-            const overwrite = el('button', { type: 'button', className: 'tag__overwrite', title: '今の条件でこのタグを上書きする' }, [
-              el('span', { className: 'tag__modified' }, [icon('fa-circle', '●'), el('span', { text: '変更あり' })]),
-              el('span', { text: '上書き保存' }),
-            ]);
-            overwrite.addEventListener('click', () => tags.overwrite(tag.id));
-            group.appendChild(overwrite);
-          }
-          const more = el('button', { type: 'button', className: 'tag__more', title: 'このタグの操作', 'aria-label': 'このタグの操作', 'aria-haspopup': 'menu' }, [icon('fa-ellipsis-vertical', '⋮')]);
-          more.addEventListener('click', (event) => {
-            event.stopPropagation();
-            menuFor = menuFor === tag.id ? null : tag.id;
-            render(store.get());
-          });
-          group.appendChild(more);
-          if (menuFor === tag.id) {
-            const node = menu(tag, index, items.length);
-            group.appendChild(node);
-            // タグの列は横にスクロールするため、メニューは画面に固定し、⋮ の真下に出す
-            window.requestAnimationFrame(() => {
-              const rect = more.getBoundingClientRect();
-              node.style.top = `${rect.bottom + 4}px`;
-              node.style.left = `${Math.min(rect.left, window.innerWidth - node.offsetWidth - 8)}px`;
-            });
-          }
-        }
-        nodes.push(group);
-      });
-
-      if (editing && editing.mode === 'save') {
-        nodes.push(nameEditor('', (name) => tags.save(name)));
-      }
-      list.replaceChildren(...nodes);
-      if (pendingFocus) {
-        pendingFocus.focus();
-        pendingFocus.select();
-        pendingFocus = null;
-      }
-
-      // 右側：保存ボタン（できないときは理由を文字で出す）
-      const can = tags.canSave();
-      const toolNodes = [];
-      if (!editing || editing.mode !== 'save') {
-        const save = el('button', { type: 'button', className: 'btn btn--ghost btn--sm', disabled: !can.ok }, [icon('fa-plus', '+'), el('span', { text: '今の条件をタグにする' })]);
-        save.addEventListener('click', () => {
-          editing = { mode: 'save' };
-          render(store.get());
-        });
-        if (!can.ok) toolNodes.push(el('span', { className: 'tagbar__hint', text: can.reason }));
-        toolNodes.push(save);
-      }
-      const filterButton = el('button', { type: 'button', className: 'btn btn--ghost btn--sm', title: '絞り込みのパネルを開く' }, [icon('fa-filter', ''), el('span', { text: '絞り込み' })]);
-      filterButton.addEventListener('click', () => openPanel('filters'));
-      toolNodes.push(filterButton);
-      tools.replaceChildren(...toolNodes);
-    }
-
-    bus.on('state', ({ state, changed }) => {
-      if (changed.some((key) => ['tags', 'filters'].includes(key))) render(state);
-    });
-    render(store.get());
-  }
-
-  DS.views.createTagBar = createTagBar;
 })();
 ```
 

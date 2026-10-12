@@ -101,6 +101,19 @@
     await samples.load('refresh-failure');
     check('更新失敗の状態では前回のデータを使う', store.get().cache.status.usingPreviousCache === true);
 
+    // ── 読み込み先（このモードでは模擬） ──
+    const { source } = app;
+    const beforePath = store.get().source.path;
+    let checked = await source.test('"\\\\srv\\share\\memo.txt"');
+    check('接続テストは × の段階と対応を示す', checked.ok === false && checked.steps.some((step) => step.status === 'ng' && step.action));
+    check('× のときは保存できない', source.canSave('\\\\srv\\share\\memo.txt') === false);
+    checked = await source.test('"\\\\srv\\share\\new.sqlite3"');
+    check('貼り付けた " は外して確かめる', checked.ok && checked.normalizedPath === '\\\\srv\\share\\new.sqlite3');
+    check('確かめた後に入力を変えると保存できない', source.canSave('\\\\srv\\share\\other.sqlite3') === false);
+    check('すべて ○ なら保存できる', await source.save('\\\\srv\\share\\new.sqlite3') && store.get().source.path === '\\\\srv\\share\\new.sqlite3');
+    await source.test(beforePath);
+    await source.save(beforePath);
+
     // ── 片付け ──
     await samples.clear();
     check('サンプルだけを消せる', store.get().cache.status.available === false);

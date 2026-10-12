@@ -1,4 +1,281 @@
-## 付録：画面側の修正ファイルの全文（2/3）
+## 付録：画面側の修正ファイルの全文（2/4）
+
+`src/js/api/mock-adapter.js`
+
+```javascript
+/* =========================================================
+   画面だけで試すモード（index.html を直接開いたとき）のアダプター。
+   本物と同じ命令名・同じ入出力で、サンプルデータを検索する。
+   入力の検証や検索の決まり（全角→半角、大文字小文字を区別しない、など）は Python 版にそろえる。
+   ========================================================= */
+(function () {
+  'use strict';
+
+  const DS = window.DS;
+  const STORAGE_KEY = 'mock:samples';
+  const searchable = () => DS.domain.searchableFields().map((field) => field.id);
+  const KEYWORD_MAX = 100;
+  const PAGE_SIZE = 100;
+  const MAX_PAGE_SIZE = 500;
+  const LATENCY_MS = 60;
+  const REFRESH_MS = 1400;
+  const VALUE_LIST_LIMIT = 200;
+
+  const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+  const nowIso = () => new Date().toISOString();
+  const fail = (code, userMessage) => ({
+    success: false,
+    error: { code, userMessage, detailId: 'MOCK-' + Math.random().toString(16).slice(2, 8).toUpperCase() },
+  });
+
+  function createMockAdapter() {
+    // 読み込んだパターンの id と時刻だけを保存し、データは種から作り直す（保存量を小さくする）
+    let saved = DS.core.storage.read(STORAGE_KEY, { ids: [], loadedAt: null, refreshedAt: null });
+    let rows = [];
+    let effects = {};
+    const countCache = new Map();
+
+    function rebuild() {
+      rows = [];
+      effects = {};
+      DS.sample.expand(saved.ids).forEach((id) => {
+        const pattern = DS.sample.patterns.get(id);
+        pattern.build().forEach((row) => rows.push(row));
+        Object.assign(effects, pattern.effects || {});
+      });
+    }
+
+    function persist() {
+      return DS.core.storage.write(STORAGE_KEY, saved);
+    }
+
+    rebuild();
+
+    // ── 一覧・検索・絞り込み（Python 版の lot_service と同じ決まり） ──
+    function filterRows(payload) {
+      const keyword = DS.util.normalize(payload.keyword).toLowerCase();
+      const searchType = searchable().includes(payload.searchType) ? payload.searchType : null;
+      const today = DS.domain.filters.todayIso();
+      const filters = Object.entries(DS.domain.filters.compact(payload.filters));
+      return rows.filter((row) => {
+        if (keyword && searchType) {
+          const value = String(row[searchType] == null ? '' : row[searchType]).toLowerCase();
+          if (payload.matchMode === 'exact' ? value !== keyword : !value.includes(keyword)) return false;
+        }
+        return filters.every(([fieldId, spec]) =>
+          DS.domain.filterTypes.get(spec.type).matches(row[fieldId], spec, today));
+      });
+    }
+
+    function listRows(payload) {
+      const started = performance.now();
+      const keyword = DS.util.normalize(payload.keyword);
+      if (keyword.length > KEYWORD_MAX) return fail('INVALID_REQUEST', `検索する番号は ${KEYWORD_MAX} 文字以内で入力してください。`);
+      if (keyword && !searchable().includes(payload.searchType)) return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
+      if (rows.length === 0) return fail('CACHE_UNAVAILABLE', '検索できるデータがまだありません。左の「サンプル」から読み込んでください。');
+      const page = Math.max(1, Number(payload.page) || 1);
+      const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(payload.pageSize) || PAGE_SIZE));
+      const sortKey = DS.domain.fields.has(payload.sortKey) ? payload.sortKey : DS.domain.DEFAULT_SORT.key;
+      const sortField = DS.domain.fields.get(sortKey);
+      const direction = payload.sortOrder === 'desc' ? -1 : 1;
+      const sortValue = (row) => (sortField.type === 'date' ? DS.domain.filters.normalizeDate(row[sortKey]) : row[sortKey]);
+      const isBlank = (value) => value === null || value === undefined || String(value).trim() === '';
+      const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+      const hits = filterRows(payload);
+      hits.sort((a, b) => {
+        const va = sortValue(a);
+        const vb = sortValue(b);
+        // 空欄は昇順・降順どちらでも最後
+        return compare(isBlank(va), isBlank(vb)) ||
+          compare(va || '', vb || '') * direction ||
+          DS.domain.keyFields().reduce((result, field) => result || compare(a[field.id] || '', b[field.id] || ''), 0);
+      });
+      const items = hits.slice((page - 1) * pageSize, page * pageSize).map((row) => Object.assign({}, row));
+      return {
+        success: true,
+        count: items.length,
+        totalCount: hits.length,
+        page,
+        pageSize,
+        items,
+        keyword: keyword || null,
+        today: DS.domain.filters.todayIso(),
+        elapsedMs: Math.round((performance.now() - started) * 10) / 10,
+      };
+    }
+
+    // ── 読み込み先（このモードでは画面の動きを試すための模擬。ファイルには届かず、保存もしない） ──
+    let sourcePath = '\\\\example-server\\share\\sample.sqlite3';
+    const SOURCE_STEPS = [['format', 'パスの書き方'], ['reach', '場所に届くか'], ['read', '読めるか'], ['sqlite', 'SQLite として開けるか'], ['table', 'テーブルと列'], ['rows', '件数']];
+    function simulateCheck(path) {
+      const value = DS.controllers.normalizeSourcePath(path);
+      // 模擬の決まり：.sqlite3 / .sqlite / .db は ○、拡張子なしは「ファイルがない」、ほかは「SQLite ではない」
+      let failAt = null;
+      let failure = null;
+      if (!value) [failAt, failure] = ['format', ['パスが空です。', '共有 SQLite のファイルのパスを入力してください。']];
+      else if (!/\.[^\\/.]+$/.test(value)) [failAt, failure] = ['reach', ['フォルダはありますが、ファイルがありません。', 'ファイル名（拡張子を含む）を確認してください。']];
+      else if (!/\.(sqlite3?|db)$/i.test(value)) [failAt, failure] = ['sqlite', ['SQLite のファイルではありません。', '指定したファイルが共有 SQLite（.sqlite3 / .db など）か確認してください。']];
+      let failed = false;
+      const steps = SOURCE_STEPS.map(([id, label]) => {
+        if (failed) return { id, label, status: 'skip', message: '前の段階が × のため確かめていません。', action: '' };
+        if (id === failAt) {
+          failed = true;
+          return { id, label, status: 'ng', message: failure[0], action: failure[1] };
+        }
+        return { id, label, status: 'ok', message: id === 'rows' ? `${rows.length.toLocaleString('ja-JP')} 件あります。（模擬）` : '問題ありません。（模擬）', action: '' };
+      });
+      return { success: true, ok: !failed, steps, rowCount: failed ? null : rows.length, modifiedAt: failed ? null : nowIso(), normalizedPath: value };
+    }
+
+    // ── 命令 ──
+    const commands = {
+      get_data_source: () => ({ success: true, sourcePath, editable: true, localFile: '（サンプルのモードでは保存しません）' }),
+      test_data_source: (payload) => simulateCheck(payload.sourcePath == null ? sourcePath : payload.sourcePath),
+      update_data_source(payload) {
+        const result = simulateCheck(payload.sourcePath);
+        if (!result.ok) return Object.assign(result, { saved: false, message: '接続テストで × があるため、保存していません。' });
+        sourcePath = result.normalizedPath;
+        return Object.assign(result, { saved: true, refreshed: true, message: '読み込み先を変更しました（サンプルのモードのため、データは変わりません）。' });
+      },
+
+      get_application_info: () => ({ id: 'data-search', name: 'Data Search', version: '0.1.0' }),
+
+      // 表示定義：config/sample/view.sample.json から自動生成した js/sample/sample-view.js
+      get_view_config: () => Object.assign({ success: true }, JSON.parse(JSON.stringify(DS.sampleView))),
+
+      get_cache_status() {
+        const available = rows.length > 0;
+        const failed = available && effects.refreshFailure;
+        return {
+          available,
+          lastRefreshSucceeded: !failed,
+          sourceModifiedAt: available ? saved.loadedAt : null,
+          cacheUpdatedAt: available ? saved.refreshedAt || saved.loadedAt : null,
+          usingPreviousCache: Boolean(failed),
+          message: !available
+            ? 'サンプルデータがありません。左の「サンプル」から読み込んでください。'
+            : failed
+              ? '最新のデータを取得できなかったため、前回のデータを参照しています。'
+              : '最新のキャッシュを参照しています。',
+          rowCount: rows.length,
+          sourceReachable: !failed,
+          sourceHasUpdate: false,
+          lastRefreshAt: saved.refreshedAt || saved.loadedAt,
+          errorCode: failed ? 'SOURCE_UNAVAILABLE' : null,
+          errorMessage: failed ? '共有データに接続できません。ネットワークと共有フォルダを確認してください。' : null,
+        };
+      },
+
+      async refresh_cache() {
+        await wait(REFRESH_MS);
+        if (rows.length === 0) return fail('SOURCE_UNAVAILABLE', 'サンプルデータがありません。左の「サンプル」から読み込んでください。');
+        if (effects.refreshFailure) {
+          return fail('SOURCE_UNAVAILABLE', '共有データに接続できません。ネットワークと共有フォルダを確認してください。');
+        }
+        saved.refreshedAt = nowIso();
+        persist();
+        return {
+          success: true,
+          sourceModifiedAt: saved.loadedAt,
+          cacheUpdatedAt: saved.refreshedAt,
+          usingPreviousCache: false,
+          rowCount: rows.length,
+          message: 'キャッシュを更新しました。',
+        };
+      },
+
+      search_lots(payload) {
+        if (!DS.util.normalize(payload.keyword)) return fail('INVALID_REQUEST', '検索する番号を入力してください。');
+        return listRows(payload);
+      },
+
+      list_lots: (payload) => listRows(payload),
+
+      get_filter_values(payload) {
+        const field = DS.domain.fields.get(payload.field);
+        if (!field || field.filter !== 'values') return fail('INVALID_REQUEST', '検索の条件が正しくありません。');
+        if (rows.length === 0) return fail('CACHE_UNAVAILABLE', '検索できるデータがまだありません。左の「サンプル」から読み込んでください。');
+        const others = Object.assign({}, payload.filters || {});
+        delete others[field.id];
+        const counts = new Map();
+        filterRows(Object.assign({}, payload, { filters: others })).forEach((row) => {
+          const raw = row[field.id];
+          const value = raw === null || raw === undefined || String(raw).trim() === '' ? null : String(raw);
+          counts.set(value, (counts.get(value) || 0) + 1);
+        });
+        const values = Array.from(counts, ([value, count]) => ({ value, count }))
+          .sort((a, b) => b.count - a.count || String(a.value).localeCompare(String(b.value)));
+        return { success: true, field: field.id, values: values.slice(0, VALUE_LIST_LIMIT), truncated: values.length > VALUE_LIST_LIMIT };
+      },
+
+      get_lot_detail(payload) {
+        const keys = DS.domain.keyFields().map((field) => field.id);
+        const found = rows.filter((row) => keys.every((id) => (row[id] || null) === (payload[id] || null)));
+        if (found.length === 0) return fail('NOT_FOUND', '選んだデータが見つかりません。データが更新された可能性があります。もう一度検索してください。');
+        return { success: true, item: Object.assign({}, found[0]), duplicated: found.length > 1 };
+      },
+    };
+
+    return {
+      mode: 'mock',
+      label: 'サンプル',
+      description: 'index.html を直接開いたため、ブラウザの中のサンプルデータを検索しています。実データは使っていません。',
+      capabilities: { refresh: true, sampleData: true },
+      async invoke(command, payload) {
+        await wait(LATENCY_MS);
+        return commands[command](payload);
+      },
+
+      // ── サンプルデータの管理（このモードだけの機能） ──
+      samples: {
+        loadedIds: () => DS.sample.expand(saved.ids),
+        rowCount: () => rows.length,
+        countOf: (id) => {
+          const pattern = DS.sample.patterns.get(id);
+          if (!pattern) return 0;
+          if (!countCache.has(id)) countCache.set(id, pattern.build().length);
+          return countCache.get(id);
+        },
+        load(id) {
+          if (!DS.sample.patterns.has(id)) return { ok: false, reason: 'そのサンプルはありません' };
+          const before = rows.length;
+          saved = Object.assign({}, saved, {
+            ids: DS.sample.expand(saved.ids.filter((x) => x !== id).concat(id)),
+            loadedAt: nowIso(),
+            refreshedAt: null,
+          });
+          rebuild();
+          const stored = persist();
+          return { ok: true, added: rows.length - before, total: rows.length, warning: stored.ok ? null : stored.reason };
+        },
+        /** サンプルだけを消す。元に戻すための控えを返す */
+        clear() {
+          const snapshot = Object.assign({}, saved);
+          const removed = rows.length;
+          saved = { ids: [], loadedAt: null, refreshedAt: null };
+          rebuild();
+          persist();
+          return { snapshot, removed };
+        },
+        restore(snapshot) {
+          saved = Object.assign({}, snapshot);
+          rebuild();
+          persist();
+          return rows.length;
+        },
+      },
+    };
+  }
+
+  DS.api.adapters.register({
+    id: 'mock',
+    order: 90,
+    detect: () => true,
+    create: createMockAdapter,
+  });
+})();
+```
 
 `src/js/controllers/app-state.js`
 
@@ -27,6 +304,7 @@
       mode,
       appInfo: null,
       cache: { status: null, refreshing: false, refreshStartedAt: null },
+      source: { path: null, editable: false, localFile: '', loaded: false, loadError: null, status: 'idle', result: null, testedPath: null },
       query: {
         searchType: searchable.includes(prefs.searchType) ? prefs.searchType : searchable[0],
         keyword: '',
@@ -234,6 +512,96 @@
 })();
 ```
 
+`src/js/controllers/source-controller.js`
+
+```javascript
+/* =========================================================
+   読み込み先（共有 SQLite のパス）の確認・接続テスト・変更
+
+     load()        今の読み込み先を読む
+     test(path)    接続テスト（コピーも書き込みもしない）。段階ごとの ○ × を state.source.result に入れる
+     save(path)    接続テストがすべて ○ の値だけ保存できる → config.local.json に保存 → データを更新
+   ========================================================= */
+(function () {
+  'use strict';
+
+  const DS = window.DS;
+
+  /** 貼り付けたパスを整える（前後の空白と、「パスとしてコピー」で付く引用符を外す）。バックエンドと同じ決まり */
+  function normalizePath(text) {
+    let value = String(text == null ? '' : text).trim();
+    if (value.length >= 2 && value[0] === value[value.length - 1] && (value[0] === '"' || value[0] === "'")) {
+      value = value.slice(1, -1).trim();
+    }
+    return value;
+  }
+
+  function createSourceController({ store, api, toast, search, cache }) {
+    const set = (patch) => store.merge('source', patch);
+
+    async function load() {
+      try {
+        const info = await api.call('get_data_source');
+        set({ path: info.sourcePath, editable: info.editable !== false, localFile: info.localFile || '', loaded: true });
+      } catch (error) {
+        set({ editable: false, loaded: true, loadError: error.userMessage });
+      }
+    }
+
+    async function test(path) {
+      const value = path == null ? store.get().source.path : normalizePath(path);
+      set({ status: 'checking', result: null, testedPath: null });
+      try {
+        const result = await api.call('test_data_source', { sourcePath: value });
+        set({ status: 'idle', result, testedPath: result.normalizedPath });
+        return result;
+      } catch (error) {
+        set({ status: 'idle' });
+        toast.show({ tone: 'danger', message: error.userMessage, detailId: error.detailId });
+        return null;
+      }
+    }
+
+    /** 確かめた値と同じで、すべて ○ のときだけ保存できる */
+    function canSave(path) {
+      const { result, testedPath, status } = store.get().source;
+      return status === 'idle' && Boolean(result && result.ok) && testedPath === normalizePath(path);
+    }
+
+    async function save(path) {
+      if (!canSave(path)) return false;
+      set({ status: 'saving' });
+      try {
+        const result = await api.call('update_data_source', { sourcePath: normalizePath(path) });
+        set({ status: 'idle', result, testedPath: result.normalizedPath });
+        if (!result.saved) {
+          toast.show({ tone: 'warning', message: result.message });
+          return false;
+        }
+        toast.show({ tone: result.refreshed ? 'success' : 'warning', message: result.message });
+        await load();
+        await cache.loadStatus();
+        search.rerun();
+        return true;
+      } catch (error) {
+        set({ status: 'idle' });
+        toast.show({ tone: 'danger', message: error.userMessage, detailId: error.detailId });
+        return false;
+      }
+    }
+
+    function reset() {
+      set({ result: null, testedPath: null });
+    }
+
+    return { load, test, save, canSave, reset, normalizePath };
+  }
+
+  DS.controllers.createSourceController = createSourceController;
+  DS.controllers.normalizeSourcePath = normalizePath;
+})();
+```
+
 `src/js/domain/fields.js`
 
 ```javascript
@@ -284,9 +652,10 @@
       fields.register({
         id,
         order: (index + 1) * 10,
-        // label：詳細・絞り込みなどで使う名前（fields.<項目>.label）。listLabel：一覧の見出し・検索の種類（listColumns の label）
+        // 表示名はすべての画面で同じ（詳細・一覧の見出し・検索の種類・絞り込み）。
+        // 優先順：fields.<項目>.label（DB の列名から作った表示名を含む）→ listColumns の label → 論理名
         label: option.label || column.label || id,
-        listLabel: column.label || option.label || id,
+        listLabel: option.label || column.label || id,
         short: option.short || null,
         group: groupId,
         // 番号で探せる項目は、指定がなければ等幅で表示し、コピーできるようにする（0 と O を見分けやすく、転記しやすく）
@@ -495,6 +864,17 @@
         </ul>`,
     },
     {
+      id: 'source', group: 'data', order: 15, title: '読み込み先を確かめる・変える',
+      body: `
+        <ol class="manual-steps">
+          <li>左の「データ」→「読み込み先」に、今の共有データのパスが出ます。</li>
+          <li><strong>接続を確かめる</strong>で、書き方 → 場所 → 読めるか → SQLite か → テーブルと列 → 件数 の順に ○ × が出ます。× の段階には「対応」が出ます。</li>
+          <li><strong>変更</strong>を押し、エクスプローラーでファイルを Shift＋右クリック →「パスとしてコピー」して貼り付け、<kbd>Enter</kbd> で確かめます。</li>
+          <li>すべて ○ なら「保存して更新」が押せます（もう一度 <kbd>Enter</kbd>）。保存すると、新しい読み込み先からデータを取り直します。</li>
+        </ol>
+        <p>確かめるだけなら、共有データには何も書き込みません。</p>`,
+    },
+    {
       id: 'columns', group: 'data', order: 20, title: '表示する列を選ぶ',
       body: `<p>左の「表示列」で、一覧に出す列を選べます。設定は自動で保存され、次に開いたときも同じになります。詳細にはいつもすべての項目が出ます。</p>`,
     },
@@ -570,6 +950,7 @@
     icon: 'fa-database',
     label: 'データ',
     title: 'データの状態と更新',
+    watch: ['source'],
     badge(state) {
       const view = DS.views.describeCache(state.cache);
       if (view.tone === 'warning' || view.tone === 'danger') return { tone: view.tone, text: '!', title: view.text };
@@ -582,11 +963,13 @@
       const progress = el('p', { className: 'pane-note', 'aria-live': 'polite' });
       const sourceNote = el('p', { className: 'pane-note' });
       const configBox = el('div', { className: 'config-help', hidden: true });
+      const sourceEditor = DS.views.createSourceEditor(ctx);
       refreshButton.addEventListener('click', () => ctx.cache.refresh());
 
       container.append(
         summary,
         configBox,
+        section('読み込み先', [sourceEditor.element]),
         section('根拠', [facts]),
         section('共有データから更新', [
           el('p', { className: 'pane-note', text: '共有データを手元にコピーし、検証してから入れ替えます。失敗したときは前回のデータをそのまま使います。' }),
@@ -644,6 +1027,7 @@
           tick(state);
           if (refreshing) timer = window.setInterval(() => tick(ctx.store.get()), 1000);
           sourceNote.textContent = state.mode.description;
+          sourceEditor.update(state);
 
           // 設定の注意（ローカルの設定にある未知のキーなど）は、ファイル名と項目を出す
           const warnings = status.settingsWarnings || [];
@@ -787,260 +1171,6 @@
       };
     },
   });
-})();
-```
-
-`src/js/sample/sample-data.js`
-
-```javascript
-/* =========================================================
-   サンプルデータ（画面だけで試すモード用）
-   乱数の種を固定しているので、毎回同じデータができる。日付だけは「今日」を基準にする
-   （日付の絞り込み「今日〜7 日後」などをいつ開いても試せるように）。
-   パターンを増やすときは patterns.register() を足すだけでよい。
-
-   行の項目は、表示定義の論理項目（DS.sampleView.logicalFields）すべてを埋める。
-   主な項目は値の候補（VALUE_RULES）から、それ以外は項目名の形（〜Date・〜Width など）から作る。
-   論理項目が増えても、項目名の形に当てはまればそのままサンプルが作られる。
-   ========================================================= */
-(function () {
-  'use strict';
-
-  const DS = window.DS;
-  const groups = DS.core.createRegistry('sampleGroups');
-  const patterns = DS.core.createRegistry('samplePatterns');
-
-  [
-    { id: 'basic', label: '基本の動き', order: 10 },
-    { id: 'input', label: '入力の確認', order: 20 },
-    { id: 'abnormal', label: '0 件・異常のとき', order: 30 },
-    { id: 'perf', label: '速さの確認', order: 40 },
-  ].forEach((group) => groups.register(group));
-
-  // ── 乱数（種を固定） ──
-  function createRandom(seed) {
-    let a = seed >>> 0;
-    const next = () => {
-      a = (a + 0x6d2b79f5) >>> 0;
-      let t = a;
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-    return {
-      next,
-      int: (min, max) => min + Math.floor(next() * (max - min + 1)),
-      pick: (list) => list[Math.floor(next() * list.length)],
-    };
-  }
-
-  const now = new Date();
-  const BASE_DATE = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const pad = (n, width) => String(n).padStart(width, '0');
-
-  function isoDate(offsetDays) {
-    const date = new Date(BASE_DATE.getTime() + offsetDays * 86400000);
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1, 2)}-${pad(date.getDate(), 2)}`;
-  }
-
-  // ── 値の候補（架空の値だけ） ──
-  const MATERIALS = ['A1100', 'A3003', 'A5052', 'A6061', 'A6063', 'A7075'];
-  const TEMPERS = ['O', 'H14', 'H24', 'H32', 'T5', 'T6', 'T651'];
-  const CUSTOMERS = [['C0101', 'サンプル工業'], ['C0102', 'テスト金属'], ['C0103', '見本製作所'], ['C0104', '架空商事'], ['C0105', '例示精工'], ['C0106', 'ダミー産業']];
-  const EQUIPMENTS = ['鋳造1号', '熱間圧延1号', '冷間圧延1号', '冷間圧延2号', '焼鈍炉3号', 'スリッター1号', '検査ライン1号'];
-  const COURSES = ['HR→CR→AN→SL', 'CR→AN→SL', 'AN→SL', 'SL', 'CR→SL', '—'];
-  const STATUSES = ['仕掛中', '検査待ち', '検査済み', '出荷済み', '保留', '不適合'];
-  const WIP_CATEGORIES = ['仕掛', '完成', '出荷待ち'];
-  const HOLD_CATEGORIES = ['', '', '', '品質保留', '客先保留'];
-  const SHAPES = ['板', 'コイル', '条'];
-  const SURFACES = ['ミル', '研磨', 'ヘアライン'];
-
-  /** 主な項目の作り方。ctx は同じロット・BOX の行で共有する値 */
-  const VALUE_RULES = {
-    inspectionNo: (ctx) => `INS-${ctx.prefix.short}-${pad(ctx.serial, 6)}`,
-    castingNo: (ctx) => `CST-${ctx.prefix.cast}${pad(ctx.lotIndex, 6)}`,
-    orderNo: (ctx) => `ORD-${ctx.prefix.short}${pad(ctx.order, 4)}`,
-    customerCode: (ctx) => ctx.customer[0],
-    customerName: (ctx) => ctx.customer[1],
-    deliveryDestinationCode: (ctx) => ctx.customer[0].replace('C', 'D'),
-    deliveryDestinationName: (ctx) => `${ctx.customer[1]} 本社工場`,
-    shippingDestinationCode: (ctx) => ctx.customer[0].replace('C', 'S'),
-    shippingDestinationName: (ctx) => `${ctx.customer[1]} 物流センター`,
-    orderMaterial: (ctx) => ctx.material,
-    manufacturingMaterial: (ctx) => ctx.material,
-    orderTemper: (ctx) => ctx.temper,
-    manufacturingTemper: (ctx) => ctx.temper,
-    plannedEquipmentName: (ctx, rng) => rng.pick(EQUIPMENTS),
-    lastActualEquipmentName: (ctx, rng) => rng.pick(EQUIPMENTS),
-    remainingEquipmentCourse: (ctx, rng) => rng.pick(COURSES),
-    cfStatus: (ctx, rng) => rng.pick(STATUSES),
-    wipCategory: (ctx, rng) => rng.pick(WIP_CATEGORIES),
-    holdCategory: (ctx, rng) => rng.pick(HOLD_CATEGORIES),
-    shape: (ctx, rng) => rng.pick(SHAPES),
-    surface: (ctx, rng) => rng.pick(SURFACES),
-    specificGravity: () => '2.71',
-    factoryDeliveryDate: (ctx) => isoDate(ctx.dueOffset),
-    salesDeliveryDate: (ctx) => isoDate(ctx.dueOffset + 3),
-    promisedDeliveryDate: (ctx) => isoDate(ctx.dueOffset + 5),
-    shippingDate: (ctx) => isoDate(ctx.dueOffset - 1),
-  };
-
-  /** 項目名の形からの作り方（上から順に当てはめる） */
-  const NAME_RULES = [
-    [/Date$/, (ctx, rng) => isoDate(rng.int(-60, 90))],
-    [/Thickness$/, (ctx) => ctx.thickness],
-    [/Width$/, (ctx) => ctx.width],
-    [/Length$/, (ctx) => ctx.length],
-    [/Weight$/, (ctx, rng) => String(rng.int(300, 3000))],
-    [/(Count|Quantity)$/, (ctx, rng) => String(rng.int(1, 20))],
-    [/Time$/, (ctx, rng) => (rng.int(10, 900) / 10).toFixed(1)],
-    [/(Category|Flag)$/, (ctx, rng) => rng.pick(['0', '1', '2'])],
-    [/Code$/, (ctx, rng) => `${rng.pick(['A', 'B', 'K', 'M'])}${pad(rng.int(1, 99), 2)}`],
-    [/No$/, (ctx, rng, field) => `${field.replace(/No$/, '').replace(/[a-z]/g, '').toUpperCase() || 'N'}${pad(rng.int(1, 99999), 5)}`],
-    [/Course$/, (ctx, rng) => rng.pick(COURSES)],
-    [/Name$/, (ctx, rng, field) => `${field.replace(/Name$/, '')}-${rng.int(1, 9)}`],
-  ];
-
-  function valueOf(field, ctx, rng) {
-    if (VALUE_RULES[field]) return VALUE_RULES[field](ctx, rng);
-    const rule = NAME_RULES.find(([pattern]) => pattern.test(field));
-    return rule ? rule[1](ctx, rng, field) : `${field}-${rng.int(1, 9)}`;
-  }
-
-  function logicalFields() {
-    return (DS.sampleView && DS.sampleView.logicalFields) || [];
-  }
-
-  /**
-   * ロットを lotCount 件つくる。1 ロットに BOX が 1〜3 件（行は BOX ごと）。
-   * prefix で番号の頭をそろえ、パターン同士で重ならないようにする。
-   */
-  function buildRows(lotCount, seed, prefix, options) {
-    const rng = createRandom(seed);
-    const fields = logicalFields();
-    const rows = [];
-    let order = 0;
-    let orderLeft = 0;
-    let serial = 0;
-    for (let lotIndex = 1; lotIndex <= lotCount; lotIndex += 1) {
-      if (orderLeft === 0) {
-        order += 1;
-        orderLeft = rng.int(1, 4); // 1 つのオーダーに複数のロット
-      }
-      orderLeft -= 1;
-      const lotNo = (options && options.lotNo) ? options.lotNo(lotIndex) : `LOT-${prefix.year}-${pad(lotIndex, 5)}`;
-      const boxCount = (options && options.boxes) || rng.int(1, 3);
-      const lot = {
-        prefix, lotIndex, order,
-        customer: rng.pick(CUSTOMERS),
-        material: rng.pick(MATERIALS),
-        temper: rng.pick(TEMPERS),
-        thickness: rng.pick(['0.50', '1.00', '1.50', '2.00', '3.00', '5.00']),
-        width: String(rng.pick([1000, 1250, 1525])),
-        length: String(rng.pick([2000, 2500, 3000])),
-        dueOffset: rng.int(-45, 90),
-      };
-      for (let box = 1; box <= boxCount; box += 1) {
-        serial += 1;
-        const ctx = Object.assign({ serial, box }, lot);
-        const row = {};
-        fields.forEach((field) => { row[field] = valueOf(field, ctx, rng); });
-        row.lotNo = lotNo;
-        row.boxNo = pad(box, 2);
-        rows.push(row);
-      }
-    }
-    return rows;
-  }
-
-  // ── パターン ──
-  patterns.register({
-    id: 'standard',
-    group: 'basic',
-    order: 10,
-    icon: 'fa-table-list',
-    title: '標準のデータ',
-    description: 'ロット 300 件（1 ロットに BOX 1〜3 件）。1 つのオーダー番号に複数のロットがひも付きます。工場納期は今日の前後 3 か月に散らばります。',
-    build: () => buildRows(300, 1001, { year: '2026', short: '26', cast: '41' }),
-  });
-
-  patterns.register({
-    id: 'symbols',
-    group: 'input',
-    order: 20,
-    icon: 'fa-language',
-    title: '日本語・記号を含む番号',
-    description: '「試作-α-001」「LOT_100%-A」など。全角で「ＬＯＴ＿１００」と入れても見つかることを確かめられます。',
-    build: () => {
-      const lots = ['試作-α-001', '試作-β-002', 'LOT_100%-A', 'LOT#5/特急', 'LOT(再)-12', "LOT'Q\"-1", 'LOT-全角確認-01', 'lot-lower-01'];
-      return buildRows(lots.length, 7001, { year: 'SP', short: 'SP', cast: '77' }, { lotNo: (i) => lots[i - 1], boxes: 1 });
-    },
-    demoQuery: { searchType: 'lotNo', keyword: 'ＬＯＴ＿１００', matchMode: 'partial' },
-  });
-
-  patterns.register({
-    id: 'multi-box',
-    group: 'input',
-    order: 30,
-    icon: 'fa-boxes-stacked',
-    title: '1 ロットに BOX が複数',
-    description: '同じロット番号で BOX 番号が違う 3 件。詳細は「ロット番号＋BOX番号」で 1 件に決まります。',
-    build: () => buildRows(1, 7101, { year: 'DUP', short: 'DP', cast: '88' }, { lotNo: () => 'LOT-DUP-0001', boxes: 3 }),
-    demoQuery: { searchType: 'lotNo', keyword: 'LOT-DUP-0001', matchMode: 'exact' },
-  });
-
-  patterns.register({
-    id: 'zero-hit',
-    group: 'abnormal',
-    order: 40,
-    icon: 'fa-circle-question',
-    title: '0 件になる検索',
-    description: '標準のデータを読み込み、存在しない番号で完全一致の検索をします。',
-    requires: ['standard'],
-    build: () => [],
-    demoQuery: { searchType: 'lotNo', keyword: 'LOT-9999-99999', matchMode: 'exact' },
-  });
-
-  patterns.register({
-    id: 'refresh-failure',
-    group: 'abnormal',
-    order: 50,
-    icon: 'fa-plug-circle-xmark',
-    title: '更新に失敗した状態',
-    description: '共有データに接続できず、前回のデータを使っている状態を再現します。データの更新も失敗します。',
-    requires: ['standard'],
-    effects: { refreshFailure: true },
-    build: () => [],
-  });
-
-  patterns.register({
-    id: 'large',
-    group: 'perf',
-    order: 60,
-    icon: 'fa-gauge-high',
-    title: '大量のデータ',
-    description: 'ロット 10,000 件（BOX 約 20,000 件）。検索とページ送りの速さを確かめられます。',
-    build: () => buildRows(10000, 4004, { year: '2025', short: '25', cast: '93' }),
-    demoQuery: { searchType: 'orderNo', keyword: 'ORD-25', matchMode: 'partial' },
-  });
-
-  DS.sample = {
-    groups,
-    patterns,
-    createRandom,
-    /** requires を含めて、読み込むべきパターンの id をそろえる */
-    expand(ids) {
-      const result = [];
-      const visit = (id) => {
-        const pattern = patterns.get(id);
-        if (!pattern || result.includes(id)) return;
-        (pattern.requires || []).forEach(visit);
-        result.push(id);
-      };
-      ids.forEach(visit);
-      return result;
-    },
-  };
 })();
 ```
 
