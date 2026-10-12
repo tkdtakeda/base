@@ -10,7 +10,7 @@ from .query import quote_identifier
 def validate_cache_file(path, table_name):
     """SQLite として開けること・表があることを確かめ、行数を返す。
 
-    列は確かめない（1 件を決める列などが DB になくても、データは使えるようにして画面で選び直してもらう）。
+    列は確かめない（固定列などが DB になくても、データは使えるようにして画面で選び直してもらう）。
     検索では、このファイルから読み取った列（column_catalog）だけを使うため、ない列を参照することはない。
     """
     try:

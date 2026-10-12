@@ -3,7 +3,7 @@
 
    ・列は全部で数十列になるため、列名で探して絞り込める
    ・「すべて表示」「すべて隠す」「既定に戻す」（既定＝設定の hiddenColumns だけ隠す）
-   ・1 件を決める列（左端に固定）は隠せない
+   ・固定列（左端に固定）は隠せない
    ・選んだ内容はブラウザに自動保存
    ========================================================= */
 (function () {
@@ -45,8 +45,8 @@
           const box = el('input', { type: 'checkbox', value: field.id, disabled: field.key });
           box.addEventListener('change', () => toggle(field.id, box.checked, box.parentElement));
           checks.set(field.id, box);
-          return el('label', { className: 'check', title: field.key ? '1 件を決める列のため、いつも表示します' : field.label, dataset: { name: DS.util.foldForCompare(field.label) } },
-            [box, el('span', { className: 'check__text', text: field.label }), field.key ? icon('fa-thumbtack', '固定') : null]);
+          return el('label', { className: 'check', title: field.key ? '固定列のため、いつも表示します' : field.label, dataset: { name: DS.util.foldForCompare(field.label) } },
+            [box, el('span', { className: 'check__text', text: field.label }), field.key ? icon('fa-key', '鍵') : null]);
         });
         return section(group.label, [el('div', { className: 'check-list' }, items)]);
       });

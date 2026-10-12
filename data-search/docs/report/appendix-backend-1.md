@@ -40,15 +40,15 @@ data-search/config/
 |---|---|---|
 | `config.sample.json` | アプリ基本情報、データソースの有効/無効・識別子・読み取り専用、共有 SQLite パスの**プレースホルダー**、キャッシュのパスと動作、検索の初期値、ログ、開発用サーバー | テーブル名、列名、論理と物理の対応、表示項目・表示順 |
 | `config.local.json` | 実際の共有 SQLite のパスなど、環境で変わる値だけ | テーブル名、列名（schema へ） |
-| `schema.sample.json` | データソース識別子、テーブル名の**プレースホルダー**、1 件を特定する列（`recordKey`）、番号で探す列（`searchColumn`。`null` なら recordKey の 1 つ目）、任意の別名（`columns`：論理名 → DB の列名の**プレースホルダー**） | 全列の一覧（DB から自動で読み取る）、表示名（DB の列名を使う）、絞り込める列（全列で絞り込める） |
-| `schema.local.json` | 実際のテーブル名。1 件を決める列・探す列（**DB の列名で書ける**。画面の「データ」→「1 件を決める列」で選ぶと、ここに保存される）。種類（`types`）は自動の判定を変えたいときだけ | 全列の一覧 |
+| `schema.sample.json` | データソース識別子、テーブル名の**プレースホルダー**、固定列（`recordKey`）、番号で探す列（`searchColumn`。`null` なら recordKey の 1 つ目）、任意の別名（`columns`：論理名 → DB の列名の**プレースホルダー**） | 全列の一覧（DB から自動で読み取る）、表示名（DB の列名を使う）、絞り込める列（全列で絞り込める） |
+| `schema.local.json` | 実際のテーブル名。固定列・探す列（**DB の列名で書ける**。画面の「データ」→「固定列」で選ぶと、ここに保存される）。種類（`types`）は自動の判定を変えたいときだけ | 全列の一覧 |
 | `view.sample.json` | 最初は隠す列（`hiddenColumns`）、既定の並べ替え（`defaultSort`）。任意で列ごとの補助（`fields`：等幅・コピー・入力例・値の札） | 物理列名、表示名、表示順（DB の列名・DB の順を使う）、絞り込み（全列で使える） |
 | `view.local.json` | 社内環境だけの変更（なくてよい）。隠す列を DB の列名で書くのはここ | — |
 
-`recordKey`・`searchColumn`・`types` は依頼書に明記がなかったため、**DB の論理構造**として schema に置いた（「1 件を特定する列」「番号で探す列」「日付として比べる列」はデータの性質であり、表示の都合ではないため）。
+`recordKey`・`searchColumn`・`types` は依頼書に明記がなかったため、**DB の論理構造**として schema に置いた（「固定列（レコードキー＝行を 1 件に決める列）」「番号で探す列」「日付として比べる列」はデータの性質であり、表示の都合ではないため）。
 
 列名が DB にあるかは、**キャッシュのテーブルを読んだあと**に `column_model.py` が照らし合わせる（起動時の検証では書き方だけを確かめる）。
-DB にない名前があっても止めず、画面の「データ」パネルと起動時の黒いウィンドウに「列の注意」を出す。1 件を決める列がそろわないときは、画面で選び直すよう案内する（似た構成の別の DB も、設定ファイルを手で直さずに使えるようにするため）。
+DB にない名前があっても止めず、画面の「データ」パネルと起動時の黒いウィンドウに「列の注意」を出す。固定列がそろわないときは、画面で選び直すよう案内する（似た構成の別の DB も、設定ファイルを手で直さずに使えるようにするため）。
 
 ## 4. 起動時の読み込み順
 
@@ -63,7 +63,7 @@ DB にない名前があっても止めず、画面の「データ」パネル�
 9. ローカルをサンプルへマージする
 10. マージ後の config・schema・view を検証する（誤りはすべて集めてから止める）
 11. schema に従って共有 SQLite をコピーし、テーブルの存在を確かめてからキャッシュとして使う
-12. キャッシュのテーブルの列を読み取り、値から日付の列を判定する（`column_catalog.py`）。設定と照らし合わせて列の決まり（並び・種類・1 件を決める列・探す列・注意）を作る（`column_model.py`）
+12. キャッシュのテーブルの列を読み取り、値から日付の列を判定する（`column_catalog.py`）。設定と照らし合わせて列の決まり（並び・種類・固定列・探す列・注意）を作る（`column_model.py`）
 13. 画面は最初に `get_view_config` で表示定義を受け取って組み立てる
 
 `--local-dir` で `config/local` の代わりのフォルダを指定できる（ダミー用：`config/dummy`）。
@@ -128,7 +128,7 @@ DB にない名前があっても止めず、画面の「データ」パネル�
 
 ### 6.3 view
 
-- `defaultSort.order` が asc / desc。`field` は空でない名前（DB にない名前なら、1 件を決める列の順に並べて「列の注意」を出す）
+- `defaultSort.order` が asc / desc。`field` は空でない名前（DB にない名前なら、固定列の順に並べて「列の注意」を出す）
 - `hiddenColumns` は空でない文字列（DB の列名か別名。DB にない名前は無視）
 - `fields.<列>` の `mono`・`copy` が真偽値、`badge` のパターンと色が正しい。`label`・`group` は「今は使わない」と注意
 - 以前の形の `searchFields`・`filters`・`listColumns`・`detailFields`・`detailGroups` は「今は使わない項目」と注意（止めない）
@@ -137,8 +137,8 @@ DB にない名前があっても止めず、画面の「データ」パネル�
 
 | 食い違い | 動き |
 |---|---|
-| 1 件を決める列が DB にない | 1 件を決める列を空にする（一部の列だけでは 1 件に決まらないため）。一覧・絞り込みは使える。1 つ目の列があれば番号でも探せる。画面は「1 件を決める列を選ぶ」へ案内 |
-| 番号で探す列が DB にない | 1 件を決める列の 1 つ目で探す |
+| 固定列が DB にない | 固定列を空にする（一部の列だけでは 1 件に決まらないため）。一覧・絞り込みは使える。1 つ目の列があれば番号でも探せる。画面は「固定列を選ぶ」へ案内 |
+| 番号で探す列が DB にない | 固定列の 1 つ目で探す |
 | 並べ替え・種類の指定の列が DB にない | その指定を使わない |
 
 ### 6.5 誤りの表示
@@ -149,7 +149,7 @@ DB にない名前があっても止めず、画面の「データ」パネル�
 [設定エラー]
 対象: config/local/schema.local.json
 項目: recordKey
-理由: 1 件を特定する列が 4 個あります。
+理由: 固定列が 4 個あります。
 対応: 3 個までにしてください。
 ```
 
@@ -186,7 +186,7 @@ flowchart TD
     M -- 合う --> L
     R --> L[列を読み取り、日付の列を判定<br/>設定と照らし合わせて列の決まりを作る]
     L --> N{列の注意がある?}
-    N -- ある --> NW[表示して続ける<br/>1 件を決める列がなければ画面で選ぶよう案内]
+    N -- ある --> NW[表示して続ける<br/>固定列がなければ画面で選ぶよう案内]
     N -- ない --> U
     NW --> U[画面を開く]
     U --> G[画面：get_view_config で表示定義を受け取り、一覧・詳細・検索・絞り込みを組み立てる]
@@ -205,7 +205,7 @@ flowchart TD
  ├─ キャッシュがない／今の読み込み先・テーブル名と合わない → 作る（コピー → テーブルの確認 → 置換）
  │    └─ 作れなければ古いキャッシュは使わず、画面で「データを更新してください」と示す
  ├─ 列を読み取り、日付の列を判定 → 設定と照らし合わせて列の決まりを作る
- │    └─ 食い違いは「列の注意」として表示して続ける（1 件を決める列がなければ画面で選ぶ）
+ │    └─ 食い違いは「列の注意」として表示して続ける（固定列がなければ画面で選ぶ）
  └─ 画面：表示定義を受け取って組み立てる
 ```
 
@@ -220,7 +220,7 @@ flowchart TD
 | `dataSource.cachePath` | 基本はサンプル（`./data/cache/target-data.sqlite3`）。必要なときだけ `config.local.json` |
 | `dataSource.tableName` | `config/local/schema.local.json` の `tableName` |
 | `dataSource.readOnly` | 基本はサンプル |
-| `fieldMappings` | 不要（列名は DB と同じでよい）。1 件を決める列は `config/local/schema.local.json` の `recordKey` に DB の列名で書くか、画面で選ぶ。論理名で書きたいときだけ `columns`（別名） |
+| `fieldMappings` | 不要（列名は DB と同じでよい）。固定列は `config/local/schema.local.json` の `recordKey` に DB の列名で書くか、画面で選ぶ。論理名で書きたいときだけ `columns`（別名） |
 | `cache` / `search` / `logging` / `devServer` | 基本はサンプル。必要なときだけ `config.local.json` |
 | （ソースコード内の表示名・表示順・検索対象・絞り込み・状態の色分け・既定の並べ替え） | 表示名・表示順は DB のまま。検索対象は `schema.searchColumn`。絞り込みは全列。色分け・既定の並べ替えは `config/sample/view.sample.json`（社内だけの変更は `view.local.json`） |
 | （ソースコード内の 1 件を特定する項目・日付の項目） | `schema` の `recordKey`（画面でも選べる）。日付の列は値から判定（変えたいときだけ `types`） |
@@ -230,20 +230,20 @@ flowchart TD
 
 ## 9. 列と表示名（column_catalog.py・column_model.py）
 
-- 列は、キャッシュのテーブルから読み取る（`PRAGMA table_info`）。設定には役割（1 件を決める列・探す列など）だけを書く。
+- 列は、キャッシュのテーブルから読み取る（`PRAGMA table_info`）。設定には役割（固定列・探す列など）だけを書く。
 - **列の id も表示名も DB の列名そのもの**（詳細・一覧の見出し・絞り込み・タグ・保存した表示の設定で共通）。表示名の設定はない。
 - 設定の名前の読み替え：DB に同じ名前の列があればその列、なければ別名（`schema.columns`）として DB の列名に読み替える。どちらもなければ使わない。
-- 種類：`schema.types` の指定が優先。指定がなければ値から判定する（空でない値がすべて `YYYY-MM-DD…`・`YYYY/MM/DD…`・`YYYYMMDD` なら日付。月・日の 1 桁目まで見て番号との取り違えを減らす。1 件を決める列・探す列は文字）。判定はキャッシュを作り直したときに 1 回だけ、表を列のまとまりごとに 1 回ずつ読んで行う。
-- 並び：1 件を決める列 → 番号で探す列 → 別名のある列（`schema.columns` の順）→ ほかの列（DB の順）。
-- `get_view_config` は列の一覧（`columns`）・1 件を決める列・探す列・別名・列の注意と、並びの印（`columnsVersion`）を返す。データの更新や 1 件を決める列の変更で印が変わると、画面は読み込み直す。
+- 種類：`schema.types` の指定が優先。指定がなければ値から判定する（空でない値がすべて `YYYY-MM-DD…`・`YYYY/MM/DD…`・`YYYYMMDD` なら日付。月・日の 1 桁目まで見て番号との取り違えを減らす。固定列・探す列は文字）。判定はキャッシュを作り直したときに 1 回だけ、表を列のまとまりごとに 1 回ずつ読んで行う。
+- 並び：固定列 → 番号で探す列 → 別名のある列（`schema.columns` の順）→ ほかの列（DB の順）。
+- `get_view_config` は列の一覧（`columns`）・固定列・探す列・別名・列の注意と、並びの印（`columnsVersion`）を返す。データの更新や固定列の変更で印が変わると、画面は読み込み直す。
 - 画面は、以前の形（論理名）で保存したタグ・表示列・列幅・入力の履歴を、別名を使って DB の列名に読み替える。
 - テーブル名と読み込み先のパスは画面に渡さない。DB の列名は表示名として画面に渡す（ログには残さない）。
 
-## 9.1 画面からの書き込み（読み込み先・1 件を決める列）
+## 9.1 画面からの書き込み（読み込み先・固定列）
 
 - 画面から書き換えるのは次の 2 つだけ。sample は書き換えない。
-  - `config.local.json` の `dataSource.sourcePath`（`update_data_source`）。接続テスト（`source_check.py`）で × がないときだけ書き込む（△＝1 件を決める列がない、は保存してから選び直せる）。
-  - `schema.local.json` の `recordKey`・`searchColumn`（`update_record_settings`）。DB にある列だけ。DB の列名で書く。探す列が 1 件を決める列の 1 つ目と同じなら `null`。
+  - `config.local.json` の `dataSource.sourcePath`（`update_data_source`）。接続テスト（`source_check.py`）で × がないときだけ書き込む（△＝固定列がない、は保存してから選び直せる）。
+  - `schema.local.json` の `recordKey`・`searchColumn`（`update_record_settings`）。DB にある列だけ。DB の列名で書く。探す列が固定列の 1 つ目と同じなら `null`。
 - ほかのキーは残し、書き換え前を `.bak` に残し、一時ファイル → 置き換えで書く（`settings/local_writer.py`）。
 - 書き込み後に `load_settings` で読み直して検証し、誤りがあれば `.bak` に戻す。問題がなければ動いている設定を差し替える（`settings_updater.py`。読み込み先とで共通）。
 - キャッシュの状態ファイルに読み込み先の印（パスのハッシュ）を残し、前の読み込み先のキャッシュは使わない。
@@ -433,7 +433,7 @@ class CacheService:
     def use_config(self, config):
         """読み込み先の変更などで設定を差し替える。前の読み込み先から作ったキャッシュは使わない。"""
         with self.lock:
-            # 列の一覧は読み込み先とテーブル名だけで決まる（1 件を決める列の変更では読み直さない）
+            # 列の一覧は読み込み先とテーブル名だけで決まる（固定列の変更では読み直さない）
             if (config.source_path, config.table_name) != (self.config.source_path, self.config.table_name):
                 self._catalog = None
             self.config = config
@@ -718,7 +718,7 @@ def refresh_cache(ctx, payload):
 
 @command("get_cache_status")
 def get_cache_status(ctx, payload):
-    # 列の決まりの印。変わったら（DB の列が増えた・1 件を決める列を変えた）画面は表示定義を読み直す
+    # 列の決まりの印。変わったら（DB の列が増えた・固定列を変えた）画面は表示定義を読み直す
     return dict(ctx.cache_service.status(), columnsVersion=ctx.lot_service.model.version)
 
 
@@ -742,7 +742,7 @@ def update_data_source(ctx, payload):
 
 @command("get_view_config")
 def get_view_config(ctx, payload):
-    """画面の表示定義：DB の全列（DB の列名が id・表示名）と種類、1 件を決める列、番号で探す列、注意。
+    """画面の表示定義：DB の全列（DB の列名が id・表示名）と種類、固定列、番号で探す列、注意。
     テーブル名・パスは含めない。"""
     return dict(ctx.lot_service.model.public(), success=True,
                 recordSettingsFile=ctx.record_service.describe()["localFile"] if ctx.record_service else None)
@@ -756,7 +756,7 @@ def check_record_key(ctx, payload):
 
 @command("update_record_settings")
 def update_record_settings(ctx, payload):
-    """1 件を決める列と番号で探す列を schema.local.json に保存し、列の決まりを差し替える。"""
+    """固定列と番号で探す列を schema.local.json に保存し、列の決まりを差し替える。"""
     return ctx.record_service.update(payload)
 
 
@@ -790,7 +790,7 @@ USER_MESSAGES = {
     "CACHE_TABLE_MISSING": "取得したデータに必要な表がないため、使用しませんでした。schema.local.json の tableName を確認してください。",
     "CACHE_UNAVAILABLE": "検索できるデータがまだありません。データを更新してください。",
     "SETTINGS_WRITE_FAILED": "設定ファイルに書き込めませんでした。config/local フォルダの権限と、ほかのアプリで開いていないかを確認してください。",
-    "KEY_NOT_READY": "1 件を決める列が決まっていません。画面左の「データ」→「1 件を決める列」で選んでください。",
+    "KEY_NOT_READY": "固定列（レコードキー）が決まっていません。画面左の「データ」→「固定列」で選んでください。",
     "INVALID_REQUEST": "検索の条件が正しくありません。入力内容を確認してください。",
     "NOT_FOUND": "選んだデータが見つかりません。データが更新された可能性があります。もう一度検索してください。",
     "UNKNOWN_COMMAND": "この操作には対応していません。",
@@ -829,7 +829,7 @@ def error_response(error, detail_id):
 ```python
 """検索・絞り込みの決まり（上限値など）。
 
-列の名前・探す列・絞り込みの種類・1 件を特定する列は、ここには書かない。
+列の名前・探す列・絞り込みの種類・固定列は、ここには書かない。
 設定（settings.ModelSettings）とキャッシュのテーブルの列から column_model.ColumnModel として組み立てる。
 """
 
@@ -888,7 +888,7 @@ class AppContext:
     lot_service: object
     logger: object
     source_service: object = None   # 読み込み先の確認・変更（SourceService）。作成後に入れる
-    record_service: object = None   # 1 件を決める列の確認・変更（RecordService）。作成後に入れる
+    record_service: object = None   # 固定列の確認・変更（RecordService）。作成後に入れる
 
 
 class RequestHandler(SimpleHTTPRequestHandler):
@@ -1159,12 +1159,12 @@ def parse_filters(payload, today, model):
 
 
 def parse_key_columns(payload, model, name="recordKey"):
-    """1 件を決める列の候補（1〜3 個・重複なし・テーブルにある列）。"""
+    """固定列の候補（1〜3 個・重複なし・テーブルにある列）。"""
     names = payload.get(name)
     if not isinstance(names, list) or not 1 <= len(names) <= RECORD_KEY_MAX:
-        raise _invalid(f"{name} must be a list", f"1 件を決める列は 1〜{RECORD_KEY_MAX} 個選んでください。")
+        raise _invalid(f"{name} must be a list", f"固定列は 1〜{RECORD_KEY_MAX} 個選んでください。")
     if len(set(map(str, names))) != len(names) or not all(isinstance(n, str) and model.has(n) for n in names):
-        raise _invalid(f"unknown column in {name}", "1 件を決める列は、一覧にある列から重ならないように選んでください。")
+        raise _invalid(f"unknown column in {name}", "固定列は、一覧にある列から重ならないように選んでください。")
     return names
 
 
@@ -1289,7 +1289,7 @@ class LotService:
         }
 
     def detail(self, payload):
-        """1 件の全項目。payload は 1 件を決める列の 列名 → 値（空欄は null）"""
+        """1 件の全項目。payload は固定列の 列名 → 値（空欄は null）"""
         payload = _require_object(payload)
         model = self._data_model()
         if not model.ready:
@@ -1488,7 +1488,7 @@ class QueryBuilder:
         sql = f"SELECT {self.select_list} FROM {self.table} WHERE {where} LIMIT 2"
         return sql, [key_values[name] for name in self.model.record_key]
 
-    # ── 1 件を決める列の確認 ──
+    # ── 固定列の確認 ──
     def key_duplicates(self, names):
         """同じ値の組み合わせが 2 行以上ある組の数と、その行の合計。"""
         group = ", ".join(self.columns[name] for name in names)
@@ -1503,7 +1503,7 @@ class QueryBuilder:
                 f"HAVING COUNT(*) > 1 ORDER BY c DESC LIMIT 1"), []
 
     def key_blank_rows(self, names):
-        """1 件を決める列がすべて空欄の行の数。"""
+        """固定列がすべて空欄の行の数。"""
         where = " AND ".join(blank_expression(self.columns[name]) for name in names)
         return f"SELECT COUNT(*) FROM {self.table} WHERE {where}", []
 ```

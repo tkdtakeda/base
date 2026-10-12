@@ -1,4 +1,4 @@
-"""1 件を決める列（schema.recordKey）と、番号で探す列（schema.searchColumn）の確認・変更。
+"""固定列（schema.recordKey）と、番号で探す列（schema.searchColumn）の確認・変更。
 
 確認：選んだ列の組み合わせで 1 件に決まるかを数える（重なり・空欄の行の数）。保存はしない。
 変更：schema.local.json の recordKey・searchColumn に DB の列名で保存 → 設定を読み直して検証 → 差し替える。
@@ -37,7 +37,7 @@ class RecordService:
         if search_column is not None and not (isinstance(search_column, str) and model.has(search_column)):
             raise AppError("INVALID_REQUEST", "unknown searchColumn",
                            user_message="番号で探す列は、一覧にある列から選んでください。")
-        # 番号で探す列が 1 件を決める列の 1 つ目と同じなら null（あとで 1 つ目を変えたときに一緒に変わるように）
+        # 番号で探す列が固定列の 1 つ目と同じなら null（あとで 1 つ目を変えたときに一緒に変わるように）
         stored_search = None if search_column in (None, names[0]) else search_column
         target = save_local_values(self.context, self.app_root, self.local_dir, "schema",
                                    {KEY_PATH: names, SEARCH_PATH: stored_search})
@@ -49,7 +49,7 @@ class RecordService:
             "recordKey": list(updated.record_key),
             "searchColumn": updated.search_column,
             "localFile": file_label(self.app_root, target),
-            "message": "1 件を決める列を保存しました。",
+            "message": "固定列を保存しました。",
         }
 
     def describe(self):

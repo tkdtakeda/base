@@ -528,7 +528,7 @@
 .source-step__text, .source-step__action { margin: 0; }
 .source-step--ng .source-step__action { color: var(--color-danger); }
 
-/* ── 1 件を決める列（データ パネル） ── */
+/* ── 固定列（データ パネル） ── */
 .record-key { display: flex; flex-direction: column; gap: var(--sp-2); border-radius: var(--r-sm); }
 .record-key__current { display: flex; flex-direction: column; gap: var(--sp-1); }
 .record-key__missing { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0; color: var(--color-danger); font-size: var(--fs-sm); font-weight: var(--fw-bold); }
@@ -981,7 +981,7 @@
 .detail__group:not([open]) > summary { margin-bottom: 0; }
 .detail__count { margin-left: auto; padding: 0 var(--sp-2); border-radius: var(--r-pill); background: var(--color-surface-sunken); color: var(--color-text-muted); font-size: var(--fs-xs); font-weight: var(--fw-normal); }
 
-/* ── 探す列（上部バーの左。押すと「1 件を決める列」で変えられる） ── */
+/* ── 探す列（上部バーの左。押すと「固定列」で変えられる） ── */
 .search__column {
   display: inline-flex;
   flex-shrink: 0;

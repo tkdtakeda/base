@@ -8,7 +8,7 @@
 検証で誤りが見つかれば SettingsError（すべての誤りを持つ）。注意（未知のキーなど）は warnings に入れて続ける。
 
 列の考え方：表示する列は DB のテーブルから自動で読み取る（column_catalog.py）。設定に書くのは
-1 件を決める列（recordKey）・番号で探す列（searchColumn）などの役割だけ。名前は DB の列名か、
+固定列（recordKey）・番号で探す列（searchColumn）などの役割だけ。名前は DB の列名か、
 schema.columns に書いた別名（論理名）で書く。DB と照らし合わせるのは実行時（column_model.py）で、
 DB にない名前があっても起動は止めない（画面の「データ」で選び直せる）。
 パスとテーブル名は画面に渡さない。列名は表示名として画面に出す（DB の列名をそのまま表示するため）。
@@ -37,7 +37,7 @@ OBSOLETE_KEYS = {
         "listColumns": "一覧の列は DB から自動で表示します。隠す列は hiddenColumns に書いてください。",
         "detailFields": "詳細には全項目を出すため使いません。",
         "detailGroups": "詳細には全項目を出すため使いません。",
-        "searchFields": "番号で探す列は 1 つにしました。schema.searchColumn に書くか、画面左の「データ」→「1 件を決める列」で選んでください。",
+        "searchFields": "番号で探す列は 1 つにしました。schema.searchColumn に書くか、画面左の「データ」→「固定列」で選んでください。",
         "filters": "どの列でも、一覧の見出しの漏斗（じょうご）のアイコンから絞り込めるため使いません。",
     },
 }
@@ -56,7 +56,7 @@ class ModelSettings:
     """列の役割の設定。名前は DB の列名か別名（schema.columns の論理名）。
     DB と照らし合わせて実際の列を決めるのは column_model.build_model（キャッシュのテーブルを読んだあと）。"""
     aliases: dict          # 別名 → DB の列名（schema.columns。仮の値・空は除く）
-    record_key: tuple      # 1 件を決める列（schema.recordKey）
+    record_key: tuple      # 固定列（schema.recordKey）
     search_column: object  # 番号で探す列（schema.searchColumn。null なら recordKey の 1 つ目）
     types: dict            # 列 → "date" / "text"（schema.types）
     default_sort: tuple    # (列, "asc" / "desc")（view.defaultSort）
@@ -172,7 +172,7 @@ def _load_pair(kind, sample_dir, local_dir, app_root, issues, warnings):
         warnings.append(Issue("warning", local_label, "columns.<役割のない項目>",
                               f"{len(names)} 項目は役割がないため使っていません（{shown}）。列は DB から自動で表示します。",
                               f"消してかまいません。columns には {sample_label} にある論理名だけを書いてください"
-                              "（1 件を決める列などは、DB の列名のまま recordKey・searchColumn に書けます）。"))
+                              "（固定列などは、DB の列名のまま recordKey・searchColumn に書けます）。"))
     for path in merged.unknown:
         if path in extra_columns:
             continue

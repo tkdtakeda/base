@@ -8,7 +8,7 @@
 
   const DS = window.DS;
   const STORAGE_KEY = 'mock:samples';
-  const RECORD_KEY = 'mock:record'; // このモードで選んだ「1 件を決める列」（ブラウザにだけ保存する）
+  const RECORD_KEY = 'mock:record'; // このモードで選んだ「固定列」（ブラウザにだけ保存する）
   const KEYWORD_MAX = 100;
   const RECORD_KEY_MAX = 3;
   const PAGE_SIZE = 100;
@@ -27,8 +27,8 @@
   const textOf = (value) => (isBlank(value) ? null : String(value));
 
   /**
-   * 表示定義に、このモードで選んだ「1 件を決める列」を重ねる（Python 版の column_model と同じ決まり：
-   * 1 件を決める列 → 探す列 を先頭に並べ、番号の列は text として扱う）
+   * 表示定義に、このモードで選んだ「固定列」を重ねる（Python 版の column_model と同じ決まり：
+   * 固定列 → 探す列 を先頭に並べ、番号の列は text として扱う）
    */
   function viewWithRecord(base, record) {
     const view = JSON.parse(JSON.stringify(base));
@@ -167,7 +167,7 @@
       get_application_info: () => ({ id: 'data-search', name: 'Data Search', version: '0.1.0' }),
 
       // 表示定義：config/sample の view・schema と python/tools/sample_columns.json から自動生成した js/sample/sample-view.js
-      // ＋ このモードで選んだ「1 件を決める列」
+      // ＋ このモードで選んだ「固定列」
       get_view_config: () => Object.assign({ success: true, recordSettingsFile: '（サンプルのモードではブラウザに保存）' },
         viewWithRecord(DS.sampleView, DS.core.storage.read(RECORD_KEY, null))),
 
@@ -176,7 +176,7 @@
         const names = payload.recordKey;
         if (!Array.isArray(names) || names.length < 1 || names.length > RECORD_KEY_MAX || new Set(names).size !== names.length ||
           !names.every((id) => DS.domain.fields.has(id))) {
-          return fail('INVALID_REQUEST', `1 件を決める列は、一覧にある列から重ならないように 1〜${RECORD_KEY_MAX} 個選んでください。`);
+          return fail('INVALID_REQUEST', `固定列は、一覧にある列から重ならないように 1〜${RECORD_KEY_MAX} 個選んでください。`);
         }
         const groups = new Map();
         let blank = 0;
@@ -211,7 +211,7 @@
         if (!stored.ok) return fail('SETTINGS_WRITE_FAILED', `保存できませんでした：${stored.reason}`);
         return {
           success: true, saved: true, recordKey: payload.recordKey.slice(), searchColumn: searchColumn || payload.recordKey[0],
-          localFile: '（サンプルのモードではブラウザに保存）', message: '1 件を決める列を保存しました（サンプルのモードではブラウザにだけ保存します）。',
+          localFile: '（サンプルのモードではブラウザに保存）', message: '固定列を保存しました（サンプルのモードではブラウザにだけ保存します）。',
         };
       },
 
@@ -285,7 +285,7 @@
       },
 
       get_lot_detail(payload) {
-        if (!DS.domain.isReady()) return fail('KEY_NOT_READY', '1 件を決める列が決まっていません。画面左の「データ」→「1 件を決める列」で選んでください。');
+        if (!DS.domain.isReady()) return fail('KEY_NOT_READY', '固定列（レコードキー）が決まっていません。画面左の「データ」→「固定列」で選んでください。');
         const keys = DS.domain.keyFields().map((field) => field.id);
         const found = rows.filter((row) => keys.every((id) => (row[id] || null) === (payload[id] || null)));
         if (found.length === 0) return fail('NOT_FOUND', '選んだデータが見つかりません。データが更新された可能性があります。もう一度検索してください。');

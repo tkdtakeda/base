@@ -30,7 +30,7 @@
     const bus = DS.core.createEventBus();
     const api = DS.api.createClient(DS.api.selectAdapter());
 
-    // 表示定義（DB の全列・種類・1 件を決める列・探す列）を最初に読み込み、列の登録簿を組み立てる
+    // 表示定義（DB の全列・種類・固定列・探す列）を最初に読み込み、列の登録簿を組み立てる
     try {
       DS.domain.applyView(await api.call('get_view_config'));
     } catch (error) {
@@ -61,7 +61,7 @@
     const manual = DS.views.createManualView(document.getElementById('manual-host'));
     const openPanel = (id) => store.merge('ui', { panel: id });
     const refresh = () => cache.refresh();
-    // 「1 件を決める列を選ぶ」：データのパネルを開き、その場所で変更を始める
+    // 「固定列を選ぶ」：データのパネルを開き、その場所で変更を始める
     const chooseKey = () => {
       openPanel('data');
       bus.emit('record:edit');

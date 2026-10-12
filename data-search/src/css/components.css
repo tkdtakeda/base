@@ -523,7 +523,7 @@
 .source-step__text, .source-step__action { margin: 0; }
 .source-step--ng .source-step__action { color: var(--color-danger); }
 
-/* ── 1 件を決める列（データ パネル） ── */
+/* ── 固定列（データ パネル） ── */
 .record-key { display: flex; flex-direction: column; gap: var(--sp-2); border-radius: var(--r-sm); }
 .record-key__current { display: flex; flex-direction: column; gap: var(--sp-1); }
 .record-key__missing { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0; color: var(--color-danger); font-size: var(--fs-sm); font-weight: var(--fw-bold); }

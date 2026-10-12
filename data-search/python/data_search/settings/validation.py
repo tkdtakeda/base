@@ -1,7 +1,7 @@
 """マージ後の設定（config / schema / view）を役割ごとに確かめる。
 
   config … アプリと実行環境。DB 接続に必要なパス（sourcePath / cachePath）はここで確かめる
-  schema … テーブル名・1 件を決める列・番号で探す列・別名・種類。書き方（空・重複・数）をここで確かめる
+  schema … テーブル名・固定列・番号で探す列・別名・種類。書き方（空・重複・数）をここで確かめる
   view   … 並べ替え・隠す列・表示の補助。書き方をここで確かめる
 （列名が DB にあるかは、キャッシュのテーブルを読んでから column_model.py が確かめる。
   DB にない名前は止めずに画面の「データ」で知らせ、選び直せるようにする）
@@ -19,7 +19,7 @@ PLACEHOLDER_PATTERN = re.compile(r"<[^<>]+>")
 LOG_LEVELS = ("debug", "info", "warning", "error")
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost")
 COLUMN_TYPES = ("text", "date")
-RECORD_KEY_MAX = 3  # 1 件を決める列の数の上限
+RECORD_KEY_MAX = 3  # 固定列の数の上限
 BADGE_TONES = ("success", "info", "warning", "danger", "neutral")
 
 
@@ -153,10 +153,10 @@ def validate_schema(schema, src, config):
 
     record_key = schema["recordKey"]
     if not record_key:
-        err("recordKey", "1 件を特定する列がありません。",
-            "DB の列名を 1〜3 個書いてください（例：[\"ロット番号\", \"BOX番号\"]）。画面左の「データ」→「1 件を決める列」でも選べます。")
+        err("recordKey", "固定列（レコードキー）がありません。",
+            "DB の列名を 1〜3 個書いてください（例：[\"ロット番号\", \"BOX番号\"]）。画面左の「データ」→「固定列」でも選べます。")
     elif len(record_key) > RECORD_KEY_MAX:
-        err("recordKey", f"1 件を特定する列が {len(record_key)} 個あります。", f"{RECORD_KEY_MAX} 個までにしてください。")
+        err("recordKey", f"固定列（レコードキー）が {len(record_key)} 個あります。", f"{RECORD_KEY_MAX} 個までにしてください。")
     for index, name in enumerate(record_key):
         if _blank(name):
             err(f"recordKey[{index}]", "列の名前が空か、文字列ではありません。", "DB の列名か別名を書いてください。")

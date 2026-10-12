@@ -26,7 +26,7 @@
       const view = DS.views.describeCache(state.cache);
       if (view.tone === 'warning' || view.tone === 'danger') return { tone: view.tone, text: '!', title: view.text };
       if (state.cache.status && state.cache.status.available && !DS.domain.isReady()) {
-        return { tone: 'danger', text: '!', title: '1 件を決める列を選んでください' };
+        return { tone: 'danger', text: '!', title: '固定列（レコードキー）を選んでください' };
       }
       return null;
     },
@@ -39,7 +39,7 @@
       const configBox = el('div', { className: 'config-help', hidden: true });
       const sourceEditor = DS.views.createSourceEditor(ctx);
       const keyEditor = DS.views.createRecordKeyEditor(ctx);
-      const keySection = section('1 件を決める列', [keyEditor.element]);
+      const keySection = section('固定列（レコードキー）', [keyEditor.element]);
       refreshButton.addEventListener('click', () => ctx.cache.refresh());
       ctx.bus.on('record:edit', () => window.setTimeout(() => keyEditor.startEditing(), 0));
 

@@ -146,7 +146,7 @@ class QueryBuilder:
         sql = f"SELECT {self.select_list} FROM {self.table} WHERE {where} LIMIT 2"
         return sql, [key_values[name] for name in self.model.record_key]
 
-    # ── 1 件を決める列の確認 ──
+    # ── 固定列の確認 ──
     def key_duplicates(self, names):
         """同じ値の組み合わせが 2 行以上ある組の数と、その行の合計。"""
         group = ", ".join(self.columns[name] for name in names)
@@ -161,6 +161,6 @@ class QueryBuilder:
                 f"HAVING COUNT(*) > 1 ORDER BY c DESC LIMIT 1"), []
 
     def key_blank_rows(self, names):
-        """1 件を決める列がすべて空欄の行の数。"""
+        """固定列がすべて空欄の行の数。"""
         where = " AND ".join(blank_expression(self.columns[name]) for name in names)
         return f"SELECT COUNT(*) FROM {self.table} WHERE {where}", []

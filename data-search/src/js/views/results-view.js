@@ -3,6 +3,7 @@
    一覧には全列を出す（隠すのは「表示列」で選んだ列だけ）。
    行を 1 回押す／↑↓ で選ぶ。ダブルクリック／Enter で詳細を開く。
    見出しの列名を押すと並べ替え、右の漏斗（じょうご）を押すとその列の絞り込み（column-filter.js）。
+   左端に固定する列＝固定列（レコードキー）。見出しの鍵を押すと、固定列を変える場所（データ パネル）が開く。
    ========================================================= */
 (function () {
   'use strict';
@@ -24,7 +25,7 @@
     let currentItems = [];
 
     // ── 一覧 ──
-    /** 一覧に出す列。1 件を決める列（左端に固定）は隠せない */
+    /** 一覧に出す列。固定列（左端に固定）は隠せない */
     function visibleFields(state) {
       const hidden = new Set(state.columns.hidden);
       return DS.domain.listFields().filter((field) => field.key || !hidden.has(field.id));
@@ -38,7 +39,11 @@
       const ariaSort = !active ? 'none' : state.sort.order === 'asc' ? 'ascending' : 'descending';
       const classes = [isSearched(field, state.search.request) ? 'is-searched' : '', field.key ? 'is-pinned' : ''].filter(Boolean).join(' ');
       const name = escapeHtml(field.listLabel);
-      return `<th scope="col" aria-sort="${ariaSort}" class="${classes}" data-field="${escapeHtml(field.id)}">` +
+      const keyButton = field.key
+        ? '<button type="button" class="th-key" data-key-edit title="固定列（レコードキー）：行を 1 件に決める列です。押すと変えられます" ' +
+          'aria-label="固定列（レコードキー）を変える"><i class="fa-solid fa-key" aria-hidden="true" data-fallback="鍵"></i></button>'
+        : '';
+      return `<th scope="col" aria-sort="${ariaSort}" class="${classes}" data-field="${escapeHtml(field.id)}">${keyButton}` +
         `<button type="button" class="th-btn" data-sort="${escapeHtml(field.id)}" title="${name}で並べ替え">` +
         `<span class="th-btn__text">${name}</span><i class="fa-solid ${sortIcon} th-btn__icon${active ? ' is-active' : ''}" aria-hidden="true"></i></button>` +
         `<button type="button" class="th-filter" data-filter="${escapeHtml(field.id)}" aria-haspopup="dialog" aria-pressed="false" title="${name}で絞り込む" aria-label="${name}で絞り込む">` +
@@ -120,6 +125,10 @@
     }
 
     tableWrap.addEventListener('click', (event) => {
+      if (event.target.closest('[data-key-edit]')) {
+        chooseKey();
+        return;
+      }
       const filterButton = event.target.closest('[data-filter]');
       if (filterButton) {
         columnFilter.open(filterButton.dataset.filter);

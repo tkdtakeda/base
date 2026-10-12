@@ -8,12 +8,12 @@
     列の id   … DB の列名。画面の見出し・詳細・絞り込み・タグ・ブラウザに保存した表示の設定で共通
     設定の名前 … DB の列名か、schema.columns に書いた別名（論理名）のどちらでもよい。
                  DB に同じ名前の列があればその列、なければ別名として読み替える（DB にない列は使わない）
-    並び順     … 1 件を決める列 → 番号で探す列 → 別名のある列（schema.columns の順）→ ほかの列（DB の順）
+    並び順     … 固定列 → 番号で探す列 → 別名のある列（schema.columns の順）→ ほかの列（DB の順）
     種類       … date / text。schema.types の指定が優先。指定がなければ値から判定する
-                 （1 件を決める列・番号で探す列は、数字だけの番号を日付と取り違えないよう text）
+                 （固定列・番号で探す列は、数字だけの番号を日付と取り違えないよう text）
 
 DB にない名前を設定に書いても止めず、notices（画面の「データ」パネルの注意）で知らせる。
-1 件を決める列が DB にないときは record_key が空（ready=False）になり、画面は列を選ぶよう案内する。
+固定列が DB にないときは record_key が空（ready=False）になり、画面は列を選ぶよう案内する。
 """
 
 import hashlib
@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 
 KEY_PATH = "schema.recordKey"
 SEARCH_PATH = "schema.searchColumn"
-CHOOSE_ACTION = "画面左の「データ」→「1 件を決める列」で、DB の列から選んでください。"
+CHOOSE_ACTION = "画面左の「データ」→「固定列」で、DB の列から選んでください。"
 
 
 @dataclass(frozen=True)
@@ -48,7 +48,7 @@ class Notice:
 @dataclass(frozen=True)
 class ColumnModel:
     columns: tuple            # Column の並び
-    record_key: tuple         # 1 件を決める列（DB の列名）。DB に足りない列があれば空
+    record_key: tuple         # 固定列（DB の列名）。DB に足りない列があれば空
     search_column: object     # 番号で探す列（DB の列名）か None
     default_sort: tuple       # (DB の列名, "asc" / "desc")。列がなければ (None, "asc")
     hidden: tuple             # 最初は隠しておく列
@@ -102,7 +102,7 @@ class _Resolver:
 
 
 def missing_key_columns(settings, db_names):
-    """1 件を決める列のうち、DB にない名前（接続テストで、保存の前に知らせるため）。"""
+    """固定列のうち、DB にない名前（接続テストで、保存の前に知らせるため）。"""
     resolve = _Resolver(settings.aliases, db_names)
     return [name for name in settings.record_key if resolve(name) is None]
 
@@ -118,23 +118,23 @@ def build_model(settings, catalog):
         if has_data:  # データがまだないときは、列がないのは当然なので知らせない
             notices.append(Notice(path, reason, action))
 
-    # 1 件を決める列：1 つでも DB になければ使わない（一部の列だけでは 1 件に決まらないため）
+    # 固定列：1 つでも DB になければ使わない（一部の列だけでは 1 件に決まらないため）
     resolved_key = [resolve(name) for name in settings.record_key]
     missing = [name for name, physical in zip(settings.record_key, resolved_key) if physical is None]
     record_key = () if missing or not resolved_key else tuple(dict.fromkeys(resolved_key))
     if missing:
-        note(KEY_PATH, f"1 件を決める列（{'、'.join(missing)}）がテーブルにありません。", CHOOSE_ACTION)
+        note(KEY_PATH, f"固定列（レコードキー）の {'、'.join(missing)} がテーブルにありません。", CHOOSE_ACTION)
     elif not resolved_key:
-        note(KEY_PATH, "1 件を決める列が決まっていません。", CHOOSE_ACTION)
+        note(KEY_PATH, "固定列（レコードキー）が決まっていません。", CHOOSE_ACTION)
 
-    # 番号で探す列：指定がなければ 1 件を決める列の 1 つ目
+    # 番号で探す列：指定がなければ固定列の 1 つ目
     search_column = None
     if settings.search_column:
         search_column = resolve(settings.search_column)
         if search_column is None:
             note(SEARCH_PATH, f"番号で探す列（{settings.search_column}）がテーブルにありません。", CHOOSE_ACTION)
     if search_column is None:
-        # 1 件を決める列の一部が DB になくても、1 つ目があれば番号では探せるようにする
+        # 固定列の一部が DB になくても、1 つ目があれば番号では探せるようにする
         search_column = record_key[0] if record_key else (resolved_key[0] if resolved_key else None)
 
     # 種類：指定（schema.types）→ 値からの判定
@@ -153,19 +153,19 @@ def build_model(settings, catalog):
             return explicit[name]
         return "date" if looks_date.get(name) and name not in identifiers else "text"
 
-    # 並び：役割のある列を先頭に（1 件を決める列は左端に固定するため、必ず最初）
+    # 並び：役割のある列を先頭に（固定列は左端に固定するため、必ず最初）
     leading = list(record_key) + ([search_column] if search_column else []) + list(resolve.aliases.values())
     leading = list(dict.fromkeys(leading))
     order = leading + [name for name in db_names if name not in leading]
     role = set(leading)
     columns = tuple(Column(name, kind_of(name), name in role) for name in order)
 
-    # 既定の並べ替え：書いた列がなければ 1 件を決める列（なければ先頭の列）
+    # 既定の並べ替え：書いた列がなければ固定列（なければ先頭の列）
     sort_name, sort_order = settings.default_sort
     sort_field = resolve(sort_name) if sort_name else None
     if sort_name and sort_field is None:
         note("view.defaultSort.field", f"並べ替えの列（{sort_name}）がテーブルにありません。",
-             "列名を確認してください。今は 1 件を決める列の順に並べています。")
+             "列名を確認してください。今は固定列の順に並べています。")
     if sort_field is None:
         sort_field, sort_order = (record_key[0] if record_key else (order[0] if order else None)), "asc"
 
@@ -214,7 +214,7 @@ class ColumnModelProvider:
 `python/data_search/record_service.py`
 
 ```python
-"""1 件を決める列（schema.recordKey）と、番号で探す列（schema.searchColumn）の確認・変更。
+"""固定列（schema.recordKey）と、番号で探す列（schema.searchColumn）の確認・変更。
 
 確認：選んだ列の組み合わせで 1 件に決まるかを数える（重なり・空欄の行の数）。保存はしない。
 変更：schema.local.json の recordKey・searchColumn に DB の列名で保存 → 設定を読み直して検証 → 差し替える。
@@ -253,7 +253,7 @@ class RecordService:
         if search_column is not None and not (isinstance(search_column, str) and model.has(search_column)):
             raise AppError("INVALID_REQUEST", "unknown searchColumn",
                            user_message="番号で探す列は、一覧にある列から選んでください。")
-        # 番号で探す列が 1 件を決める列の 1 つ目と同じなら null（あとで 1 つ目を変えたときに一緒に変わるように）
+        # 番号で探す列が固定列の 1 つ目と同じなら null（あとで 1 つ目を変えたときに一緒に変わるように）
         stored_search = None if search_column in (None, names[0]) else search_column
         target = save_local_values(self.context, self.app_root, self.local_dir, "schema",
                                    {KEY_PATH: names, SEARCH_PATH: stored_search})
@@ -265,7 +265,7 @@ class RecordService:
             "recordKey": list(updated.record_key),
             "searchColumn": updated.search_column,
             "localFile": file_label(self.app_root, target),
-            "message": "1 件を決める列を保存しました。",
+            "message": "固定列を保存しました。",
         }
 
     def describe(self):

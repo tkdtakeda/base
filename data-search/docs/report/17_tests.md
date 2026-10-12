@@ -162,7 +162,7 @@ class ConfigTest(BackendTestCase):
         self.assertEqual(self.config.source_path, os.path.normpath(self.source))
         self.assertEqual(self.config.cache_path, os.path.join(self.root, "data", "cache", "target-data.sqlite3"))
         self.assertEqual(self.config.model.record_key, ("lotNo", "boxNo"))
-        self.assertIsNone(self.config.model.search_column)       # null なら 1 件を決める列の 1 つ目で探す
+        self.assertIsNone(self.config.model.search_column)       # null なら固定列の 1 つ目で探す
         self.assertEqual(self.config.model.default_sort, ("factoryDeliveryDate", "asc"))
         self.assertEqual(self.config.model.aliases["lotNo"], "C_LOTNO")
         self.assertEqual(other_warnings(self.config), [])
@@ -184,7 +184,7 @@ class ConfigTest(BackendTestCase):
         self.assertEqual(config.model.default_sort, ("factoryDeliveryDate", "asc"))  # 書いていない項目はサンプルのまま
 
     def test_settings_can_use_db_column_names(self):
-        # 1 件を決める列・探す列・種類・隠す列・表示の補助は、DB の列名のままでも書ける（別名は不要）
+        # 固定列・探す列・種類・隠す列・表示の補助は、DB の列名のままでも書ける（別名は不要）
         self.write_local("schema", {"tableName": "t_lot", "recordKey": ["C_LOTNO", "C_BOXNO"], "searchColumn": "C_INSPECTIONNO",
                                     "types": {"注文板厚": "text"}})
         self.write_local("view", {"hiddenColumns": ["UPDATED_AT"], "fields": {"予定設備": {"mono": True}}})
@@ -313,7 +313,7 @@ class ConfigTest(BackendTestCase):
         embedded = json.loads(text.split("/*VIEW_JSON_START*/", 1)[1].split("/*VIEW_JSON_END*/", 1)[0])
         self.assertEqual(embedded, build_sample_view())
         self.assertTrue(embedded["ready"])
-        self.assertEqual(embedded["recordKey"], [c["id"] for c in embedded["columns"]][:2])  # 1 件を決める列が先頭
+        self.assertEqual(embedded["recordKey"], [c["id"] for c in embedded["columns"]][:2])  # 固定列が先頭
 
 
 class ColumnModelTest(unittest.TestCase):
@@ -331,7 +331,7 @@ class ColumnModelTest(unittest.TestCase):
 
     def test_order_kinds_and_aliases(self):
         model = build_model(self.settings(), self.catalog("X", "C_DUE", "C_LOT", "Y", dates=("C_DUE", "Y")))
-        self.assertEqual(model.ids, ("C_LOT", "C_DUE", "X", "Y"))           # 1 件を決める列 → 別名のある列 → DB の順
+        self.assertEqual(model.ids, ("C_LOT", "C_DUE", "X", "Y"))           # 固定列 → 別名のある列 → DB の順
         self.assertEqual([c.kind for c in model.columns], ["text", "date", "text", "date"])
         self.assertEqual((model.record_key, model.search_column, model.default_sort), (("C_LOT",), "C_LOT", ("C_DUE", "desc")))
         self.assertTrue(model.ready)
@@ -407,7 +407,7 @@ class CacheTest(BackendTestCase):
         self.assert_variant_rejected("missing-table", "CACHE_TABLE_MISSING")
 
     def test_missing_key_column_keeps_data_and_asks_to_choose(self):
-        # 1 件を決める列（BOX番号）がない似た DB：止めずに使い、画面で列を選び直してもらう
+        # 固定列（BOX番号）がない似た DB：止めずに使い、画面で列を選び直してもらう
         make_db(self.source, "missing-key")
         self.cache.refresh()
         model = self.service.model
@@ -454,7 +454,7 @@ class SearchTest(BackendTestCase):
         self.assertEqual(self.search("lot-001", match_mode="exact")["totalCount"], 1)
 
     def test_items_have_every_db_column_with_db_names(self):
-        # 列の id は DB の列名。並びは 1 件を決める列 → 別名のある列（schema.columns の順）→ ほかの列（DB の順）
+        # 列の id は DB の列名。並びは固定列 → 別名のある列（schema.columns の順）→ ほかの列（DB の順）
         result = self.search("LOT-001")
         item = result["items"][0]
         self.assertEqual(list(item), [COLUMNS[n] for n in ROLE_FIELDS] + EXTRA_FIRST + EXTRA_LAST)
@@ -549,7 +549,7 @@ class SearchTest(BackendTestCase):
 
 
 class RecordKeyTest(BackendTestCase):
-    """1 件を決める列の確認・変更（check_record_key / update_record_settings）"""
+    """固定列の確認・変更（check_record_key / update_record_settings）"""
 
     def setUp(self):
         super().setUp()
@@ -833,7 +833,7 @@ class SourceTest(BackendTestCase):
         self.assertEqual(self.statuses(result)["rows"], "skip")       # × の後は確かめない
 
     def test_missing_key_column_is_warned_but_can_be_saved(self):
-        # 1 件を決める列がない似た DB は △：保存してから画面で列を選び直せる
+        # 固定列がない似た DB は △：保存してから画面で列を選び直せる
         other = os.path.join(self.root, "shared", "missing-key.sqlite3")
         make_db(other, "missing-key")
         result = self.call("test_data_source", {"sourcePath": other})

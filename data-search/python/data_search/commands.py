@@ -53,7 +53,7 @@ def refresh_cache(ctx, payload):
 
 @command("get_cache_status")
 def get_cache_status(ctx, payload):
-    # 列の決まりの印。変わったら（DB の列が増えた・1 件を決める列を変えた）画面は表示定義を読み直す
+    # 列の決まりの印。変わったら（DB の列が増えた・固定列を変えた）画面は表示定義を読み直す
     return dict(ctx.cache_service.status(), columnsVersion=ctx.lot_service.model.version)
 
 
@@ -77,7 +77,7 @@ def update_data_source(ctx, payload):
 
 @command("get_view_config")
 def get_view_config(ctx, payload):
-    """画面の表示定義：DB の全列（DB の列名が id・表示名）と種類、1 件を決める列、番号で探す列、注意。
+    """画面の表示定義：DB の全列（DB の列名が id・表示名）と種類、固定列、番号で探す列、注意。
     テーブル名・パスは含めない。"""
     return dict(ctx.lot_service.model.public(), success=True,
                 recordSettingsFile=ctx.record_service.describe()["localFile"] if ctx.record_service else None)
@@ -91,7 +91,7 @@ def check_record_key(ctx, payload):
 
 @command("update_record_settings")
 def update_record_settings(ctx, payload):
-    """1 件を決める列と番号で探す列を schema.local.json に保存し、列の決まりを差し替える。"""
+    """固定列と番号で探す列を schema.local.json に保存し、列の決まりを差し替える。"""
     return ctx.record_service.update(payload)
 
 

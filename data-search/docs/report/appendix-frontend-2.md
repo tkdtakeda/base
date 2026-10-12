@@ -13,7 +13,7 @@
 
   const DS = window.DS;
   const STORAGE_KEY = 'mock:samples';
-  const RECORD_KEY = 'mock:record'; // このモードで選んだ「1 件を決める列」（ブラウザにだけ保存する）
+  const RECORD_KEY = 'mock:record'; // このモードで選んだ「固定列」（ブラウザにだけ保存する）
   const KEYWORD_MAX = 100;
   const RECORD_KEY_MAX = 3;
   const PAGE_SIZE = 100;
@@ -32,8 +32,8 @@
   const textOf = (value) => (isBlank(value) ? null : String(value));
 
   /**
-   * 表示定義に、このモードで選んだ「1 件を決める列」を重ねる（Python 版の column_model と同じ決まり：
-   * 1 件を決める列 → 探す列 を先頭に並べ、番号の列は text として扱う）
+   * 表示定義に、このモードで選んだ「固定列」を重ねる（Python 版の column_model と同じ決まり：
+   * 固定列 → 探す列 を先頭に並べ、番号の列は text として扱う）
    */
   function viewWithRecord(base, record) {
     const view = JSON.parse(JSON.stringify(base));
@@ -172,7 +172,7 @@
       get_application_info: () => ({ id: 'data-search', name: 'Data Search', version: '0.1.0' }),
 
       // 表示定義：config/sample の view・schema と python/tools/sample_columns.json から自動生成した js/sample/sample-view.js
-      // ＋ このモードで選んだ「1 件を決める列」
+      // ＋ このモードで選んだ「固定列」
       get_view_config: () => Object.assign({ success: true, recordSettingsFile: '（サンプルのモードではブラウザに保存）' },
         viewWithRecord(DS.sampleView, DS.core.storage.read(RECORD_KEY, null))),
 
@@ -181,7 +181,7 @@
         const names = payload.recordKey;
         if (!Array.isArray(names) || names.length < 1 || names.length > RECORD_KEY_MAX || new Set(names).size !== names.length ||
           !names.every((id) => DS.domain.fields.has(id))) {
-          return fail('INVALID_REQUEST', `1 件を決める列は、一覧にある列から重ならないように 1〜${RECORD_KEY_MAX} 個選んでください。`);
+          return fail('INVALID_REQUEST', `固定列は、一覧にある列から重ならないように 1〜${RECORD_KEY_MAX} 個選んでください。`);
         }
         const groups = new Map();
         let blank = 0;
@@ -216,7 +216,7 @@
         if (!stored.ok) return fail('SETTINGS_WRITE_FAILED', `保存できませんでした：${stored.reason}`);
         return {
           success: true, saved: true, recordKey: payload.recordKey.slice(), searchColumn: searchColumn || payload.recordKey[0],
-          localFile: '（サンプルのモードではブラウザに保存）', message: '1 件を決める列を保存しました（サンプルのモードではブラウザにだけ保存します）。',
+          localFile: '（サンプルのモードではブラウザに保存）', message: '固定列を保存しました（サンプルのモードではブラウザにだけ保存します）。',
         };
       },
 
@@ -290,7 +290,7 @@
       },
 
       get_lot_detail(payload) {
-        if (!DS.domain.isReady()) return fail('KEY_NOT_READY', '1 件を決める列が決まっていません。画面左の「データ」→「1 件を決める列」で選んでください。');
+        if (!DS.domain.isReady()) return fail('KEY_NOT_READY', '固定列（レコードキー）が決まっていません。画面左の「データ」→「固定列」で選んでください。');
         const keys = DS.domain.keyFields().map((field) => field.id);
         const found = rows.filter((row) => keys.every((id) => (row[id] || null) === (payload[id] || null)));
         if (found.length === 0) return fail('NOT_FOUND', '選んだデータが見つかりません。データが更新された可能性があります。もう一度検索してください。');
@@ -607,10 +607,10 @@
       }
       if (state.search.status === 'loading') return { ok: false, reason: '読み込んでいます…', busy: true };
       const field = DS.domain.searchField();
-      // 1 件を決める列が DB にない：番号を入れていなければ、選び直すよう案内する（探す列があれば番号では探せる）
+      // 固定列が DB にない：番号を入れていなければ、選び直すよう案内する（探す列があれば番号では探せる）
       const keyMissing = Boolean(cacheStatus && cacheStatus.available && !DS.domain.isReady());
       if (keyMissing && (!field || !keywordOf())) {
-        return { ok: false, reason: '1 件を決める列が DB にありません。左の「データ」で選んでください', action: 'choose-key', actionLabel: '1 件を決める列を選ぶ' };
+        return { ok: false, reason: '固定列が DB にありません。左の「データ」で選んでください', action: 'choose-key', actionLabel: '固定列を選ぶ' };
       }
       const searching = state.search.request && state.search.request.keyword;
       if (!keywordOf()) {
@@ -723,9 +723,9 @@
     async function select(item) {
       const key = DS.domain.recordKey(item);
       if (!DS.domain.isReady()) {
-        // 1 件を決める列がないと、詳細の 1 件を決められない
+        // 固定列がないと、詳細の 1 件を決められない
         store.set({ selection: Object.assign({}, EMPTY_SELECTION, { key, item }) });
-        toast.show({ tone: 'warning', message: '詳細を開くには、左の「データ」で 1 件を決める列を選んでください', actionLabel: '選ぶ', onAction: () => bus.emit('record:choose') });
+        toast.show({ tone: 'warning', message: '詳細を開くには、左の「データ」で固定列を選んでください', actionLabel: '選ぶ', onAction: () => bus.emit('record:choose') });
         return;
       }
       const token = ++detailToken;
@@ -861,9 +861,9 @@
    列の登録簿。中身はソースコードに書かず、表示定義（get_view_config）から組み立てる。
 
      columns      … DB のテーブルの全列。id も見出しも DB の列名
-                    並び：1 件を決める列 → 番号で探す列 → 別名のある列 → ほかの列（DB の順）
+                    並び：固定列 → 番号で探す列 → 別名のある列 → ほかの列（DB の順）
                     kind：date（日付の範囲で絞り込む）／ text（値から選んで絞り込む）
-     recordKey    … 1 件を決める列（一覧の左端に固定）。DB に足りなければ空（ready=false）
+     recordKey    … 固定列（一覧の左端に固定）。DB に足りなければ空（ready=false）
      searchColumn … 番号で探す列（上部バーの入力欄）
      aliases      … 別名（論理名）→ DB の列名。以前の形（論理名）で保存したタグ・表示の設定を読み替える
      hiddenColumns… 最初は隠しておく列。各自が「表示列」で変えられる
@@ -906,7 +906,7 @@
         label: column.label || column.id,
         listLabel: column.label || column.id,
         role: Boolean(column.role),
-        // 番号の列（探す列・1 件を決める列）は、指定がなければ等幅で表示し、コピーできるようにする（0 と O を見分けやすく、転記しやすく）
+        // 番号の列（探す列・固定列）は、指定がなければ等幅で表示し、コピーできるようにする（0 と O を見分けやすく、転記しやすく）
         mono: option.mono === undefined ? searchable || key : Boolean(option.mono),
         copy: option.copy === undefined ? searchable || key : Boolean(option.copy),
         example: option.example || '',
@@ -960,13 +960,13 @@
   DS.domain.filterFields = () => lists.list;
   /** 設定で「最初は隠す」とした列の id */
   DS.domain.defaultHiddenColumns = () => lists.hidden.slice();
-  /** 列の並びの印（データの更新や 1 件を決める列の変更で、列の決まりが変わったかを見分ける） */
+  /** 列の並びの印（データの更新や固定列の変更で、列の決まりが変わったかを見分ける） */
   DS.domain.columnsVersion = () => meta.version;
-  /** 1 件を決める列がそろっているか（そろっていなければ詳細は開けない） */
+  /** 固定列がそろっているか（そろっていなければ詳細は開けない） */
   DS.domain.isReady = () => meta.ready && lists.key.length > 0;
   /** 設定と DB の食い違い [{ path, reason, action }] */
   DS.domain.columnNotices = () => meta.notices.slice();
-  /** 1 件を決める列の保存先（画面に出すファイル名） */
+  /** 固定列の保存先（画面に出すファイル名） */
   DS.domain.recordSettingsFile = () => meta.settingsFile;
 
   /** 1 件を特定する鍵（例：ロット番号＋BOX番号）を文字列にする。鍵が決まっていなければ行の中身全体 */
@@ -1121,7 +1121,7 @@
           <li>行をダブルクリック（または選んで <kbd>Enter</kbd>）すると右に詳細が出ます。「主な項目」「そのほかの項目」に分けて全項目が並びます。見出しを押すと開閉でき、開き方は次回も保たれます。</li>
           <li>詳細を開いたまま <kbd>↑</kbd><kbd>↓</kbd> で行を移ると、詳細も切り替わります。</li>
           <li>番号の横の <span class="manual-icon">⧉</span> でコピーできます。</li>
-          <li>詳細は「1 件を決める列」（標準は「ロット番号＋BOX番号」）で決めています。左の「データ」で変えられます。</li>
+          <li>詳細は「固定列」（標準は「ロット番号＋BOX番号」）で決めています。左の「データ」で変えられます。</li>
           <li><kbd>Esc</kbd> か右上の × で閉じます。</li>
         </ul>`,
     },
@@ -1143,22 +1143,22 @@
           <li><strong>接続を確かめる</strong>で、書き方 → 場所 → 読めるか → SQLite か → テーブルと列 → 件数 の順に ○ △ × が出ます。× の段階には「対応」が出ます。</li>
           <li><strong>変更</strong>を押し、エクスプローラーでファイルを Shift＋右クリック →「パスとしてコピー」して貼り付け、<kbd>Enter</kbd> で確かめます。</li>
           <li>× がなければ「保存して更新」が押せます（もう一度 <kbd>Enter</kbd>）。保存すると、新しい読み込み先からデータを取り直します。</li>
-          <li>△（1 件を決める列がない）は、保存したあと「1 件を決める列」で選び直せば使えます。</li>
+          <li>△（固定列がない）は、保存したあと「固定列」で選び直せば使えます。</li>
         </ol>
         <p>確かめるだけなら、共有データには何も書き込みません。</p>`,
     },
     {
-      id: 'record-key', group: 'data', order: 17, title: '1 件を決める列・探す列を選ぶ',
+      id: 'record-key', group: 'data', order: 17, title: '固定列（レコードキー）・探す列を選ぶ',
       body: `
-        <p>似た構成の別の DB を読み込むと、列名が違うことがあります。そのときは列を選び直すだけで使えます（設定ファイルを手で直す必要はありません）。</p>
+        <p>固定列（レコードキー）は、行を 1 件に決める列です。一覧の左端に固定され、見出しに鍵のアイコンが付きます。使わない列（例：BOX番号）を外したいときや、似た構成の別の DB で列名が違うときは、画面で選び直すだけで使えます（設定ファイルを手で直す必要はありません）。</p>
         <ol class="manual-steps">
-          <li>左の「データ」→「1 件を決める列」の<strong>変更</strong>を押します。</li>
-          <li>1 件を決める列を 1〜3 つ、列名で入れます（候補から選べます。<kbd>Enter</kbd> で次の欄へ）。ふつうは「ロット番号＋BOX番号」のように 2 つです。</li>
+          <li>一覧の左端の見出しにある鍵のアイコン（または左の「データ」→「固定列」）から、<strong>変更</strong>を押します。</li>
+          <li>行を 1 件に決める列を 1〜3 つ、列名で入れます（候補から選べます。<kbd>Enter</kbd> で次の欄へ）。ふつうは「ロット番号＋BOX番号」のように 2 つです。</li>
           <li>「番号で探す列」は上部バーの入力欄で探す列です。空欄なら 1 つ目の列で探します。</li>
           <li><strong>確かめる</strong>で、その組み合わせで 1 件に決まるかを数えます。同じ組み合わせがあれば △ で例を出します（保存はできます）。</li>
           <li><strong>保存</strong>すると画面を読み込み直し、選んだ列が一覧の左端に固定されます。</li>
         </ol>
-        <p>1 件を決める列が DB にないときは、右上の青いボタンが「1 件を決める列を選ぶ」に変わります。</p>`,
+        <p>固定列が DB にないときは、右上の青いボタンが「固定列を選ぶ」に変わります。</p>`,
     },
     {
       id: 'columns', group: 'data', order: 20, title: '表示する列を選ぶ',
@@ -1224,7 +1224,7 @@
 
    ・列は全部で数十列になるため、列名で探して絞り込める
    ・「すべて表示」「すべて隠す」「既定に戻す」（既定＝設定の hiddenColumns だけ隠す）
-   ・1 件を決める列（左端に固定）は隠せない
+   ・固定列（左端に固定）は隠せない
    ・選んだ内容はブラウザに自動保存
    ========================================================= */
 (function () {
@@ -1266,8 +1266,8 @@
           const box = el('input', { type: 'checkbox', value: field.id, disabled: field.key });
           box.addEventListener('change', () => toggle(field.id, box.checked, box.parentElement));
           checks.set(field.id, box);
-          return el('label', { className: 'check', title: field.key ? '1 件を決める列のため、いつも表示します' : field.label, dataset: { name: DS.util.foldForCompare(field.label) } },
-            [box, el('span', { className: 'check__text', text: field.label }), field.key ? icon('fa-thumbtack', '固定') : null]);
+          return el('label', { className: 'check', title: field.key ? '固定列のため、いつも表示します' : field.label, dataset: { name: DS.util.foldForCompare(field.label) } },
+            [box, el('span', { className: 'check__text', text: field.label }), field.key ? icon('fa-key', '鍵') : null]);
         });
         return section(group.label, [el('div', { className: 'check-list' }, items)]);
       });
@@ -1369,7 +1369,7 @@
       const view = DS.views.describeCache(state.cache);
       if (view.tone === 'warning' || view.tone === 'danger') return { tone: view.tone, text: '!', title: view.text };
       if (state.cache.status && state.cache.status.available && !DS.domain.isReady()) {
-        return { tone: 'danger', text: '!', title: '1 件を決める列を選んでください' };
+        return { tone: 'danger', text: '!', title: '固定列（レコードキー）を選んでください' };
       }
       return null;
     },
@@ -1382,7 +1382,7 @@
       const configBox = el('div', { className: 'config-help', hidden: true });
       const sourceEditor = DS.views.createSourceEditor(ctx);
       const keyEditor = DS.views.createRecordKeyEditor(ctx);
-      const keySection = section('1 件を決める列', [keyEditor.element]);
+      const keySection = section('固定列（レコードキー）', [keyEditor.element]);
       refreshButton.addEventListener('click', () => ctx.cache.refresh());
       ctx.bus.on('record:edit', () => window.setTimeout(() => keyEditor.startEditing(), 0));
 

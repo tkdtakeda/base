@@ -63,7 +63,7 @@ def print_source_check(result):
 
 
 def print_column_notices(model):
-    """DB と設定の食い違い（1 件を決める列がないなど）。止めずに知らせ、画面で選び直してもらう。"""
+    """DB と設定の食い違い（固定列がないなど）。止めずに知らせ、画面で選び直してもらう。"""
     for notice in model.notices:
         print()
         print(f"[列の注意] {notice.path}：{notice.reason}")

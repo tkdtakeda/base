@@ -1,5 +1,5 @@
 /* =========================================================
-   1 件を決める列（schema.recordKey）と番号で探す列（schema.searchColumn）の確認・保存
+   固定列（schema.recordKey）と番号で探す列（schema.searchColumn）の確認・保存
 
      check(names)                選んだ列の組み合わせで 1 件に決まるかを数える（保存はしない）
      save(names, searchColumn)   確かめた組み合わせだけ保存できる → schema.local.json に保存

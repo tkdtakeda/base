@@ -29,10 +29,10 @@
       }
       if (state.search.status === 'loading') return { ok: false, reason: '読み込んでいます…', busy: true };
       const field = DS.domain.searchField();
-      // 1 件を決める列が DB にない：番号を入れていなければ、選び直すよう案内する（探す列があれば番号では探せる）
+      // 固定列が DB にない：番号を入れていなければ、選び直すよう案内する（探す列があれば番号では探せる）
       const keyMissing = Boolean(cacheStatus && cacheStatus.available && !DS.domain.isReady());
       if (keyMissing && (!field || !keywordOf())) {
-        return { ok: false, reason: '1 件を決める列が DB にありません。左の「データ」で選んでください', action: 'choose-key', actionLabel: '1 件を決める列を選ぶ' };
+        return { ok: false, reason: '固定列が DB にありません。左の「データ」で選んでください', action: 'choose-key', actionLabel: '固定列を選ぶ' };
       }
       const searching = state.search.request && state.search.request.keyword;
       if (!keywordOf()) {
@@ -145,9 +145,9 @@
     async function select(item) {
       const key = DS.domain.recordKey(item);
       if (!DS.domain.isReady()) {
-        // 1 件を決める列がないと、詳細の 1 件を決められない
+        // 固定列がないと、詳細の 1 件を決められない
         store.set({ selection: Object.assign({}, EMPTY_SELECTION, { key, item }) });
-        toast.show({ tone: 'warning', message: '詳細を開くには、左の「データ」で 1 件を決める列を選んでください', actionLabel: '選ぶ', onAction: () => bus.emit('record:choose') });
+        toast.show({ tone: 'warning', message: '詳細を開くには、左の「データ」で固定列を選んでください', actionLabel: '選ぶ', onAction: () => bus.emit('record:choose') });
         return;
       }
       const token = ++detailToken;

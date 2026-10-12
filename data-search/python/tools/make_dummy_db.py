@@ -13,7 +13,7 @@ schema の columns（論理名 → DB の列名）が効いていることを確
     python python/tools/make_dummy_db.py --lots 50000       … 大量データ
     python python/tools/make_dummy_db.py --variant corrupt  … 壊れたファイル（異常系の確認）
         variant: normal / missing-table / missing-key / corrupt
-        missing-key … 1 件を決める列（BOX番号）がない似た DB。画面で列を選び直す流れを確かめる
+        missing-key … 固定列（BOX番号）がない似た DB。画面で列を選び直す流れを確かめる
     python python/tools/make_dummy_db.py --if-missing       … すでにあれば何もしない
 起動: python python/run_server.py --local-dir config/dummy
 """
@@ -36,7 +36,7 @@ SCHEMA_PATH = os.path.join(DUMMY_DIR, "schema.local.json")
 VIEW_PATH = os.path.join(DUMMY_DIR, "view.local.json")
 SEED = 20261011
 
-# missing-key の確認で消す列（1 件を決める列の 2 つ目）
+# missing-key の確認で消す列（固定列の 2 つ目）
 DROP_FOR_MISSING = "boxNo"
 
 MATERIALS = ["A1100", "A3003", "A5052", "A6061", "A6063", "A7075"]

@@ -2,9 +2,9 @@
    列の登録簿。中身はソースコードに書かず、表示定義（get_view_config）から組み立てる。
 
      columns      … DB のテーブルの全列。id も見出しも DB の列名
-                    並び：1 件を決める列 → 番号で探す列 → 別名のある列 → ほかの列（DB の順）
+                    並び：固定列 → 番号で探す列 → 別名のある列 → ほかの列（DB の順）
                     kind：date（日付の範囲で絞り込む）／ text（値から選んで絞り込む）
-     recordKey    … 1 件を決める列（一覧の左端に固定）。DB に足りなければ空（ready=false）
+     recordKey    … 固定列（一覧の左端に固定）。DB に足りなければ空（ready=false）
      searchColumn … 番号で探す列（上部バーの入力欄）
      aliases      … 別名（論理名）→ DB の列名。以前の形（論理名）で保存したタグ・表示の設定を読み替える
      hiddenColumns… 最初は隠しておく列。各自が「表示列」で変えられる
@@ -47,7 +47,7 @@
         label: column.label || column.id,
         listLabel: column.label || column.id,
         role: Boolean(column.role),
-        // 番号の列（探す列・1 件を決める列）は、指定がなければ等幅で表示し、コピーできるようにする（0 と O を見分けやすく、転記しやすく）
+        // 番号の列（探す列・固定列）は、指定がなければ等幅で表示し、コピーできるようにする（0 と O を見分けやすく、転記しやすく）
         mono: option.mono === undefined ? searchable || key : Boolean(option.mono),
         copy: option.copy === undefined ? searchable || key : Boolean(option.copy),
         example: option.example || '',
@@ -101,13 +101,13 @@
   DS.domain.filterFields = () => lists.list;
   /** 設定で「最初は隠す」とした列の id */
   DS.domain.defaultHiddenColumns = () => lists.hidden.slice();
-  /** 列の並びの印（データの更新や 1 件を決める列の変更で、列の決まりが変わったかを見分ける） */
+  /** 列の並びの印（データの更新や固定列の変更で、列の決まりが変わったかを見分ける） */
   DS.domain.columnsVersion = () => meta.version;
-  /** 1 件を決める列がそろっているか（そろっていなければ詳細は開けない） */
+  /** 固定列がそろっているか（そろっていなければ詳細は開けない） */
   DS.domain.isReady = () => meta.ready && lists.key.length > 0;
   /** 設定と DB の食い違い [{ path, reason, action }] */
   DS.domain.columnNotices = () => meta.notices.slice();
-  /** 1 件を決める列の保存先（画面に出すファイル名） */
+  /** 固定列の保存先（画面に出すファイル名） */
   DS.domain.recordSettingsFile = () => meta.settingsFile;
 
   /** 1 件を特定する鍵（例：ロット番号＋BOX番号）を文字列にする。鍵が決まっていなければ行の中身全体 */

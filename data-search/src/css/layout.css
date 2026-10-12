@@ -423,7 +423,7 @@
 .detail__group:not([open]) > summary { margin-bottom: 0; }
 .detail__count { margin-left: auto; padding: 0 var(--sp-2); border-radius: var(--r-pill); background: var(--color-surface-sunken); color: var(--color-text-muted); font-size: var(--fs-xs); font-weight: var(--fw-normal); }
 
-/* ── 探す列（上部バーの左。押すと「1 件を決める列」で変えられる） ── */
+/* ── 探す列（上部バーの左。押すと「固定列」で変えられる） ── */
 .search__column {
   display: inline-flex;
   flex-shrink: 0;

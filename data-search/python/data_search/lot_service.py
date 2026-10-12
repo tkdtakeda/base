@@ -150,12 +150,12 @@ def parse_filters(payload, today, model):
 
 
 def parse_key_columns(payload, model, name="recordKey"):
-    """1 件を決める列の候補（1〜3 個・重複なし・テーブルにある列）。"""
+    """固定列の候補（1〜3 個・重複なし・テーブルにある列）。"""
     names = payload.get(name)
     if not isinstance(names, list) or not 1 <= len(names) <= RECORD_KEY_MAX:
-        raise _invalid(f"{name} must be a list", f"1 件を決める列は 1〜{RECORD_KEY_MAX} 個選んでください。")
+        raise _invalid(f"{name} must be a list", f"固定列は 1〜{RECORD_KEY_MAX} 個選んでください。")
     if len(set(map(str, names))) != len(names) or not all(isinstance(n, str) and model.has(n) for n in names):
-        raise _invalid(f"unknown column in {name}", "1 件を決める列は、一覧にある列から重ならないように選んでください。")
+        raise _invalid(f"unknown column in {name}", "固定列は、一覧にある列から重ならないように選んでください。")
     return names
 
 
@@ -280,7 +280,7 @@ class LotService:
         }
 
     def detail(self, payload):
-        """1 件の全項目。payload は 1 件を決める列の 列名 → 値（空欄は null）"""
+        """1 件の全項目。payload は固定列の 列名 → 値（空欄は null）"""
         payload = _require_object(payload)
         model = self._data_model()
         if not model.ready:

@@ -72,7 +72,7 @@ class CacheService:
     def use_config(self, config):
         """読み込み先の変更などで設定を差し替える。前の読み込み先から作ったキャッシュは使わない。"""
         with self.lock:
-            # 列の一覧は読み込み先とテーブル名だけで決まる（1 件を決める列の変更では読み直さない）
+            # 列の一覧は読み込み先とテーブル名だけで決まる（固定列の変更では読み直さない）
             if (config.source_path, config.table_name) != (self.config.source_path, self.config.table_name):
                 self._catalog = None
             self.config = config

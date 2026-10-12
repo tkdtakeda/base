@@ -2,7 +2,7 @@
 
     ① パスの書き方  ② 場所に届くか  ③ 読めるか  ④ SQLite として開けるか  ⑤ テーブル・列  ⑥ 件数
 前の段階が × なら、後の段階は「確かめていない」（skip）にする。画面には段階ごとに 理由・対応 を出す。
-△（warn）は「使えるが、保存のあとで直すことがある」（例：1 件を決める列がない → 画面で選び直す）。
+△（warn）は「使えるが、保存のあとで直すことがある」（例：固定列がない → 画面で選び直す）。
 △ だけなら保存できる（似た構成の別の DB へ切り替えられるように）。
 ログにはパスを残さない（呼び出し側は段階の id と結果だけを記録する）。
 """
@@ -49,7 +49,7 @@ def resolve_path(app_root, path):
 
 def check_source(path, table_name, model_settings, app_root):
     """段階ごとの結果 [{id, label, status: ok/warn/ng/skip, message, action}] と、まとめ {ok, rowCount, modifiedAt} を返す。
-    model_settings：settings.ModelSettings（1 件を決める列があるかを確かめる）"""
+    model_settings：settings.ModelSettings（固定列があるかを確かめる）"""
     results = []
     state = {"path": normalize_path(path), "conn": None, "row_count": None, "modified": None}
     checks = {
@@ -151,9 +151,9 @@ def _check_table(state, table_name, model_settings):
         raise StepFailed("テーブルに列がありません。", "読み込み先が正しいか確認してください。")
     missing = missing_key_columns(model_settings, columns)
     if missing:
-        return ("warn", f"テーブルはあります（列は {len(columns)} 個）。1 件を決める列（{'、'.join(missing)}）はありません。",
-                "保存してデータを更新したあと、画面左の「データ」→「1 件を決める列」で選んでください。")
-    return f"テーブルと、1 件を決める列がそろっています（列は全部で {len(columns)} 個）。"
+        return ("warn", f"テーブルはあります（列は {len(columns)} 個）。固定列（レコードキー）の {'、'.join(missing)} はありません。",
+                "保存してデータを更新したあと、画面左の「データ」→「固定列」で選んでください。")
+    return f"テーブルと、固定列がそろっています（列は全部で {len(columns)} 個）。"
 
 
 def _check_rows(state, table_name):

@@ -55,7 +55,7 @@
     check('既定の並べ替え（view の defaultSort）の順に並ぶ', dates.every((date, i) => i === 0 || dates[i - 1] <= date), sortKey);
 
     // ── 番号の検索（任意。探す列は 1 つ） ──
-    check('探す列は 1 件を決める列の 1 つ目', window.DS.domain.searchField().id === LOT && document.querySelector('.search__column').textContent.includes(LOT));
+    check('探す列は固定列の 1 つ目', window.DS.domain.searchField().id === LOT && document.querySelector('.search__column').textContent.includes(LOT));
     let r = await searchFor('LOT-2026-00012', 'exact');
     const boxes = r.totalCount;
     check('完全一致でそのロットの BOX だけが出る', boxes >= 1 && boxes <= 3 && r.items.every((item) => item[LOT] === 'LOT-2026-00012'), `${boxes} 件`);
@@ -110,7 +110,7 @@
     const columnCount = window.DS.domain.listFields().length;
     check('一覧に全列が出る（隠した列を除く）', document.querySelectorAll('.grid thead th').length === columnCount - store.get().columns.hidden.length, `${columnCount} 列`);
     check('見出しは DB の列名', document.querySelector('.grid thead th').textContent.trim() === window.DS.domain.listFields()[0].label);
-    check('1 件を決める列は左端に固定', document.querySelectorAll('.grid thead th.is-pinned').length === window.DS.domain.keyFields().length);
+    check('固定列（レコードキー）は左端に固定し、鍵が付く', document.querySelectorAll('.grid thead th.is-pinned').length === window.DS.domain.keyFields().length && document.querySelectorAll('.grid thead th.is-pinned [data-key-edit]').length === window.DS.domain.keyFields().length);
     await search.highlight(result().items[0]);
     check('行を 1 回押すと選ぶだけ（詳細は開かない）', store.get().selection.key && document.getElementById('detail').hidden === true);
     await search.select(result().items[0]);
@@ -131,7 +131,7 @@
     check('ロット番号＋BOX番号で 1 件に決まる', store.get().selection.item[col('boxNo')] === r.items[2][col('boxNo')]);
     search.closeDetail();
 
-    // ── 1 件を決める列の確認（保存すると画面を読み込み直すため、確かめるだけ） ──
+    // ── 固定列の確認（保存すると画面を読み込み直すため、確かめるだけ） ──
     let keyCheck = await app.api.call('check_record_key', { recordKey: [LOT] });
     check('ロット番号だけでは重なりを知らせる', keyCheck.unique === false && keyCheck.example && keyCheck.example.count === 3, `${keyCheck.duplicateGroups} 組`);
     keyCheck = await app.api.call('check_record_key', { recordKey: [LOT, col('boxNo')] });

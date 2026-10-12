@@ -13,7 +13,7 @@
 検証で誤りが見つかれば SettingsError（すべての誤りを持つ）。注意（未知のキーなど）は warnings に入れて続ける。
 
 列の考え方：表示する列は DB のテーブルから自動で読み取る（column_catalog.py）。設定に書くのは
-1 件を決める列（recordKey）・番号で探す列（searchColumn）などの役割だけ。名前は DB の列名か、
+固定列（recordKey）・番号で探す列（searchColumn）などの役割だけ。名前は DB の列名か、
 schema.columns に書いた別名（論理名）で書く。DB と照らし合わせるのは実行時（column_model.py）で、
 DB にない名前があっても起動は止めない（画面の「データ」で選び直せる）。
 パスとテーブル名は画面に渡さない。列名は表示名として画面に出す（DB の列名をそのまま表示するため）。
@@ -42,7 +42,7 @@ OBSOLETE_KEYS = {
         "listColumns": "一覧の列は DB から自動で表示します。隠す列は hiddenColumns に書いてください。",
         "detailFields": "詳細には全項目を出すため使いません。",
         "detailGroups": "詳細には全項目を出すため使いません。",
-        "searchFields": "番号で探す列は 1 つにしました。schema.searchColumn に書くか、画面左の「データ」→「1 件を決める列」で選んでください。",
+        "searchFields": "番号で探す列は 1 つにしました。schema.searchColumn に書くか、画面左の「データ」→「固定列」で選んでください。",
         "filters": "どの列でも、一覧の見出しの漏斗（じょうご）のアイコンから絞り込めるため使いません。",
     },
 }
@@ -61,7 +61,7 @@ class ModelSettings:
     """列の役割の設定。名前は DB の列名か別名（schema.columns の論理名）。
     DB と照らし合わせて実際の列を決めるのは column_model.build_model（キャッシュのテーブルを読んだあと）。"""
     aliases: dict          # 別名 → DB の列名（schema.columns。仮の値・空は除く）
-    record_key: tuple      # 1 件を決める列（schema.recordKey）
+    record_key: tuple      # 固定列（schema.recordKey）
     search_column: object  # 番号で探す列（schema.searchColumn。null なら recordKey の 1 つ目）
     types: dict            # 列 → "date" / "text"（schema.types）
     default_sort: tuple    # (列, "asc" / "desc")（view.defaultSort）
@@ -177,7 +177,7 @@ def _load_pair(kind, sample_dir, local_dir, app_root, issues, warnings):
         warnings.append(Issue("warning", local_label, "columns.<役割のない項目>",
                               f"{len(names)} 項目は役割がないため使っていません（{shown}）。列は DB から自動で表示します。",
                               f"消してかまいません。columns には {sample_label} にある論理名だけを書いてください"
-                              "（1 件を決める列などは、DB の列名のまま recordKey・searchColumn に書けます）。"))
+                              "（固定列などは、DB の列名のまま recordKey・searchColumn に書けます）。"))
     for path in merged.unknown:
         if path in extra_columns:
             continue
@@ -406,7 +406,7 @@ BUILTIN_DEFAULTS = {
 """マージ後の設定（config / schema / view）を役割ごとに確かめる。
 
   config … アプリと実行環境。DB 接続に必要なパス（sourcePath / cachePath）はここで確かめる
-  schema … テーブル名・1 件を決める列・番号で探す列・別名・種類。書き方（空・重複・数）をここで確かめる
+  schema … テーブル名・固定列・番号で探す列・別名・種類。書き方（空・重複・数）をここで確かめる
   view   … 並べ替え・隠す列・表示の補助。書き方をここで確かめる
 （列名が DB にあるかは、キャッシュのテーブルを読んでから column_model.py が確かめる。
   DB にない名前は止めずに画面の「データ」で知らせ、選び直せるようにする）
@@ -424,7 +424,7 @@ PLACEHOLDER_PATTERN = re.compile(r"<[^<>]+>")
 LOG_LEVELS = ("debug", "info", "warning", "error")
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost")
 COLUMN_TYPES = ("text", "date")
-RECORD_KEY_MAX = 3  # 1 件を決める列の数の上限
+RECORD_KEY_MAX = 3  # 固定列の数の上限
 BADGE_TONES = ("success", "info", "warning", "danger", "neutral")
 
 
@@ -558,10 +558,10 @@ def validate_schema(schema, src, config):
 
     record_key = schema["recordKey"]
     if not record_key:
-        err("recordKey", "1 件を特定する列がありません。",
-            "DB の列名を 1〜3 個書いてください（例：[\"ロット番号\", \"BOX番号\"]）。画面左の「データ」→「1 件を決める列」でも選べます。")
+        err("recordKey", "固定列（レコードキー）がありません。",
+            "DB の列名を 1〜3 個書いてください（例：[\"ロット番号\", \"BOX番号\"]）。画面左の「データ」→「固定列」でも選べます。")
     elif len(record_key) > RECORD_KEY_MAX:
-        err("recordKey", f"1 件を特定する列が {len(record_key)} 個あります。", f"{RECORD_KEY_MAX} 個までにしてください。")
+        err("recordKey", f"固定列（レコードキー）が {len(record_key)} 個あります。", f"{RECORD_KEY_MAX} 個までにしてください。")
     for index, name in enumerate(record_key):
         if _blank(name):
             err(f"recordKey[{index}]", "列の名前が空か、文字列ではありません。", "DB の列名か別名を書いてください。")
@@ -665,7 +665,7 @@ from .query import quote_identifier
 def validate_cache_file(path, table_name):
     """SQLite として開けること・表があることを確かめ、行数を返す。
 
-    列は確かめない（1 件を決める列などが DB になくても、データは使えるようにして画面で選び直してもらう）。
+    列は確かめない（固定列などが DB になくても、データは使えるようにして画面で選び直してもらう）。
     検索では、このファイルから読み取った列（column_catalog）だけを使うため、ない列を参照することはない。
     """
     try:
@@ -770,7 +770,7 @@ def print_source_check(result):
 
 
 def print_column_notices(model):
-    """DB と設定の食い違い（1 件を決める列がないなど）。止めずに知らせ、画面で選び直してもらう。"""
+    """DB と設定の食い違い（固定列がないなど）。止めずに知らせ、画面で選び直してもらう。"""
     for notice in model.notices:
         print()
         print(f"[列の注意] {notice.path}：{notice.reason}")
@@ -917,7 +917,7 @@ if errorlevel 1 pause
     const bus = DS.core.createEventBus();
     const api = DS.api.createClient(DS.api.selectAdapter());
 
-    // 表示定義（DB の全列・種類・1 件を決める列・探す列）を最初に読み込み、列の登録簿を組み立てる
+    // 表示定義（DB の全列・種類・固定列・探す列）を最初に読み込み、列の登録簿を組み立てる
     try {
       DS.domain.applyView(await api.call('get_view_config'));
     } catch (error) {
@@ -948,7 +948,7 @@ if errorlevel 1 pause
     const manual = DS.views.createManualView(document.getElementById('manual-host'));
     const openPanel = (id) => store.merge('ui', { panel: id });
     const refresh = () => cache.refresh();
-    // 「1 件を決める列を選ぶ」：データのパネルを開き、その場所で変更を始める
+    // 「固定列を選ぶ」：データのパネルを開き、その場所で変更を始める
     const chooseKey = () => {
       openPanel('data');
       bus.emit('record:edit');

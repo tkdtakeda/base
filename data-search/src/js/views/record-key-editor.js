@@ -1,5 +1,5 @@
 /* =========================================================
-   「データ」パネルの「1 件を決める列」：今の列の表示・確認・変更
+   「データ」パネルの「固定列」：今の列の表示・確認・変更
 
    ふだんは今の列（左端に固定する列）と、番号で探す列だけを出す。
    変更では、列名を入れて Enter で次の欄へ → 「確かめる」で 1 件に決まるかを数える
@@ -66,7 +66,7 @@
 
     const names = el('datalist', { id: 'record-column-names' });
     const slotInput = (index) => el('input', { type: 'text', className: 'input input--sm mono', list: 'record-column-names', autocomplete: 'off', spellcheck: 'false',
-      placeholder: index === 0 ? '列名（必須）' : '列名（なくてよい）', 'aria-label': `1 件を決める列の ${index + 1} つ目` });
+      placeholder: index === 0 ? '列名（必須）' : '列名（なくてよい）', 'aria-label': `固定列の ${index + 1} つ目` });
     const slots = Array.from({ length: KEY_MAX }, (_, index) => slotInput(index));
     const searchInput = el('input', { type: 'text', className: 'input input--sm mono', list: 'record-column-names', autocomplete: 'off', spellcheck: 'false',
       'aria-label': '番号で探す列' });
@@ -76,7 +76,7 @@
     const cancelButton = button('btn--ghost btn--sm', 'fa-xmark', 'やめる');
     const stale = el('p', { className: 'pane-note is-warning', hidden: true, text: '入力が変わりました。もう一度確かめてください。' });
     const editBox = el('div', { className: 'source__edit', hidden: true }, [
-      el('p', { className: 'pane-note', text: '1 件を決める列を 1〜3 つ、DB の列名で選びます。Enter で次の欄へ移ります。' }),
+      el('p', { className: 'pane-note', text: '行を 1 件に決める列を 1〜3 つ、DB の列名で選びます。一覧の左端に固定されます。Enter で次の欄へ移ります。' }),
       el('ol', { className: 'record-key__slots' }, slots.map((input) => el('li', {}, [input]))),
       el('label', { className: 'record-key__search' }, [el('span', { className: 'pane-note', text: '番号で探す列（上部バーの入力欄）' }), searchInput]),
       message,
@@ -154,10 +154,10 @@
       const search = DS.domain.searchField();
       const nodes = [];
       if (keys.length) {
-        nodes.push(el('div', { className: 'key-chips' }, keys.map((field) => chip(field, 'fa-thumbtack'))));
+        nodes.push(el('div', { className: 'key-chips' }, keys.map((field) => chip(field, 'fa-key'))));
       } else {
         nodes.push(el('p', { className: 'record-key__missing' }, [icon('fa-circle-exclamation', '!'),
-          el('span', { text: '決まっていません。行の詳細を開くには、下の「変更」から 1 件を決める列を選んでください。' })]));
+          el('span', { text: '決まっていません。行の詳細を開くには、下の「変更」から固定列を選んでください。' })]));
       }
       nodes.push(el('p', { className: 'pane-note' }, search
         ? [el('span', { text: '番号で探す列：' }), el('strong', { className: 'mono', text: search.label })]
@@ -182,7 +182,7 @@
     return {
       element: root,
       update,
-      /** 「1 件を決める列を選ぶ」から呼ばれる：変更を始めて、その場所を見せる */
+      /** 「固定列を選ぶ」から呼ばれる：変更を始めて、その場所を見せる */
       startEditing() {
         if (editButton.disabled) return;
         if (!editing) setEditing(true);
