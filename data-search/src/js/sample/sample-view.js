@@ -1,6 +1,6 @@
 /* =========================================================
    画面だけで試すモード用の表示定義（自動生成。手で直さない）
-   元: config/sample/view.sample.json と schema.sample.json の論理情報
+   元: config/sample/view.sample.json と schema.sample.json の論理情報、python/tools/sample_columns.json（列）
    作り直し: python python/tools/sync_sample_view.py
    ========================================================= */
 (function () {
@@ -8,418 +8,36 @@
 
   window.DS = window.DS || {};
   window.DS.sampleView = /*VIEW_JSON_START*/{
-  "logicalFields": [
+  "roleFields": [
     "lotNo",
     "boxNo",
     "inspectionNo",
     "castingNo",
     "orderNo",
-    "plannedEquipmentName",
-    "businessUnitCode",
-    "demandFieldCode",
-    "applicationCode",
-    "applicationName",
-    "orderMaterial",
-    "orderTemper",
-    "orderThickness",
-    "orderWidth",
-    "orderLength",
+    "customerName",
+    "factoryDeliveryDate",
+    "cfStatus",
     "manufacturingMaterial",
     "manufacturingTemper",
-    "manufacturingThickness",
-    "manufacturingWidth",
-    "manufacturingLength",
-    "productUnitWeight",
-    "specificGravity",
-    "shape",
-    "surface",
-    "processing",
-    "surfaceProcessing",
-    "cleaning",
-    "deliverySpecificationNo",
-    "wipCategory",
-    "allocationCategory",
-    "holdCategory",
-    "holdReleaseDate",
-    "temporaryPackingFlag",
-    "urgentCategory",
-    "cfStatus",
-    "allocationCode",
-    "allocationMethod",
-    "allocationQuantity",
-    "allocationAdjustmentNo",
-    "salesDeliveryDate",
-    "factoryDeliveryDate",
-    "promisedDeliveryDate",
-    "shippingDate",
-    "wipRetentionTime",
-    "deliveryDestinationCode",
-    "customerCode",
-    "shippingDestinationCode",
-    "deliveryDestinationName",
-    "customerName",
-    "shippingDestinationName",
-    "districtCode",
-    "salespersonCode",
-    "plannedEquipmentCourse",
-    "actualEquipmentCourse",
     "remainingEquipmentCourse",
-    "totalProcessCount",
-    "pitPlannedDate",
-    "pitActualDate",
-    "specialSpecification",
-    "masterNo",
-    "specificationNo",
-    "qualityNo",
-    "manufacturingNo",
-    "testNo",
-    "personInCharge",
-    "boxPlannedThickness",
-    "boxPlannedWidth",
-    "boxPlannedLength",
-    "boxPlannedWorkPattern",
-    "boxPlannedWeight",
-    "boxPlannedCount",
-    "qualityCode",
-    "annealingScheduleCategory",
-    "annealingFurnaceNo",
-    "lastActualProcessBoxNo",
     "lastActualEquipmentName",
-    "lastActualThickness",
-    "lastActualWidth",
-    "lastActualLength",
-    "lastActualGoodWeight",
-    "lastActualCount",
-    "workStartDate",
-    "workEndDate"
+    "wipCategory",
+    "holdCategory"
   ],
   "recordKey": [
     "lotNo",
     "boxNo"
   ],
   "types": {},
-  "listColumns": [
-    {
-      "field": "lotNo",
-      "label": "ロット番号",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "boxNo",
-      "label": "BOX番号",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "inspectionNo",
-      "label": "検査番号",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "castingNo",
-      "label": "鋳造番号",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "orderNo",
-      "label": "オーダー番号",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "manufacturingMaterial",
-      "label": "製造材質",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "manufacturingTemper",
-      "label": "製造調質",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "manufacturingThickness",
-      "label": "製造板厚",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "manufacturingWidth",
-      "label": "製造板幅",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "manufacturingLength",
-      "label": "製造板丈",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "customerName",
-      "label": "取引先名",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "factoryDeliveryDate",
-      "label": "工場納期",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "remainingEquipmentCourse",
-      "label": "残仕掛設備コース",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "lastActualEquipmentName",
-      "label": "最終実績設備",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "wipCategory",
-      "label": "仕掛区分",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "holdCategory",
-      "label": "保留区分",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "cfStatus",
-      "label": "状態",
-      "visible": true,
-      "searchable": false
-    }
-  ],
-  "detailFields": [
+  "searchFields": [
     "lotNo",
     "boxNo",
     "inspectionNo",
     "castingNo",
     "orderNo",
-    "plannedEquipmentName",
-    "businessUnitCode",
-    "demandFieldCode",
-    "applicationCode",
-    "applicationName",
-    "orderMaterial",
-    "orderTemper",
-    "orderThickness",
-    "orderWidth",
-    "orderLength",
-    "manufacturingMaterial",
-    "manufacturingTemper",
-    "manufacturingThickness",
-    "manufacturingWidth",
-    "manufacturingLength",
-    "productUnitWeight",
-    "specificGravity",
-    "shape",
-    "surface",
-    "processing",
-    "surfaceProcessing",
-    "cleaning",
-    "deliverySpecificationNo",
-    "wipCategory",
-    "allocationCategory",
-    "holdCategory",
-    "holdReleaseDate",
-    "temporaryPackingFlag",
-    "urgentCategory",
-    "cfStatus",
-    "allocationCode",
-    "allocationMethod",
-    "allocationQuantity",
-    "allocationAdjustmentNo",
-    "salesDeliveryDate",
-    "factoryDeliveryDate",
-    "promisedDeliveryDate",
-    "shippingDate",
-    "wipRetentionTime",
-    "deliveryDestinationCode",
-    "customerCode",
-    "shippingDestinationCode",
-    "deliveryDestinationName",
-    "customerName",
-    "shippingDestinationName",
-    "districtCode",
-    "salespersonCode",
-    "plannedEquipmentCourse",
-    "actualEquipmentCourse",
-    "remainingEquipmentCourse",
-    "totalProcessCount",
-    "pitPlannedDate",
-    "pitActualDate",
-    "specialSpecification",
-    "masterNo",
-    "specificationNo",
-    "qualityNo",
-    "manufacturingNo",
-    "testNo",
-    "personInCharge",
-    "boxPlannedThickness",
-    "boxPlannedWidth",
-    "boxPlannedLength",
-    "boxPlannedWorkPattern",
-    "boxPlannedWeight",
-    "boxPlannedCount",
-    "qualityCode",
-    "annealingScheduleCategory",
-    "annealingFurnaceNo",
-    "lastActualProcessBoxNo",
-    "lastActualEquipmentName",
-    "lastActualThickness",
-    "lastActualWidth",
-    "lastActualLength",
-    "lastActualGoodWeight",
-    "lastActualCount",
-    "workStartDate",
-    "workEndDate"
+    "customerName"
   ],
-  "detailGroups": [
-    {
-      "id": "identity",
-      "label": "識別情報",
-      "fields": [
-        "lotNo",
-        "boxNo",
-        "inspectionNo",
-        "castingNo",
-        "orderNo"
-      ]
-    },
-    {
-      "id": "product",
-      "label": "製品・製造仕様",
-      "fields": [
-        "orderMaterial",
-        "orderTemper",
-        "orderThickness",
-        "orderWidth",
-        "orderLength",
-        "manufacturingMaterial",
-        "manufacturingTemper",
-        "manufacturingThickness",
-        "manufacturingWidth",
-        "manufacturingLength",
-        "shape",
-        "surface",
-        "processing",
-        "surfaceProcessing",
-        "cleaning",
-        "productUnitWeight",
-        "specificGravity"
-      ]
-    },
-    {
-      "id": "trade",
-      "label": "取引・納期",
-      "fields": [
-        "deliveryDestinationCode",
-        "deliveryDestinationName",
-        "customerCode",
-        "customerName",
-        "shippingDestinationCode",
-        "shippingDestinationName",
-        "salesDeliveryDate",
-        "factoryDeliveryDate",
-        "promisedDeliveryDate",
-        "shippingDate",
-        "districtCode",
-        "salespersonCode"
-      ]
-    },
-    {
-      "id": "process",
-      "label": "工程・設備",
-      "fields": [
-        "plannedEquipmentName",
-        "plannedEquipmentCourse",
-        "actualEquipmentCourse",
-        "remainingEquipmentCourse",
-        "totalProcessCount",
-        "lastActualProcessBoxNo",
-        "lastActualEquipmentName",
-        "workStartDate",
-        "workEndDate"
-      ]
-    },
-    {
-      "id": "wip",
-      "label": "仕掛・引当",
-      "fields": [
-        "wipCategory",
-        "allocationCategory",
-        "allocationCode",
-        "allocationMethod",
-        "allocationQuantity",
-        "allocationAdjustmentNo",
-        "wipRetentionTime",
-        "holdCategory",
-        "holdReleaseDate",
-        "temporaryPackingFlag",
-        "urgentCategory",
-        "cfStatus"
-      ]
-    },
-    {
-      "id": "box",
-      "label": "BOX情報",
-      "fields": [
-        "boxPlannedThickness",
-        "boxPlannedWidth",
-        "boxPlannedLength",
-        "boxPlannedWorkPattern",
-        "boxPlannedWeight",
-        "boxPlannedCount",
-        "lastActualThickness",
-        "lastActualWidth",
-        "lastActualLength",
-        "lastActualGoodWeight",
-        "lastActualCount"
-      ]
-    },
-    {
-      "id": "quality",
-      "label": "品質・仕様",
-      "fields": [
-        "qualityCode",
-        "deliverySpecificationNo",
-        "specialSpecification",
-        "masterNo",
-        "specificationNo",
-        "qualityNo",
-        "manufacturingNo",
-        "testNo",
-        "personInCharge"
-      ]
-    },
-    {
-      "id": "other",
-      "label": "用途・管理情報",
-      "fields": [
-        "businessUnitCode",
-        "demandFieldCode",
-        "applicationCode",
-        "applicationName",
-        "pitPlannedDate",
-        "pitActualDate",
-        "annealingScheduleCategory",
-        "annealingFurnaceNo"
-      ]
-    }
-  ],
+  "hiddenColumns": [],
   "fields": {},
   "filters": [
     {
@@ -458,6 +76,424 @@
   "defaultSort": {
     "field": "factoryDeliveryDate",
     "order": "asc"
-  }
+  },
+  "columns": [
+    {
+      "id": "lotNo",
+      "label": "ロット番号",
+      "role": true
+    },
+    {
+      "id": "boxNo",
+      "label": "BOX番号",
+      "role": true
+    },
+    {
+      "id": "inspectionNo",
+      "label": "検査番号",
+      "role": true
+    },
+    {
+      "id": "castingNo",
+      "label": "鋳造番号",
+      "role": true
+    },
+    {
+      "id": "orderNo",
+      "label": "オーダー番号",
+      "role": true
+    },
+    {
+      "id": "customerName",
+      "label": "取引先名",
+      "role": true
+    },
+    {
+      "id": "factoryDeliveryDate",
+      "label": "工場納期",
+      "role": true
+    },
+    {
+      "id": "cfStatus",
+      "label": "状態",
+      "role": true
+    },
+    {
+      "id": "manufacturingMaterial",
+      "label": "製造材質",
+      "role": true
+    },
+    {
+      "id": "manufacturingTemper",
+      "label": "製造調質",
+      "role": true
+    },
+    {
+      "id": "remainingEquipmentCourse",
+      "label": "残仕掛設備コース",
+      "role": true
+    },
+    {
+      "id": "lastActualEquipmentName",
+      "label": "最終実績設備",
+      "role": true
+    },
+    {
+      "id": "wipCategory",
+      "label": "仕掛区分",
+      "role": true
+    },
+    {
+      "id": "holdCategory",
+      "label": "保留区分",
+      "role": true
+    },
+    {
+      "id": "plannedEquipmentName",
+      "label": "plannedEquipmentName",
+      "role": false
+    },
+    {
+      "id": "businessUnitCode",
+      "label": "businessUnitCode",
+      "role": false
+    },
+    {
+      "id": "demandFieldCode",
+      "label": "demandFieldCode",
+      "role": false
+    },
+    {
+      "id": "applicationCode",
+      "label": "applicationCode",
+      "role": false
+    },
+    {
+      "id": "applicationName",
+      "label": "applicationName",
+      "role": false
+    },
+    {
+      "id": "orderMaterial",
+      "label": "orderMaterial",
+      "role": false
+    },
+    {
+      "id": "orderTemper",
+      "label": "orderTemper",
+      "role": false
+    },
+    {
+      "id": "orderThickness",
+      "label": "orderThickness",
+      "role": false
+    },
+    {
+      "id": "orderWidth",
+      "label": "orderWidth",
+      "role": false
+    },
+    {
+      "id": "orderLength",
+      "label": "orderLength",
+      "role": false
+    },
+    {
+      "id": "manufacturingThickness",
+      "label": "manufacturingThickness",
+      "role": false
+    },
+    {
+      "id": "manufacturingWidth",
+      "label": "manufacturingWidth",
+      "role": false
+    },
+    {
+      "id": "manufacturingLength",
+      "label": "manufacturingLength",
+      "role": false
+    },
+    {
+      "id": "productUnitWeight",
+      "label": "productUnitWeight",
+      "role": false
+    },
+    {
+      "id": "specificGravity",
+      "label": "specificGravity",
+      "role": false
+    },
+    {
+      "id": "shape",
+      "label": "shape",
+      "role": false
+    },
+    {
+      "id": "surface",
+      "label": "surface",
+      "role": false
+    },
+    {
+      "id": "processing",
+      "label": "processing",
+      "role": false
+    },
+    {
+      "id": "surfaceProcessing",
+      "label": "surfaceProcessing",
+      "role": false
+    },
+    {
+      "id": "cleaning",
+      "label": "cleaning",
+      "role": false
+    },
+    {
+      "id": "deliverySpecificationNo",
+      "label": "deliverySpecificationNo",
+      "role": false
+    },
+    {
+      "id": "allocationCategory",
+      "label": "allocationCategory",
+      "role": false
+    },
+    {
+      "id": "holdReleaseDate",
+      "label": "holdReleaseDate",
+      "role": false
+    },
+    {
+      "id": "temporaryPackingFlag",
+      "label": "temporaryPackingFlag",
+      "role": false
+    },
+    {
+      "id": "urgentCategory",
+      "label": "urgentCategory",
+      "role": false
+    },
+    {
+      "id": "allocationCode",
+      "label": "allocationCode",
+      "role": false
+    },
+    {
+      "id": "allocationMethod",
+      "label": "allocationMethod",
+      "role": false
+    },
+    {
+      "id": "allocationQuantity",
+      "label": "allocationQuantity",
+      "role": false
+    },
+    {
+      "id": "allocationAdjustmentNo",
+      "label": "allocationAdjustmentNo",
+      "role": false
+    },
+    {
+      "id": "salesDeliveryDate",
+      "label": "salesDeliveryDate",
+      "role": false
+    },
+    {
+      "id": "promisedDeliveryDate",
+      "label": "promisedDeliveryDate",
+      "role": false
+    },
+    {
+      "id": "shippingDate",
+      "label": "shippingDate",
+      "role": false
+    },
+    {
+      "id": "wipRetentionTime",
+      "label": "wipRetentionTime",
+      "role": false
+    },
+    {
+      "id": "deliveryDestinationCode",
+      "label": "deliveryDestinationCode",
+      "role": false
+    },
+    {
+      "id": "customerCode",
+      "label": "customerCode",
+      "role": false
+    },
+    {
+      "id": "shippingDestinationCode",
+      "label": "shippingDestinationCode",
+      "role": false
+    },
+    {
+      "id": "deliveryDestinationName",
+      "label": "deliveryDestinationName",
+      "role": false
+    },
+    {
+      "id": "shippingDestinationName",
+      "label": "shippingDestinationName",
+      "role": false
+    },
+    {
+      "id": "districtCode",
+      "label": "districtCode",
+      "role": false
+    },
+    {
+      "id": "salespersonCode",
+      "label": "salespersonCode",
+      "role": false
+    },
+    {
+      "id": "plannedEquipmentCourse",
+      "label": "plannedEquipmentCourse",
+      "role": false
+    },
+    {
+      "id": "actualEquipmentCourse",
+      "label": "actualEquipmentCourse",
+      "role": false
+    },
+    {
+      "id": "totalProcessCount",
+      "label": "totalProcessCount",
+      "role": false
+    },
+    {
+      "id": "pitPlannedDate",
+      "label": "pitPlannedDate",
+      "role": false
+    },
+    {
+      "id": "pitActualDate",
+      "label": "pitActualDate",
+      "role": false
+    },
+    {
+      "id": "specialSpecification",
+      "label": "specialSpecification",
+      "role": false
+    },
+    {
+      "id": "masterNo",
+      "label": "masterNo",
+      "role": false
+    },
+    {
+      "id": "specificationNo",
+      "label": "specificationNo",
+      "role": false
+    },
+    {
+      "id": "qualityNo",
+      "label": "qualityNo",
+      "role": false
+    },
+    {
+      "id": "manufacturingNo",
+      "label": "manufacturingNo",
+      "role": false
+    },
+    {
+      "id": "testNo",
+      "label": "testNo",
+      "role": false
+    },
+    {
+      "id": "personInCharge",
+      "label": "personInCharge",
+      "role": false
+    },
+    {
+      "id": "boxPlannedThickness",
+      "label": "boxPlannedThickness",
+      "role": false
+    },
+    {
+      "id": "boxPlannedWidth",
+      "label": "boxPlannedWidth",
+      "role": false
+    },
+    {
+      "id": "boxPlannedLength",
+      "label": "boxPlannedLength",
+      "role": false
+    },
+    {
+      "id": "boxPlannedWorkPattern",
+      "label": "boxPlannedWorkPattern",
+      "role": false
+    },
+    {
+      "id": "boxPlannedWeight",
+      "label": "boxPlannedWeight",
+      "role": false
+    },
+    {
+      "id": "boxPlannedCount",
+      "label": "boxPlannedCount",
+      "role": false
+    },
+    {
+      "id": "qualityCode",
+      "label": "qualityCode",
+      "role": false
+    },
+    {
+      "id": "annealingScheduleCategory",
+      "label": "annealingScheduleCategory",
+      "role": false
+    },
+    {
+      "id": "annealingFurnaceNo",
+      "label": "annealingFurnaceNo",
+      "role": false
+    },
+    {
+      "id": "lastActualProcessBoxNo",
+      "label": "lastActualProcessBoxNo",
+      "role": false
+    },
+    {
+      "id": "lastActualThickness",
+      "label": "lastActualThickness",
+      "role": false
+    },
+    {
+      "id": "lastActualWidth",
+      "label": "lastActualWidth",
+      "role": false
+    },
+    {
+      "id": "lastActualLength",
+      "label": "lastActualLength",
+      "role": false
+    },
+    {
+      "id": "lastActualGoodWeight",
+      "label": "lastActualGoodWeight",
+      "role": false
+    },
+    {
+      "id": "lastActualCount",
+      "label": "lastActualCount",
+      "role": false
+    },
+    {
+      "id": "workStartDate",
+      "label": "workStartDate",
+      "role": false
+    },
+    {
+      "id": "workEndDate",
+      "label": "workEndDate",
+      "role": false
+    }
+  ],
+  "columnsVersion": "919bfde851dc"
 }/*VIEW_JSON_END*/;
 })();

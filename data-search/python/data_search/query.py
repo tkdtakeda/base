@@ -1,6 +1,7 @@
 """論理条件から SQL を組み立てる。値は必ずパラメーターで渡し、文字列連結しない。
 
-表名・列名は設定ファイルから来る値だけを使い、画面から受け取った値は論理名の一覧と照合してから使う。
+表名は設定ファイル、列名は設定ファイルとキャッシュのテーブルから来る値だけを使う。
+画面から受け取った列の id は、列の一覧（column_catalog）と照合してから使う。
 """
 
 
@@ -44,11 +45,13 @@ class QueryBuilder:
               date の from / to は 'YYYY-MM-DD' か None（日付は呼び出し側で確定させる）
     """
 
-    def __init__(self, table_name, field_mappings, model):
+    def __init__(self, table_name, catalog, model):
+        """catalog：表示する列（column_catalog.Column の並び。役割のある列を必ず含む）"""
         self.model = model
         self.table = quote_identifier(table_name)
-        self.columns = {name: quote_identifier(field_mappings[name]) for name in model.fields}
-        self.select_list = ", ".join(f"{self.columns[name]} AS {quote_identifier(name)}" for name in model.fields)
+        self.ids = tuple(column.id for column in catalog)
+        self.columns = {column.id: quote_identifier(column.physical) for column in catalog}
+        self.select_list = ", ".join(f"{self.columns[name]} AS {quote_identifier(name)}" for name in self.ids)
 
     # ── 条件 ──
     def _search_condition(self, search):

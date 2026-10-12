@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from datetime import datetime
 
 from . import cache_copier
+from .column_catalog import build_catalog, catalog_from_file, catalog_version
 from .cache_validator import open_readonly, validate_cache_file
 from .errors import AppError
 
@@ -40,6 +41,18 @@ class CacheService:
         # 今の schema（テーブル名・列名）と合わないキャッシュは使わない。
         # SQLite は存在しない列名を "..." で書くと文字列として扱うため、合わないまま検索すると誤った値が返る。
         self.stale = False
+        self._catalog = None  # 表示する列の一覧（キャッシュから読み取る。キャッシュが変わったら作り直す）
+
+    # ── 列の一覧 ──
+    def catalog(self):
+        """表示する列（column_catalog.Column の並び）。キャッシュがなければ役割のある列だけ。"""
+        with self.lock:
+            if not self.cache_available():
+                return build_catalog([], self.config.field_mappings)
+            if self._catalog is None:
+                self._catalog = catalog_from_file(open_readonly, self.cache_path, self.config.table_name, self.config.field_mappings)
+                self.logger.info("column catalog columns=%d", len(self._catalog))  # 列名は残さない
+            return self._catalog
 
     # ── 状態の読み書き ──
     def _read_state(self):
@@ -60,6 +73,7 @@ class CacheService:
         """読み込み先の変更などで設定を差し替える。前の読み込み先から作ったキャッシュは使わない。"""
         with self.lock:
             self.config = config
+            self._catalog = None
             if not self._same_source():
                 self.stale = True
 
@@ -99,6 +113,7 @@ class CacheService:
                 os.makedirs(os.path.dirname(self.cache_path) or ".", exist_ok=True)
                 os.replace(self.temp_path, self.cache_path)
                 self.stale = False
+                self._catalog = None
             except AppError as error:
                 cache_copier.remove_quietly(self.temp_path)
                 using_previous = self.cache_available()
@@ -184,6 +199,8 @@ class CacheService:
             "lastRefreshAt": state.get("lastRefreshAt"),
             "errorCode": None if succeeded else state.get("errorCode"),
             "errorMessage": None if succeeded else state.get("errorMessage"),
+            # 列の並びの印。変わったら画面は表示定義を読み直す
+            "columnsVersion": catalog_version(self.catalog()),
         })
 
     # ── 読み取り ──

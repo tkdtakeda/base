@@ -9,7 +9,7 @@
    （日付の絞り込み「今日〜7 日後」などをいつ開いても試せるように）。
    パターンを増やすときは patterns.register() を足すだけでよい。
 
-   行の項目は、表示定義の論理項目（DS.sampleView.logicalFields）すべてを埋める。
+   行の項目は、表示定義の列（DS.sampleView.columns の id）すべてを埋める。
    主な項目は値の候補（VALUE_RULES）から、それ以外は項目名の形（〜Date・〜Width など）から作る。
    論理項目が増えても、項目名の形に当てはまればそのままサンプルが作られる。
    ========================================================= */
@@ -118,7 +118,7 @@
   }
 
   function logicalFields() {
-    return (DS.sampleView && DS.sampleView.logicalFields) || [];
+    return ((DS.sampleView && DS.sampleView.columns) || []).map((column) => column.id);
   }
 
   /**
@@ -259,7 +259,7 @@
 ```javascript
 /* =========================================================
    画面だけで試すモード用の表示定義（自動生成。手で直さない）
-   元: config/sample/view.sample.json と schema.sample.json の論理情報
+   元: config/sample/view.sample.json と schema.sample.json の論理情報、python/tools/sample_columns.json（列）
    作り直し: python python/tools/sync_sample_view.py
    ========================================================= */
 (function () {
@@ -267,418 +267,36 @@
 
   window.DS = window.DS || {};
   window.DS.sampleView = /*VIEW_JSON_START*/{
-  "logicalFields": [
+  "roleFields": [
     "lotNo",
     "boxNo",
     "inspectionNo",
     "castingNo",
     "orderNo",
-    "plannedEquipmentName",
-    "businessUnitCode",
-    "demandFieldCode",
-    "applicationCode",
-    "applicationName",
-    "orderMaterial",
-    "orderTemper",
-    "orderThickness",
-    "orderWidth",
-    "orderLength",
+    "customerName",
+    "factoryDeliveryDate",
+    "cfStatus",
     "manufacturingMaterial",
     "manufacturingTemper",
-    "manufacturingThickness",
-    "manufacturingWidth",
-    "manufacturingLength",
-    "productUnitWeight",
-    "specificGravity",
-    "shape",
-    "surface",
-    "processing",
-    "surfaceProcessing",
-    "cleaning",
-    "deliverySpecificationNo",
-    "wipCategory",
-    "allocationCategory",
-    "holdCategory",
-    "holdReleaseDate",
-    "temporaryPackingFlag",
-    "urgentCategory",
-    "cfStatus",
-    "allocationCode",
-    "allocationMethod",
-    "allocationQuantity",
-    "allocationAdjustmentNo",
-    "salesDeliveryDate",
-    "factoryDeliveryDate",
-    "promisedDeliveryDate",
-    "shippingDate",
-    "wipRetentionTime",
-    "deliveryDestinationCode",
-    "customerCode",
-    "shippingDestinationCode",
-    "deliveryDestinationName",
-    "customerName",
-    "shippingDestinationName",
-    "districtCode",
-    "salespersonCode",
-    "plannedEquipmentCourse",
-    "actualEquipmentCourse",
     "remainingEquipmentCourse",
-    "totalProcessCount",
-    "pitPlannedDate",
-    "pitActualDate",
-    "specialSpecification",
-    "masterNo",
-    "specificationNo",
-    "qualityNo",
-    "manufacturingNo",
-    "testNo",
-    "personInCharge",
-    "boxPlannedThickness",
-    "boxPlannedWidth",
-    "boxPlannedLength",
-    "boxPlannedWorkPattern",
-    "boxPlannedWeight",
-    "boxPlannedCount",
-    "qualityCode",
-    "annealingScheduleCategory",
-    "annealingFurnaceNo",
-    "lastActualProcessBoxNo",
     "lastActualEquipmentName",
-    "lastActualThickness",
-    "lastActualWidth",
-    "lastActualLength",
-    "lastActualGoodWeight",
-    "lastActualCount",
-    "workStartDate",
-    "workEndDate"
+    "wipCategory",
+    "holdCategory"
   ],
   "recordKey": [
     "lotNo",
     "boxNo"
   ],
   "types": {},
-  "listColumns": [
-    {
-      "field": "lotNo",
-      "label": "ロット番号",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "boxNo",
-      "label": "BOX番号",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "inspectionNo",
-      "label": "検査番号",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "castingNo",
-      "label": "鋳造番号",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "orderNo",
-      "label": "オーダー番号",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "manufacturingMaterial",
-      "label": "製造材質",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "manufacturingTemper",
-      "label": "製造調質",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "manufacturingThickness",
-      "label": "製造板厚",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "manufacturingWidth",
-      "label": "製造板幅",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "manufacturingLength",
-      "label": "製造板丈",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "customerName",
-      "label": "取引先名",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "factoryDeliveryDate",
-      "label": "工場納期",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "remainingEquipmentCourse",
-      "label": "残仕掛設備コース",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "lastActualEquipmentName",
-      "label": "最終実績設備",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "wipCategory",
-      "label": "仕掛区分",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "holdCategory",
-      "label": "保留区分",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "cfStatus",
-      "label": "状態",
-      "visible": true,
-      "searchable": false
-    }
-  ],
-  "detailFields": [
+  "searchFields": [
     "lotNo",
     "boxNo",
     "inspectionNo",
     "castingNo",
     "orderNo",
-    "plannedEquipmentName",
-    "businessUnitCode",
-    "demandFieldCode",
-    "applicationCode",
-    "applicationName",
-    "orderMaterial",
-    "orderTemper",
-    "orderThickness",
-    "orderWidth",
-    "orderLength",
-    "manufacturingMaterial",
-    "manufacturingTemper",
-    "manufacturingThickness",
-    "manufacturingWidth",
-    "manufacturingLength",
-    "productUnitWeight",
-    "specificGravity",
-    "shape",
-    "surface",
-    "processing",
-    "surfaceProcessing",
-    "cleaning",
-    "deliverySpecificationNo",
-    "wipCategory",
-    "allocationCategory",
-    "holdCategory",
-    "holdReleaseDate",
-    "temporaryPackingFlag",
-    "urgentCategory",
-    "cfStatus",
-    "allocationCode",
-    "allocationMethod",
-    "allocationQuantity",
-    "allocationAdjustmentNo",
-    "salesDeliveryDate",
-    "factoryDeliveryDate",
-    "promisedDeliveryDate",
-    "shippingDate",
-    "wipRetentionTime",
-    "deliveryDestinationCode",
-    "customerCode",
-    "shippingDestinationCode",
-    "deliveryDestinationName",
-    "customerName",
-    "shippingDestinationName",
-    "districtCode",
-    "salespersonCode",
-    "plannedEquipmentCourse",
-    "actualEquipmentCourse",
-    "remainingEquipmentCourse",
-    "totalProcessCount",
-    "pitPlannedDate",
-    "pitActualDate",
-    "specialSpecification",
-    "masterNo",
-    "specificationNo",
-    "qualityNo",
-    "manufacturingNo",
-    "testNo",
-    "personInCharge",
-    "boxPlannedThickness",
-    "boxPlannedWidth",
-    "boxPlannedLength",
-    "boxPlannedWorkPattern",
-    "boxPlannedWeight",
-    "boxPlannedCount",
-    "qualityCode",
-    "annealingScheduleCategory",
-    "annealingFurnaceNo",
-    "lastActualProcessBoxNo",
-    "lastActualEquipmentName",
-    "lastActualThickness",
-    "lastActualWidth",
-    "lastActualLength",
-    "lastActualGoodWeight",
-    "lastActualCount",
-    "workStartDate",
-    "workEndDate"
+    "customerName"
   ],
-  "detailGroups": [
-    {
-      "id": "identity",
-      "label": "識別情報",
-      "fields": [
-        "lotNo",
-        "boxNo",
-        "inspectionNo",
-        "castingNo",
-        "orderNo"
-      ]
-    },
-    {
-      "id": "product",
-      "label": "製品・製造仕様",
-      "fields": [
-        "orderMaterial",
-        "orderTemper",
-        "orderThickness",
-        "orderWidth",
-        "orderLength",
-        "manufacturingMaterial",
-        "manufacturingTemper",
-        "manufacturingThickness",
-        "manufacturingWidth",
-        "manufacturingLength",
-        "shape",
-        "surface",
-        "processing",
-        "surfaceProcessing",
-        "cleaning",
-        "productUnitWeight",
-        "specificGravity"
-      ]
-    },
-    {
-      "id": "trade",
-      "label": "取引・納期",
-      "fields": [
-        "deliveryDestinationCode",
-        "deliveryDestinationName",
-        "customerCode",
-        "customerName",
-        "shippingDestinationCode",
-        "shippingDestinationName",
-        "salesDeliveryDate",
-        "factoryDeliveryDate",
-        "promisedDeliveryDate",
-        "shippingDate",
-        "districtCode",
-        "salespersonCode"
-      ]
-    },
-    {
-      "id": "process",
-      "label": "工程・設備",
-      "fields": [
-        "plannedEquipmentName",
-        "plannedEquipmentCourse",
-        "actualEquipmentCourse",
-        "remainingEquipmentCourse",
-        "totalProcessCount",
-        "lastActualProcessBoxNo",
-        "lastActualEquipmentName",
-        "workStartDate",
-        "workEndDate"
-      ]
-    },
-    {
-      "id": "wip",
-      "label": "仕掛・引当",
-      "fields": [
-        "wipCategory",
-        "allocationCategory",
-        "allocationCode",
-        "allocationMethod",
-        "allocationQuantity",
-        "allocationAdjustmentNo",
-        "wipRetentionTime",
-        "holdCategory",
-        "holdReleaseDate",
-        "temporaryPackingFlag",
-        "urgentCategory",
-        "cfStatus"
-      ]
-    },
-    {
-      "id": "box",
-      "label": "BOX情報",
-      "fields": [
-        "boxPlannedThickness",
-        "boxPlannedWidth",
-        "boxPlannedLength",
-        "boxPlannedWorkPattern",
-        "boxPlannedWeight",
-        "boxPlannedCount",
-        "lastActualThickness",
-        "lastActualWidth",
-        "lastActualLength",
-        "lastActualGoodWeight",
-        "lastActualCount"
-      ]
-    },
-    {
-      "id": "quality",
-      "label": "品質・仕様",
-      "fields": [
-        "qualityCode",
-        "deliverySpecificationNo",
-        "specialSpecification",
-        "masterNo",
-        "specificationNo",
-        "qualityNo",
-        "manufacturingNo",
-        "testNo",
-        "personInCharge"
-      ]
-    },
-    {
-      "id": "other",
-      "label": "用途・管理情報",
-      "fields": [
-        "businessUnitCode",
-        "demandFieldCode",
-        "applicationCode",
-        "applicationName",
-        "pitPlannedDate",
-        "pitActualDate",
-        "annealingScheduleCategory",
-        "annealingFurnaceNo"
-      ]
-    }
-  ],
+  "hiddenColumns": [],
   "fields": {},
   "filters": [
     {
@@ -717,7 +335,425 @@
   "defaultSort": {
     "field": "factoryDeliveryDate",
     "order": "asc"
-  }
+  },
+  "columns": [
+    {
+      "id": "lotNo",
+      "label": "ロット番号",
+      "role": true
+    },
+    {
+      "id": "boxNo",
+      "label": "BOX番号",
+      "role": true
+    },
+    {
+      "id": "inspectionNo",
+      "label": "検査番号",
+      "role": true
+    },
+    {
+      "id": "castingNo",
+      "label": "鋳造番号",
+      "role": true
+    },
+    {
+      "id": "orderNo",
+      "label": "オーダー番号",
+      "role": true
+    },
+    {
+      "id": "customerName",
+      "label": "取引先名",
+      "role": true
+    },
+    {
+      "id": "factoryDeliveryDate",
+      "label": "工場納期",
+      "role": true
+    },
+    {
+      "id": "cfStatus",
+      "label": "状態",
+      "role": true
+    },
+    {
+      "id": "manufacturingMaterial",
+      "label": "製造材質",
+      "role": true
+    },
+    {
+      "id": "manufacturingTemper",
+      "label": "製造調質",
+      "role": true
+    },
+    {
+      "id": "remainingEquipmentCourse",
+      "label": "残仕掛設備コース",
+      "role": true
+    },
+    {
+      "id": "lastActualEquipmentName",
+      "label": "最終実績設備",
+      "role": true
+    },
+    {
+      "id": "wipCategory",
+      "label": "仕掛区分",
+      "role": true
+    },
+    {
+      "id": "holdCategory",
+      "label": "保留区分",
+      "role": true
+    },
+    {
+      "id": "plannedEquipmentName",
+      "label": "plannedEquipmentName",
+      "role": false
+    },
+    {
+      "id": "businessUnitCode",
+      "label": "businessUnitCode",
+      "role": false
+    },
+    {
+      "id": "demandFieldCode",
+      "label": "demandFieldCode",
+      "role": false
+    },
+    {
+      "id": "applicationCode",
+      "label": "applicationCode",
+      "role": false
+    },
+    {
+      "id": "applicationName",
+      "label": "applicationName",
+      "role": false
+    },
+    {
+      "id": "orderMaterial",
+      "label": "orderMaterial",
+      "role": false
+    },
+    {
+      "id": "orderTemper",
+      "label": "orderTemper",
+      "role": false
+    },
+    {
+      "id": "orderThickness",
+      "label": "orderThickness",
+      "role": false
+    },
+    {
+      "id": "orderWidth",
+      "label": "orderWidth",
+      "role": false
+    },
+    {
+      "id": "orderLength",
+      "label": "orderLength",
+      "role": false
+    },
+    {
+      "id": "manufacturingThickness",
+      "label": "manufacturingThickness",
+      "role": false
+    },
+    {
+      "id": "manufacturingWidth",
+      "label": "manufacturingWidth",
+      "role": false
+    },
+    {
+      "id": "manufacturingLength",
+      "label": "manufacturingLength",
+      "role": false
+    },
+    {
+      "id": "productUnitWeight",
+      "label": "productUnitWeight",
+      "role": false
+    },
+    {
+      "id": "specificGravity",
+      "label": "specificGravity",
+      "role": false
+    },
+    {
+      "id": "shape",
+      "label": "shape",
+      "role": false
+    },
+    {
+      "id": "surface",
+      "label": "surface",
+      "role": false
+    },
+    {
+      "id": "processing",
+      "label": "processing",
+      "role": false
+    },
+    {
+      "id": "surfaceProcessing",
+      "label": "surfaceProcessing",
+      "role": false
+    },
+    {
+      "id": "cleaning",
+      "label": "cleaning",
+      "role": false
+    },
+    {
+      "id": "deliverySpecificationNo",
+      "label": "deliverySpecificationNo",
+      "role": false
+    },
+    {
+      "id": "allocationCategory",
+      "label": "allocationCategory",
+      "role": false
+    },
+    {
+      "id": "holdReleaseDate",
+      "label": "holdReleaseDate",
+      "role": false
+    },
+    {
+      "id": "temporaryPackingFlag",
+      "label": "temporaryPackingFlag",
+      "role": false
+    },
+    {
+      "id": "urgentCategory",
+      "label": "urgentCategory",
+      "role": false
+    },
+    {
+      "id": "allocationCode",
+      "label": "allocationCode",
+      "role": false
+    },
+    {
+      "id": "allocationMethod",
+      "label": "allocationMethod",
+      "role": false
+    },
+    {
+      "id": "allocationQuantity",
+      "label": "allocationQuantity",
+      "role": false
+    },
+    {
+      "id": "allocationAdjustmentNo",
+      "label": "allocationAdjustmentNo",
+      "role": false
+    },
+    {
+      "id": "salesDeliveryDate",
+      "label": "salesDeliveryDate",
+      "role": false
+    },
+    {
+      "id": "promisedDeliveryDate",
+      "label": "promisedDeliveryDate",
+      "role": false
+    },
+    {
+      "id": "shippingDate",
+      "label": "shippingDate",
+      "role": false
+    },
+    {
+      "id": "wipRetentionTime",
+      "label": "wipRetentionTime",
+      "role": false
+    },
+    {
+      "id": "deliveryDestinationCode",
+      "label": "deliveryDestinationCode",
+      "role": false
+    },
+    {
+      "id": "customerCode",
+      "label": "customerCode",
+      "role": false
+    },
+    {
+      "id": "shippingDestinationCode",
+      "label": "shippingDestinationCode",
+      "role": false
+    },
+    {
+      "id": "deliveryDestinationName",
+      "label": "deliveryDestinationName",
+      "role": false
+    },
+    {
+      "id": "shippingDestinationName",
+      "label": "shippingDestinationName",
+      "role": false
+    },
+    {
+      "id": "districtCode",
+      "label": "districtCode",
+      "role": false
+    },
+    {
+      "id": "salespersonCode",
+      "label": "salespersonCode",
+      "role": false
+    },
+    {
+      "id": "plannedEquipmentCourse",
+      "label": "plannedEquipmentCourse",
+      "role": false
+    },
+    {
+      "id": "actualEquipmentCourse",
+      "label": "actualEquipmentCourse",
+      "role": false
+    },
+    {
+      "id": "totalProcessCount",
+      "label": "totalProcessCount",
+      "role": false
+    },
+    {
+      "id": "pitPlannedDate",
+      "label": "pitPlannedDate",
+      "role": false
+    },
+    {
+      "id": "pitActualDate",
+      "label": "pitActualDate",
+      "role": false
+    },
+    {
+      "id": "specialSpecification",
+      "label": "specialSpecification",
+      "role": false
+    },
+    {
+      "id": "masterNo",
+      "label": "masterNo",
+      "role": false
+    },
+    {
+      "id": "specificationNo",
+      "label": "specificationNo",
+      "role": false
+    },
+    {
+      "id": "qualityNo",
+      "label": "qualityNo",
+      "role": false
+    },
+    {
+      "id": "manufacturingNo",
+      "label": "manufacturingNo",
+      "role": false
+    },
+    {
+      "id": "testNo",
+      "label": "testNo",
+      "role": false
+    },
+    {
+      "id": "personInCharge",
+      "label": "personInCharge",
+      "role": false
+    },
+    {
+      "id": "boxPlannedThickness",
+      "label": "boxPlannedThickness",
+      "role": false
+    },
+    {
+      "id": "boxPlannedWidth",
+      "label": "boxPlannedWidth",
+      "role": false
+    },
+    {
+      "id": "boxPlannedLength",
+      "label": "boxPlannedLength",
+      "role": false
+    },
+    {
+      "id": "boxPlannedWorkPattern",
+      "label": "boxPlannedWorkPattern",
+      "role": false
+    },
+    {
+      "id": "boxPlannedWeight",
+      "label": "boxPlannedWeight",
+      "role": false
+    },
+    {
+      "id": "boxPlannedCount",
+      "label": "boxPlannedCount",
+      "role": false
+    },
+    {
+      "id": "qualityCode",
+      "label": "qualityCode",
+      "role": false
+    },
+    {
+      "id": "annealingScheduleCategory",
+      "label": "annealingScheduleCategory",
+      "role": false
+    },
+    {
+      "id": "annealingFurnaceNo",
+      "label": "annealingFurnaceNo",
+      "role": false
+    },
+    {
+      "id": "lastActualProcessBoxNo",
+      "label": "lastActualProcessBoxNo",
+      "role": false
+    },
+    {
+      "id": "lastActualThickness",
+      "label": "lastActualThickness",
+      "role": false
+    },
+    {
+      "id": "lastActualWidth",
+      "label": "lastActualWidth",
+      "role": false
+    },
+    {
+      "id": "lastActualLength",
+      "label": "lastActualLength",
+      "role": false
+    },
+    {
+      "id": "lastActualGoodWeight",
+      "label": "lastActualGoodWeight",
+      "role": false
+    },
+    {
+      "id": "lastActualCount",
+      "label": "lastActualCount",
+      "role": false
+    },
+    {
+      "id": "workStartDate",
+      "label": "workStartDate",
+      "role": false
+    },
+    {
+      "id": "workEndDate",
+      "label": "workEndDate",
+      "role": false
+    }
+  ],
+  "columnsVersion": "919bfde851dc"
 }/*VIEW_JSON_END*/;
 })();
 ```
@@ -787,8 +823,8 @@
 
     function render(state) {
       const selection = state.selection;
-      root.hidden = !selection.key;
-      if (!selection.key) return;
+      root.hidden = !selection.open;
+      if (!selection.open) return;
       const item = selection.item;
 
       // 見出し：1 件を特定する鍵（例：ロット番号＋BOX番号）と、札を持つ項目（例：状態）
@@ -862,24 +898,194 @@
 })();
 ```
 
+`src/js/views/grid-tools.js`
+
+```javascript
+/* =========================================================
+   一覧の表を、全列を並べても見失わないようにする道具
+
+     左端の固定     … 1 件を決める列（例：ロット番号・BOX番号）は横に動かしても残す
+     列幅           … 中身に合わせて決め、長すぎる値は「…」で省く（マウスを乗せると全文）
+                      見出しの右端をドラッグで幅を変える。ダブルクリックで元に戻す。幅はブラウザに保存
+     列を探す       … 列名を入れて Enter で、その列まで横に動かして光らせる
+     行の高さ       … 詰める／ゆったり（ブラウザに保存）
+   ========================================================= */
+(function () {
+  'use strict';
+
+  const DS = window.DS;
+  const MIN_WIDTH = 48;
+  const MAX_WIDTH = 800;
+
+  function createGridTools({ store, toast, openPanel }) {
+    const { el, icon } = DS.util;
+
+    // ── 道具の並び（一覧の上） ──
+    const finder = el('input', { type: 'search', className: 'input input--sm grid-tools__finder', placeholder: '列を探す',
+      'aria-label': '列を探す（列名の一部を入れて Enter）', list: 'grid-column-names', autocomplete: 'off' });
+    const names = el('datalist', { id: 'grid-column-names' });
+    const densityButton = el('button', { type: 'button', className: 'icon-btn grid-tools__density' });
+    const element = el('div', { className: 'grid-tools' }, [
+      el('span', { className: 'grid-tools__find' }, [icon('fa-magnifying-glass', ''), finder]), names, densityButton,
+    ]);
+    DS.util.selectAllOnFocus(element);
+
+    let wrap = null;
+    let styleNode = null;
+
+    function columnIndex(id) {
+      if (!wrap) return -1;
+      const heads = Array.from(wrap.querySelectorAll('thead th'));
+      return heads.findIndex((th) => th.dataset.field === id);
+    }
+
+    function find(text) {
+      const needle = DS.util.foldForCompare(text);
+      if (!needle) return;
+      const all = DS.domain.listFields();
+      const field = all.find((f) => DS.util.foldForCompare(f.label) === needle) ||
+        all.find((f) => DS.util.foldForCompare(f.label).includes(needle));
+      if (!field) {
+        toast.show({ tone: 'warning', message: `「${text}」を含む列はありません` });
+        return;
+      }
+      if (store.get().columns.hidden.includes(field.id)) {
+        toast.show({ tone: 'info', message: `「${field.label}」は隠している列です`, actionLabel: '表示する', onAction: () => {
+          store.merge('columns', { hidden: store.get().columns.hidden.filter((id) => id !== field.id) });
+          window.setTimeout(() => find(field.label), 0);
+        } });
+        return;
+      }
+      const index = columnIndex(field.id);
+      if (index === -1) return;
+      const th = wrap.querySelectorAll('thead th')[index];
+      const pinned = Array.from(wrap.querySelectorAll('thead th.is-pinned')).reduce((sum, node) => sum + node.offsetWidth, 0);
+      wrap.scrollLeft = Math.max(0, th.offsetLeft - pinned - 16);
+      wrap.querySelectorAll(`tr > :nth-child(${index + 1})`).forEach((node) => DS.util.flash(node));
+    }
+
+    finder.addEventListener('keydown', (event) => {
+      if (event.isComposing || event.keyCode === 229 || event.key !== 'Enter') return;
+      event.preventDefault();
+      find(finder.value);
+    });
+    finder.addEventListener('change', () => find(finder.value)); // 候補から選んだとき
+
+    densityButton.addEventListener('click', () => {
+      const next = store.get().columns.density === 'comfortable' ? 'compact' : 'comfortable';
+      store.merge('columns', { density: next });
+    });
+
+    // ── 列幅の変更 ──
+    function startResize(event, th) {
+      event.preventDefault();
+      const id = th.dataset.field;
+      const startX = event.clientX;
+      const startWidth = th.offsetWidth;
+      const index = columnIndex(id);
+      document.body.classList.add('is-resizing');
+      function move(e) {
+        const width = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth + e.clientX - startX));
+        applyWidths(Object.assign({}, store.get().columns.widths, { [id]: width }));
+        if (index === 0) updatePinned();
+      }
+      function up(e) {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        document.body.classList.remove('is-resizing');
+        const width = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth + e.clientX - startX));
+        store.merge('columns', { widths: Object.assign({}, store.get().columns.widths, { [id]: width }) });
+      }
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    }
+
+    function resetWidth(id) {
+      const widths = Object.assign({}, store.get().columns.widths);
+      delete widths[id];
+      store.merge('columns', { widths });
+    }
+
+    /** 幅を決めた列だけ、nth-child の規則で幅をそろえる（見出しと中身が同じ幅になる） */
+    function applyWidths(widths) {
+      if (!wrap || !styleNode) return;
+      const heads = Array.from(wrap.querySelectorAll('thead th'));
+      styleNode.textContent = heads.map((th, index) => {
+        const width = widths[th.dataset.field];
+        return width ? `.grid tr > :nth-child(${index + 1}) { width:${width}px; min-width:${width}px; max-width:${width}px; }` : '';
+      }).join('\n');
+    }
+
+    /** 左端に固定する列の位置（前の固定列の幅の合計） */
+    function updatePinned() {
+      if (!wrap) return;
+      const heads = Array.from(wrap.querySelectorAll('thead th.is-pinned'));
+      let left = 0;
+      heads.forEach((th, order) => {
+        const index = Array.prototype.indexOf.call(th.parentElement.children, th);
+        const last = order === heads.length - 1; // 固定した列の右端に線を引き、動く列との境目を見せる
+        wrap.querySelectorAll(`tr > :nth-child(${index + 1})`).forEach((node) => {
+          node.style.left = `${left}px`;
+          node.classList.toggle('is-pinned-last', last);
+        });
+        left += th.offsetWidth;
+      });
+    }
+
+    /** 表を描き直した後に呼ぶ */
+    function afterRender(state, tableWrap) {
+      wrap = tableWrap;
+      styleNode = wrap.querySelector('style.grid-widths');
+      applyWidths(state.columns.widths);
+      // 表は描き直した直後にはまだ隠れていることがある（空の案内と入れ替え中）。表示されてから測る
+      window.requestAnimationFrame(updatePinned);
+      wrap.querySelectorAll('.col-resize').forEach((handle) => {
+        const th = handle.closest('th');
+        handle.addEventListener('mousedown', (event) => startResize(event, th));
+        handle.addEventListener('dblclick', () => resetWidth(th.dataset.field));
+        handle.addEventListener('click', (event) => event.stopPropagation());
+      });
+    }
+
+    function update(state) {
+      const comfortable = state.columns.density === 'comfortable';
+      densityButton.replaceChildren(icon(comfortable ? 'fa-compress' : 'fa-expand', comfortable ? '詰' : '広'));
+      densityButton.title = comfortable ? '行を詰めて表示する' : '行をゆったり表示する';
+      densityButton.setAttribute('aria-label', densityButton.title);
+      const hidden = new Set(state.columns.hidden);
+      names.replaceChildren(...DS.domain.listFields().filter((f) => !hidden.has(f.id)).map((f) => el('option', { value: f.label })));
+    }
+
+    window.addEventListener('resize', DS.util.debounce(updatePinned, 150));
+
+    return { element, afterRender, update, find, openColumns: () => openPanel('columns') };
+  }
+
+  DS.views.createGridTools = createGridTools;
+})();
+```
+
 `src/js/views/results-view.js`
 
 ```javascript
 /* =========================================================
    検索結果（メイン領域）：要約・ページ送り・一覧・空のときの案内・出どころ
+   一覧には全列を出す（隠すのは「表示列」で選んだ列だけ）。
+   行を 1 回押す／↑↓ で選ぶ。ダブルクリック／Enter で詳細を開く。
    ========================================================= */
 (function () {
   'use strict';
 
   const DS = window.DS;
 
-  function createResultsView(root, { store, bus, search, openPanel, refresh }) {
+  function createResultsView(root, { store, bus, search, toast, openPanel, refresh }) {
     const { el, icon, escapeHtml, highlight, formatNumber } = DS.util;
 
     const summary = el('div', { className: 'results__summary', 'aria-live': 'polite' });
     const pager = el('div', { className: 'pager' });
-    const head = el('div', { className: 'results__head' }, [summary, pager]);
-    const tableWrap = el('div', { className: 'table-wrap', tabindex: '0', 'aria-label': '検索結果の一覧（↑↓ で行を移動）' });
+    const tools = DS.views.createGridTools({ store, toast, openPanel });
+    const head = el('div', { className: 'results__head' }, [summary, tools.element, pager]);
+    const tableWrap = el('div', { className: 'table-wrap', tabindex: '0', 'aria-label': '検索結果の一覧（↑↓ で行を選ぶ・Enter で詳細）' });
     const empty = el('div', { className: 'empty' });
     const foot = el('div', { className: 'results__foot' });
     root.append(head, el('div', { className: 'results__body' }, [tableWrap, empty]), foot);
@@ -887,8 +1093,10 @@
     let currentItems = [];
 
     // ── 一覧 ──
+    /** 一覧に出す列。1 件を決める列（左端に固定）は隠せない */
     function visibleFields(state) {
-      return DS.domain.listFields().filter((field) => state.columns.visible.includes(field.id));
+      const hidden = new Set(state.columns.hidden);
+      return DS.domain.listFields().filter((field) => field.key || !hidden.has(field.id));
     }
 
     function headerCell(field, state) {
@@ -896,17 +1104,23 @@
       const sortIcon = !active ? 'fa-sort' : state.sort.order === 'asc' ? 'fa-sort-up' : 'fa-sort-down';
       const ariaSort = !active ? 'none' : state.sort.order === 'asc' ? 'ascending' : 'descending';
       const searched = state.search.request && state.search.request.searchType === field.id;
-      return `<th scope="col" aria-sort="${ariaSort}" style="min-width:${field.width}px" class="${searched ? 'is-searched' : ''}">` +
-        `<button type="button" class="th-btn" data-sort="${field.id}" title="${escapeHtml(field.listLabel)}で並べ替え">` +
-        `<span>${escapeHtml(field.listLabel)}</span><i class="fa-solid ${sortIcon} th-btn__icon${active ? ' is-active' : ''}" aria-hidden="true"></i></button></th>`;
+      const classes = [searched ? 'is-searched' : '', field.key ? 'is-pinned' : ''].filter(Boolean).join(' ');
+      return `<th scope="col" aria-sort="${ariaSort}" class="${classes}" data-field="${escapeHtml(field.id)}">` +
+        `<button type="button" class="th-btn" data-sort="${escapeHtml(field.id)}" title="${escapeHtml(field.listLabel)}で並べ替え">` +
+        `<span class="th-btn__text">${escapeHtml(field.listLabel)}</span><i class="fa-solid ${sortIcon} th-btn__icon${active ? ' is-active' : ''}" aria-hidden="true"></i></button>` +
+        `<span class="col-resize" title="ドラッグで幅を変える（ダブルクリックで元に戻す）" aria-hidden="true"></span></th>`;
     }
 
     function cell(field, item, request) {
       const value = item[field.id];
-      if (DS.domain.hasBadge(field)) return `<td>${DS.domain.badge(field, value).outerHTML}</td>`;
-      const text = value === null || value === undefined || value === '' ? '<span class="muted">—</span>'
+      const pinned = field.key ? ' is-pinned' : '';
+      if (DS.domain.hasBadge(field)) return `<td class="${pinned}">${DS.domain.badge(field, value).outerHTML}</td>`;
+      const blank = value === null || value === undefined || value === '';
+      const text = blank ? '<span class="muted">—</span>'
         : request && request.searchType === field.id ? highlight(value, request.keyword) : escapeHtml(value);
-      return `<td class="${field.mono ? 'mono' : ''}${request && request.searchType === field.id ? ' is-searched' : ''}">${text}</td>`;
+      // 長い値は「…」で省くため、マウスを乗せると全文が出るようにする
+      const title = blank ? '' : ` title="${escapeHtml(value)}"`;
+      return `<td class="${field.mono ? 'mono' : ''}${request && request.searchType === field.id ? ' is-searched' : ''}${pinned}"${title}>${text}</td>`;
     }
 
     function renderTable(state) {
@@ -920,7 +1134,12 @@
         return `<tr data-index="${index}" class="${selected ? 'is-selected' : ''}" aria-selected="${selected}">` +
           fields.map((field) => cell(field, item, request)).join('') + '</tr>';
       }).join('');
-      tableWrap.innerHTML = `<table class="grid"><thead><tr>${fields.map((field) => headerCell(field, state)).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+      const density = state.columns.density === 'comfortable' ? ' grid--comfortable' : '';
+      const scrollLeft = tableWrap.scrollLeft;
+      tableWrap.innerHTML = '<style class="grid-widths"></style>' +
+        `<table class="grid${density}"><thead><tr>${fields.map((field) => headerCell(field, state)).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+      tableWrap.scrollLeft = scrollLeft; // 並べ替えなどで横の位置を失わない
+      tools.afterRender(state, tableWrap);
     }
 
     function renderSelection(state) {
@@ -939,16 +1158,27 @@
         return;
       }
       const row = event.target.closest('tbody tr');
+      if (row) search.highlight(currentItems[Number(row.dataset.index)]);
+    });
+
+    tableWrap.addEventListener('dblclick', (event) => {
+      const row = event.target.closest('tbody tr');
       if (row) search.select(currentItems[Number(row.dataset.index)]);
     });
 
     tableWrap.addEventListener('keydown', (event) => {
-      if (!['ArrowDown', 'ArrowUp'].includes(event.key) || currentItems.length === 0) return;
-      event.preventDefault();
+      if (currentItems.length === 0) return;
       const selectedKey = store.get().selection.key;
       const index = currentItems.findIndex((item) => DS.domain.recordKey(item) === selectedKey);
+      if (event.key === 'Enter' && event.target === tableWrap) {
+        event.preventDefault();
+        search.select(currentItems[index === -1 ? 0 : index]);
+        return;
+      }
+      if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+      event.preventDefault();
       const next = index === -1 ? 0 : Math.min(currentItems.length - 1, Math.max(0, index + (event.key === 'ArrowDown' ? 1 : -1)));
-      search.select(currentItems[next]);
+      search.highlight(currentItems[next]);
       const row = tableWrap.querySelector(`tbody tr[data-index="${next}"]`);
       if (row) row.scrollIntoView({ block: 'nearest' });
     });
@@ -1095,7 +1325,9 @@
       foot.replaceChildren(...parts.flatMap((part, index) => (index ? [el('span', { className: 'results__sep', text: '·' }), part] : [part])));
     }
 
+    let lastHidden = store.get().columns.hidden;
     bus.on('state', ({ state, changed }) => {
+      if (changed.some((key) => ['search', 'columns'].includes(key))) tools.update(state);
       const tableKeys = ['search', 'columns', 'sort'];
       if (changed.some((key) => tableKeys.includes(key))) {
         renderTable(state);
@@ -1105,7 +1337,9 @@
       }
       if (changed.some((key) => ['search', 'cache', 'mode'].includes(key))) renderEmpty(state);
       if (changed.some((key) => ['search', 'cache', 'query'].includes(key))) renderFoot(state);
-      if (changed.includes('columns')) DS.util.flash(tableWrap.querySelector('thead'));
+      // 列を出し入れしたときだけ光らせる（幅や行の高さの変更では光らせない）
+      if (changed.includes('columns') && state.columns.hidden !== lastHidden) DS.util.flash(tableWrap.querySelector('thead'));
+      lastHidden = state.columns.hidden;
     });
 
     bus.on('search:done', () => {
@@ -1113,6 +1347,7 @@
     });
 
     const initial = store.get();
+    tools.update(initial);
     renderTable(initial);
     renderHead(initial);
     renderEmpty(initial);
@@ -1122,195 +1357,6 @@
   }
 
   DS.views.createResultsView = createResultsView;
-})();
-```
-
-`src/js/views/search-bar.js`
-
-```javascript
-/* =========================================================
-   上部バー：番号の種類・入力欄・一致のしかた・主要動作（CTA）
-   主要動作は右端の 1 つだけ。位置は固定し、状態に応じてラベルだけを変える。
-   ========================================================= */
-(function () {
-  'use strict';
-
-  const DS = window.DS;
-
-  const SEGMENT_MAX = 4; // 番号の種類をボタンで並べる上限
-
-  function createSearchBar(root, { store, bus, search, openPanel, refresh }) {
-    const { el, icon } = DS.util;
-    const searchable = DS.domain.searchableFields();
-
-    // ── 番号の種類 ──
-    // 4 種類までは常に見えるボタン（見て選べる）。それより多いと上部バーに収まらないため、
-    // 1 つの選択欄にまとめる。どちらも Alt+1〜9 で切り替えられる。
-    const useSelect = searchable.length > SEGMENT_MAX;
-    const typeSelect = el('select', { className: 'type-select', 'aria-label': '番号の種類', title: '番号の種類（Alt+1〜' + searchable.length + '）' },
-      searchable.map((field, index) => el('option', { value: field.id, text: `${index + 1}. ${field.listLabel}` })));
-    typeSelect.addEventListener('change', () => chooseType(typeSelect.value));
-    const typeButtons = searchable.map((field, index) =>
-      el('button', {
-        type: 'button',
-        className: 'seg__item',
-        role: 'radio',
-        dataset: { type: field.id },
-        title: `${field.listLabel}で検索（Alt+${index + 1}）`,
-      }, [el('span', { text: field.listLabel }), el('kbd', { className: 'seg__kbd', text: String(index + 1) })]));
-    const typeGroup = el('div', { className: 'seg', role: 'radiogroup', 'aria-label': '番号の種類' }, typeButtons);
-
-    // ── 入力欄 ──
-    const input = el('input', {
-      type: 'text',
-      id: 'search-input',
-      className: 'search__input mono',
-      autocomplete: 'off',
-      spellcheck: 'false',
-      maxlength: '100',
-      list: 'search-history',
-      'aria-describedby': 'search-hint',
-    });
-    const history = el('datalist', { id: 'search-history' });
-    const clearButton = el('button', { type: 'button', className: 'search__clear', title: '入力を消す（Esc）', 'aria-label': '入力を消す' }, [icon('fa-xmark', '×')]);
-    const inputLabel = el('label', { className: 'sr-only', for: 'search-input' });
-    const inputBox = el('div', { className: 'search__box' }, [
-      icon('fa-magnifying-glass', '', 'search__icon'), inputLabel, input, clearButton, history,
-    ]);
-
-    // ── 一致のしかた ──
-    const MATCH = [
-      { id: 'partial', label: '部分一致', title: '入力した文字を含むものを探す' },
-      { id: 'exact', label: '完全一致', title: '入力した文字と同じものだけを探す' },
-    ];
-    const matchButtons = MATCH.map((mode) =>
-      el('button', { type: 'button', className: 'seg__item', role: 'radio', dataset: { match: mode.id }, title: mode.title, text: mode.label }));
-    const matchGroup = el('div', { className: 'seg seg--compact', role: 'radiogroup', 'aria-label': '一致のしかた' }, matchButtons);
-
-    // ── 主要動作 ──
-    const ctaIcon = el('span', { className: 'cta__icon' });
-    const ctaLabel = el('span', { className: 'cta__label' });
-    const cta = el('button', { type: 'button', className: 'btn btn--primary btn--lg cta', id: 'cta' }, [ctaIcon, ctaLabel]);
-
-    const hint = el('p', { className: 'search__hint', id: 'search-hint' });
-
-    root.appendChild(el('div', { className: 'search' }, [
-      el('div', { className: 'search__row' }, [useSelect ? el('span', { className: 'type-select__wrap' }, [icon('fa-hashtag', '#', 'type-select__icon'), typeSelect, icon('fa-chevron-down', '▾', 'type-select__chevron')]) : typeGroup, inputBox, matchGroup, cta]),
-      hint,
-    ]));
-
-    // ── 操作 ──
-    function chooseType(type) {
-      search.setQuery({ searchType: type });
-      input.focus();
-    }
-
-    typeButtons.forEach((button) => button.addEventListener('click', () => chooseType(button.dataset.type)));
-    matchButtons.forEach((button) => button.addEventListener('click', () => {
-      search.setQuery({ matchMode: button.dataset.match });
-      DS.util.flash(button);
-      if (DS.util.normalize(store.get().query.keyword)) search.run({ page: 1 });
-    }));
-
-    input.addEventListener('input', () => search.setQuery({ keyword: input.value }));
-    input.addEventListener('focus', () => window.setTimeout(() => { if (document.activeElement === input) input.select(); }, 0));
-    input.addEventListener('keydown', (event) => {
-      // 日本語の変換中の Enter では検索しない
-      if (event.isComposing || event.keyCode === 229) return;
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        doPrimary();
-      } else if (event.key === 'Escape' && input.value) {
-        event.preventDefault();
-        event.stopPropagation();
-        clearKeyword();
-      }
-    });
-    clearButton.addEventListener('click', () => {
-      clearKeyword();
-      input.focus();
-    });
-
-    /** 入力を消す。番号で探していた途中なら、一覧に戻す */
-    function clearKeyword() {
-      input.value = '';
-      const request = store.get().search.request;
-      if (request && request.keyword) search.clearKeyword();
-      else search.setQuery({ keyword: '' });
-    }
-    cta.addEventListener('click', doPrimary);
-
-    function doPrimary() {
-      const ready = search.readiness();
-      if (ready.ok) search.run({ page: 1 });
-      else if (ready.action === 'open-samples') openPanel('samples');
-      else if (ready.action === 'refresh') refresh();
-      else {
-        DS.util.flash(hint);
-        input.focus();
-      }
-    }
-
-    // Alt+数字：種類の切り替え / 「/」：入力欄へ
-    document.addEventListener('keydown', (event) => {
-      if (event.altKey && !event.ctrlKey && /^[1-9]$/.test(event.key)) {
-        const field = searchable[Number(event.key) - 1];
-        if (field) {
-          event.preventDefault();
-          chooseType(field.id);
-          DS.util.flash(useSelect ? typeSelect : typeButtons[Number(event.key) - 1]);
-        }
-      } else if (event.key === '/' && !event.ctrlKey && !event.altKey && !isTyping(event.target)) {
-        event.preventDefault();
-        input.focus();
-      }
-    });
-
-    function isTyping(target) {
-      return target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
-    }
-
-    // ── 表示の更新 ──
-    function render(state) {
-      const field = DS.domain.fields.get(state.query.searchType);
-      typeButtons.forEach((button) => button.setAttribute('aria-checked', String(button.dataset.type === state.query.searchType)));
-      if (typeSelect.value !== state.query.searchType) typeSelect.value = state.query.searchType;
-      matchButtons.forEach((button) => button.setAttribute('aria-checked', String(button.dataset.match === state.query.matchMode)));
-      if (input.value !== state.query.keyword) input.value = state.query.keyword;
-      input.placeholder = field.example ? `例：${field.example}` : `${field.listLabel}を入力`;
-      inputLabel.textContent = field.listLabel;
-      clearButton.hidden = !state.query.keyword;
-
-      const items = (state.history[state.query.searchType] || []);
-      history.replaceChildren(...items.map((value) => el('option', { value })));
-
-      const ready = search.readiness();
-      cta.disabled = !ready.ok && !ready.action;
-      cta.classList.toggle('is-busy', Boolean(ready.busy));
-      ctaIcon.replaceChildren(ready.busy
-        ? icon('fa-spinner', '…', 'fa-spin')
-        : icon(ready.icon || (ready.action === 'open-samples' ? 'fa-flask' : ready.action === 'refresh' ? 'fa-rotate' : 'fa-magnifying-glass'), ''));
-      ctaLabel.textContent = ready.busy ? '読み込み中…' : ready.action ? ready.actionLabel : ready.label || '検索する';
-
-      hint.replaceChildren(...(ready.ok
-        ? [el('span', { text: 'Enter で検索' }), sep(), el('span', { text: `Alt+1〜${searchable.length} で番号の種類を切り替え` }), sep(), el('span', { text: '/ で入力欄へ' })]
-        : [icon('fa-circle-info', 'i'), el('span', { text: ready.reason })]));
-      hint.classList.toggle('is-blocked', !ready.ok && !ready.busy && !ready.quiet);
-    }
-
-    function sep() {
-      return el('span', { className: 'search__sep', 'aria-hidden': 'true', text: '·' });
-    }
-
-    bus.on('state', ({ state, changed }) => {
-      if (changed.some((key) => ['query', 'search', 'cache', 'history', 'mode'].includes(key))) render(state);
-    });
-    render(store.get());
-
-    return { focus: () => input.focus() };
-  }
-
-  DS.views.createSearchBar = createSearchBar;
 })();
 ```
 

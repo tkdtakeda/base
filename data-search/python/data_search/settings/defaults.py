@@ -15,13 +15,14 @@ BUILTIN_DEFAULTS = {
         "devServer": {"host": "127.0.0.1", "port": 8765, "openBrowser": True},
     },
     "schema": {
-        # 日付として比べる論理項目（例：{"factoryDeliveryDate": "date"}）。日付の絞り込みに必要
+        # 日付として比べる列（例：{"factoryDeliveryDate": "date"}）。キーは論理名か、役割のない列なら DB の列名
         "types": {},
     },
     "view": {
-        "detailGroups": [],
-        # 項目ごとの表示（表示名・等幅・コピー・入力例・値の札）。論理項目を足せる場所
+        # 列ごとの表示の補助（等幅・コピー・入力例・値の札）。表示名は DB の列名を使うため書かない
         "fields": {},
         "filters": [],
+        # 最初は隠しておく列（論理名か DB の列名）。各自が画面の「表示列」で変えられる
+        "hiddenColumns": [],
     },
 }

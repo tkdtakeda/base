@@ -40,10 +40,10 @@ data-search/config/
 |---|---|---|
 | `config.sample.json` | アプリ基本情報、データソースの有効/無効・識別子・読み取り専用、共有 SQLite パスの**プレースホルダー**、キャッシュのパスと動作、検索の初期値、ログ、開発用サーバー | テーブル名、列名、論理と物理の対応、表示項目・表示順 |
 | `config.local.json` | 実際の共有 SQLite のパスなど、環境で変わる値だけ | テーブル名、列名（schema へ） |
-| `schema.sample.json` | データソース識別子、テーブル名の**プレースホルダー**、論理項目と物理列名（**プレースホルダー**）の対応、1 件を特定する項目（`recordKey`）、日付として扱う項目（`types`） | 表示名、表示順、表示/非表示 |
-| `schema.local.json` | 実際のテーブル名・物理列名（DB 構造が変わったときの主な修正先）。社内だけの論理項目の追加 | 表示順、表示/非表示 |
-| `view.sample.json` | 一覧の列（`listColumns`：論理名・表示名・表示/非表示・検索対象・幅。配列順＝表示順）、詳細の項目（`detailFields`）、詳細のまとまり（`detailGroups`）、項目ごとの表示（`fields`：表示名・等幅・コピー・入力例・値の札）、絞り込み（`filters`）、既定の並べ替え（`defaultSort`） | 物理列名 |
-| `view.local.json` | 社内環境だけの表示変更（なくてよい） | 物理列名 |
+| `schema.sample.json` | データソース識別子、テーブル名の**プレースホルダー**、**役割のある 14 列**の論理名と DB の列名（**プレースホルダー**）の対応、1 件を特定する項目（`recordKey`）、日付として扱う列（`types`） | 役割のない列（DB から自動で読み取る）、表示名（DB の列名を使う） |
+| `schema.local.json` | 実際のテーブル名と、役割のある列の実際の列名。日付の列（役割のない列は DB の列名で書ける） | 役割のない列の一覧（書くと「使っていない」と注意） |
+| `view.sample.json` | 番号で探せる列（`searchFields`）、最初は隠す列（`hiddenColumns`）、絞り込み（`filters`）、既定の並べ替え（`defaultSort`）。任意で列ごとの補助（`fields`：等幅・コピー・入力例・値の札） | 物理列名、表示名、表示順（DB の列名・DB の順を使う） |
+| `view.local.json` | 社内環境だけの変更（なくてよい）。隠す列を DB の列名で書くのはここ | — |
 
 `recordKey` と `types` は依頼書に明記がなかったため、**DB の論理構造**として schema に置いた（「1 件を特定する列」「日付として比べる列」はデータの性質であり、表示の都合ではないため）。
 
@@ -70,7 +70,7 @@ data-search/config/
 |---|---|
 | キーがない | サンプルの値のまま（誤りにしない。例：`devServer` を書かなくてよい） |
 | 両方がオブジェクト `{ }` | キーごとに再帰的に重ねる |
-| 配列 `[ ]` | 要素ごとに重ねず、**配列全体を置き換える**（例：`view.listColumns`） |
+| 配列 `[ ]` | 要素ごとに重ねず、**配列全体を置き換える**（例：`view.searchFields`） |
 | 型がサンプルと違う | 使わず、型の誤りとして止める（サンプルの値が `null` なら何でも受け入れる。整数は数値の代わりに使える） |
 | サンプルにないキー | **読み捨てない**。ファイル名と項目の道筋を示して「設定の注意」を出し、その値は使わない |
 | サンプルにないキー（論理項目を足せる場所） | `schema.columns`・`schema.types`・`view.fields` は新しいキーを受け入れて使う（社内だけの論理項目を足せるように） |
@@ -90,10 +90,10 @@ data-search/config/
 例（view）：
 
 ```jsonc
-// view.sample.json：listColumns 17 列・detailFields 83 項目
+// view.sample.json：searchFields 6 列・filters 8 列
 // view.local.json
-{ "listColumns": [ { "field": "lotNo", "label": "ロットNo.", "visible": true, "searchable": true } ] }
-// 結果：listColumns は 1 列だけ（配列は丸ごと置き換え）。detailFields・fields・filters はサンプルのまま
+{ "searchFields": ["lotNo"] }
+// 結果：searchFields は 1 列だけ（配列は丸ごと置き換え）。hiddenColumns・filters はサンプルのまま
 ```
 
 ## 6. 検証（`settings/validation.py`）
@@ -115,19 +115,17 @@ data-search/config/
 - `columns` がオブジェクトで、論理名・物理列名が空でも仮の値でもない
 - 同じキー（論理名）が重複していない（JSON の読み込み時に検出）
 - `dataSourceId` が config の `dataSource.id` と同じ（別のデータソースの設定を組み合わせないため）
-- `recordKey`・`types` の論理名が `columns` にある
-- 接続後（キャッシュ作成時）にテーブルと、使う物理列がすべてあること（`cache_validator.py`）
+- `recordKey` の論理名が `columns` にある。`types` は型が text / date（キーは役割のない列の DB の列名でもよいため、有無は確かめない）
+- 接続後（キャッシュ作成時）にテーブルと、役割のある列がすべてあること（`cache_validator.py`）。ほかの列はそのとき読み取る（`column_catalog.py`）
+- 以前の形で全列を書いた `columns` は、役割のない分を「使っていない」と 1 件の注意にまとめる（止めない）
 
 ### 6.3 view
 
-- `listColumns`・`detailFields`・`filters`・`fields`・`defaultSort` が参照する論理名が、**マージ後の `schema.columns`** にある
-- 同じ表示項目が重複していない（`listColumns`・`detailFields`・`filters`）
-- `visible`・`searchable` が真偽値。番号で探せる項目が少なくとも 1 つある
-- `filters` の `type` が values / date。date は schema の `types` で date の項目だけ
-- `detailGroups[]` は `id`・`label` が必須、`fields` は配列で、中の論理名が schema にある。同じ項目を 2 つのまとまりに入れない
-- `fields.<項目>.group` が `detailGroups` にある、`badge` のパターンと色が正しい
-- 表示名がどこにもない項目は注意（画面に論理名が出てしまうため）。項目ごとではなく「N 項目に表示名がない」と 1 件にまとめて出す
-- 表示順は配列の順、`visible: false` の列は一覧に出さない（画面側で守る）
+- `searchFields`・`filters`・`defaultSort` が参照する論理名が、**マージ後の `schema.columns`** にある。重複していない。番号で探せる列が少なくとも 1 つある
+- `filters` の `type` が values / date。date は schema の `types` で date の列だけ
+- `hiddenColumns` は空でない文字列（論理名か DB の列名。DB にない名前は無視）
+- `fields.<列>` の `mono`・`copy` が真偽値、`badge` のパターンと色が正しい。`label`・`group` は「今は使わない」と注意
+- 以前の形の `listColumns`・`detailFields`・`detailGroups` は「今は使わない項目」と注意（止めない）
 
 ### 6.4 誤りの表示
 
@@ -136,7 +134,7 @@ data-search/config/
 ```text
 [設定エラー]
 対象: config/sample/view.sample.json
-項目: listColumns[2].field
+項目: searchFields[2]
 理由: "productNo" はマージ後の schema.columns に定義されていません。
 対応: schema側へ論理項目を追加するか、view側のfieldを修正してください。
 ```
@@ -210,12 +208,14 @@ flowchart TD
 旧 `config.local.json` の `dataSource.tableName` や `fieldMappings` を新しい `config.local.json` にそのまま残すと、
 サンプルにないキーとして「設定の注意」が出る（使われない）。`schema.local.json` へ移すこと。
 
-## 9. 表示名と DB の列名
+## 9. 列と表示名（column_catalog.py）
 
-- `schema.columns` の値は DB の列名（物理名）。画面（`get_view_config`）には渡さない。
-- DB の列名が利用者向けの名前になっている場合は、`python/tools/make_view_labels.py`（処理は `settings/labels.py`）で
-  `view.local.json` の `fields.<項目>.label` に書き写す。既存の表示名は残し（`--overwrite` のときだけ置き換え）、仮の値・空・論理名と同じ列名は書かない。
-- 実行時の表示名は view だけで決まり、すべての画面で同じ（`fields.<項目>.label` → `listColumns[].label` → 論理名）。
+- 表示する列は、キャッシュのテーブルから読み取る（`PRAGMA table_info`）。設定には役割のある列だけを書く。
+- 表示名は DB の列名そのもの（詳細・一覧の見出し・検索の種類・絞り込みで共通）。表示名の設定はない。
+- 並び：役割のある列（`schema.columns` の順）→ ほかの列（DB の順）。列の id は役割のある列が論理名、ほかは DB の列名
+  （DB の列名が別の列の論理名と同じなら `名前#2` で区別）。
+- `get_view_config` は列の一覧（`columns`）と並びの印（`columnsVersion`）を返す。データの更新で印が変わると画面は読み込み直す。
+- テーブル名と読み込み先のパスは画面に渡さない。DB の列名は表示名として画面に渡す（ログには残さない）。
 
 ## 9.1 画面からの書き込み（読み込み先）
 
@@ -231,19 +231,6 @@ flowchart TD
 3. view / schema を変えたら `python python/tools/sync_sample_view.py`（画面だけで試すモード用の表示定義を作り直す）
 4. 社内の値が必要な環境だけ、`config/local/` の該当ファイルに書き足す（不要なら何もしない）
 ````
-
-`make-labels.bat`
-
-```bat
-@echo off
-rem Data Search - write display labels from schema.local.json column names into view.local.json
-chcp 65001 > nul
-cd /d "%~dp0"
-set "PY=python"
-where py > nul 2> nul && set "PY=py -3"
-%PY% python\tools\make_view_labels.py %*
-pause
-```
 
 `python/data_search/__init__.py`
 
@@ -358,6 +345,7 @@ from contextlib import contextmanager
 from datetime import datetime
 
 from . import cache_copier
+from .column_catalog import build_catalog, catalog_from_file, catalog_version
 from .cache_validator import open_readonly, validate_cache_file
 from .errors import AppError
 
@@ -385,6 +373,18 @@ class CacheService:
         # 今の schema（テーブル名・列名）と合わないキャッシュは使わない。
         # SQLite は存在しない列名を "..." で書くと文字列として扱うため、合わないまま検索すると誤った値が返る。
         self.stale = False
+        self._catalog = None  # 表示する列の一覧（キャッシュから読み取る。キャッシュが変わったら作り直す）
+
+    # ── 列の一覧 ──
+    def catalog(self):
+        """表示する列（column_catalog.Column の並び）。キャッシュがなければ役割のある列だけ。"""
+        with self.lock:
+            if not self.cache_available():
+                return build_catalog([], self.config.field_mappings)
+            if self._catalog is None:
+                self._catalog = catalog_from_file(open_readonly, self.cache_path, self.config.table_name, self.config.field_mappings)
+                self.logger.info("column catalog columns=%d", len(self._catalog))  # 列名は残さない
+            return self._catalog
 
     # ── 状態の読み書き ──
     def _read_state(self):
@@ -405,6 +405,7 @@ class CacheService:
         """読み込み先の変更などで設定を差し替える。前の読み込み先から作ったキャッシュは使わない。"""
         with self.lock:
             self.config = config
+            self._catalog = None
             if not self._same_source():
                 self.stale = True
 
@@ -444,6 +445,7 @@ class CacheService:
                 os.makedirs(os.path.dirname(self.cache_path) or ".", exist_ok=True)
                 os.replace(self.temp_path, self.cache_path)
                 self.stale = False
+                self._catalog = None
             except AppError as error:
                 cache_copier.remove_quietly(self.temp_path)
                 using_previous = self.cache_available()
@@ -529,6 +531,8 @@ class CacheService:
             "lastRefreshAt": state.get("lastRefreshAt"),
             "errorCode": None if succeeded else state.get("errorCode"),
             "errorMessage": None if succeeded else state.get("errorMessage"),
+            # 列の並びの印。変わったら画面は表示定義を読み直す
+            "columnsVersion": catalog_version(self.catalog()),
         })
 
     # ── 読み取り ──
@@ -547,6 +551,74 @@ class CacheService:
                 conn.close()
 ```
 
+`python/data_search/column_catalog.py`
+
+```python
+"""表示する列の一覧（カタログ）。キャッシュのテーブルから列を読み取り、DB の列名をそのまま表示名にする。
+
+    並び順 … 役割のある列（schema.columns の順）を先に、残りは DB の列の順
+    id     … 役割のある列は論理名（検索・絞り込みなどで使う）。ほかの列は DB の列名
+             （DB の列名が、別の列の論理名と同じになったときは「名前#2」のように区別する）
+    label  … DB の列名（画面の見出し・詳細・絞り込みで共通）
+
+設定に書くのは役割のある列だけでよく、DB に列が増えれば自動で表示される。
+"""
+
+import hashlib
+import sqlite3
+from dataclasses import dataclass
+
+from .query import quote_identifier
+
+
+@dataclass(frozen=True)
+class Column:
+    id: str
+    physical: str
+    role: bool
+
+    def public(self):
+        return {"id": self.id, "label": self.physical, "role": self.role}
+
+
+def build_catalog(table_columns, field_mappings):
+    """table_columns：DB の列名（DB の順）。field_mappings：役割のある列の 論理名 → DB の列名。"""
+    role_physical = set(field_mappings.values())
+    columns = [Column(name, physical, True) for name, physical in field_mappings.items()]
+    used = set(field_mappings)
+    for physical in table_columns:
+        if physical in role_physical:
+            continue
+        column_id, number = physical, 2
+        while column_id in used:
+            column_id, number = f"{physical}#{number}", number + 1
+        used.add(column_id)
+        columns.append(Column(column_id, physical, False))
+    return tuple(columns)
+
+
+def read_table_columns(conn, table_name):
+    return [row[1] for row in conn.execute(f"PRAGMA table_info({quote_identifier(table_name)})")]
+
+
+def catalog_from_file(open_connection, path, table_name, field_mappings):
+    """キャッシュのファイルから作る。読めなければ役割のある列だけ（画面はそれだけで動く）。"""
+    try:
+        conn = open_connection(path)
+        try:
+            return build_catalog(read_table_columns(conn, table_name), field_mappings)
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return build_catalog([], field_mappings)
+
+
+def catalog_version(columns):
+    """列の並びが変わったかを画面が見分けるための印。"""
+    text = "\u001f".join(f"{c.id}\u001e{c.physical}" for c in columns)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+```
+
 `python/data_search/commands.py`
 
 ```python
@@ -555,6 +627,7 @@ class CacheService:
 命令を増やすときは @command("名前") を付けた関数を足すだけでよい（既存の処理は変えない）。
 """
 
+from .column_catalog import catalog_version
 from .errors import AppError
 
 _REGISTRY = {}
@@ -628,8 +701,10 @@ def update_data_source(ctx, payload):
 
 @command("get_view_config")
 def get_view_config(ctx, payload):
-    """画面の表示定義（view と、schema の論理情報）。物理名は含めない。"""
-    return dict(ctx.config.public_view(), success=True)
+    """画面の表示定義（view と schema の論理情報）と、表示する列（DB の列名が表示名）。テーブル名・パスは含めない。"""
+    columns = ctx.cache_service.catalog()
+    return dict(ctx.config.public_view(), success=True,
+                columns=[column.public() for column in columns], columnsVersion=catalog_version(columns))
 
 
 @command("get_application_info")
@@ -895,6 +970,7 @@ from .fields import (
     SORT_ORDERS,
     VALUE_LIST_LIMIT,
 )
+from .column_catalog import catalog_version
 from .query import QueryBuilder
 
 
@@ -913,8 +989,8 @@ def _to_text(value):
     return str(value)
 
 
-def _row_to_item(row, model):
-    return {name: _to_text(row[index]) for index, name in enumerate(model.fields)}
+def _row_to_item(row, ids):
+    return {name: _to_text(row[index]) for index, name in enumerate(ids)}
 
 
 def _invalid(detail, user_message=None):
@@ -1024,8 +1100,18 @@ class LotService:
         self.cache = cache_service
         self.logger = logger
         self.model = config.model
-        self.query = QueryBuilder(config.table_name, config.field_mappings, config.model)
+        self._query, self._query_key = None, None
         self._today = today  # テストで日付を固定するため
+
+    @property
+    def query(self):
+        """列の一覧（キャッシュのテーブル）か設定が変わったら、SQL の組み立て役を作り直す。"""
+        catalog = self.cache.catalog()
+        key = (catalog_version(catalog), self.config.table_name)
+        if key != self._query_key:
+            self._query = QueryBuilder(self.config.table_name, catalog, self.model)
+            self._query_key = key
+        return self._query
 
     def today(self):
         return self._today() if self._today else date.today()
@@ -1051,8 +1137,9 @@ class LotService:
         today = self.today()
         search = parse_search(payload, keyword_required, self.model)
         filters = parse_filters(payload, today, self.model)
+        query = self.query
         sort_key = payload.get("sortKey") or self.model.default_sort[0]
-        if sort_key not in self.model.fields:
+        if sort_key not in query.columns:
             raise _invalid("unknown sortKey")
         sort_order = payload.get("sortOrder") or (self.model.default_sort[1] if sort_key == self.model.default_sort[0] else "asc")
         if sort_order not in SORT_ORDERS:
@@ -1061,8 +1148,8 @@ class LotService:
         page_size = _require_int(payload, "pageSize", self.config.page_size, 1, self.config.max_page_size)
 
         started = time.perf_counter()
-        count_sql, count_params = self.query.count(search, filters)
-        rows_sql, rows_params = self.query.rows(search, filters, sort_key, sort_order, page_size, (page - 1) * page_size)
+        count_sql, count_params = query.count(search, filters)
+        rows_sql, rows_params = query.rows(search, filters, sort_key, sort_order, page_size, (page - 1) * page_size)
         total = self._execute(count_sql, count_params, "one")[0]
         rows = self._execute(rows_sql, rows_params, "all")
         elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
@@ -1074,7 +1161,7 @@ class LotService:
             ",".join(name for name, _, _ in filters) or "-",
             total, elapsed_ms,
         )
-        items = [_row_to_item(row, self.model) for row in rows]
+        items = [_row_to_item(row, query.ids) for row in rows]
         return {
             "success": True,
             "count": len(items),
@@ -1115,13 +1202,14 @@ class LotService:
         if not key_values[self.model.record_key[0]]:
             raise _invalid(f"{self.model.record_key[0]} is required")
 
-        sql, params = self.query.detail(key_values)
+        query = self.query
+        sql, params = query.detail(key_values)
         rows = self._execute(sql, params, "all")
         if not rows:
             raise AppError("NOT_FOUND", "record not found")
         if len(rows) > 1:
             self.logger.warning("detail key is not unique")
-        return {"success": True, "item": _row_to_item(rows[0], self.model), "duplicated": len(rows) > 1}
+        return {"success": True, "item": _row_to_item(rows[0], query.ids), "duplicated": len(rows) > 1}
 ```
 
 `python/data_search/query.py`
@@ -1129,7 +1217,8 @@ class LotService:
 ```python
 """論理条件から SQL を組み立てる。値は必ずパラメーターで渡し、文字列連結しない。
 
-表名・列名は設定ファイルから来る値だけを使い、画面から受け取った値は論理名の一覧と照合してから使う。
+表名は設定ファイル、列名は設定ファイルとキャッシュのテーブルから来る値だけを使う。
+画面から受け取った列の id は、列の一覧（column_catalog）と照合してから使う。
 """
 
 
@@ -1173,11 +1262,13 @@ class QueryBuilder:
               date の from / to は 'YYYY-MM-DD' か None（日付は呼び出し側で確定させる）
     """
 
-    def __init__(self, table_name, field_mappings, model):
+    def __init__(self, table_name, catalog, model):
+        """catalog：表示する列（column_catalog.Column の並び。役割のある列を必ず含む）"""
         self.model = model
         self.table = quote_identifier(table_name)
-        self.columns = {name: quote_identifier(field_mappings[name]) for name in model.fields}
-        self.select_list = ", ".join(f"{self.columns[name]} AS {quote_identifier(name)}" for name in model.fields)
+        self.ids = tuple(column.id for column in catalog)
+        self.columns = {column.id: quote_identifier(column.physical) for column in catalog}
+        self.select_list = ", ".join(f"{self.columns[name]} AS {quote_identifier(name)}" for name in self.ids)
 
     # ── 条件 ──
     def _search_condition(self, search):
@@ -1263,110 +1354,5 @@ class QueryBuilder:
         where = " AND ".join(f"{self.columns[name]} IS ?" for name in self.model.record_key)
         sql = f"SELECT {self.select_list} FROM {self.table} WHERE {where} LIMIT 2"
         return sql, [key_values[name] for name in self.model.record_key]
-```
-
-`python/data_search/settings/labels.py`
-
-```python
-"""表示名の下書き：schema の列名（DB の段階で利用者向けの名前になっている）を、view の表示名として書き写す。
-
-画面には列名を渡さない決まりのため、実行時に schema を表示名へ使うことはせず、
-この処理で view.local.json の fields.<項目>.label に書き出す（あとから手で直せる・何度でも使える）。
-
-    すでに表示名がある項目 … 残す（手で直した表示名を消さない）。overwrite=True のときだけ置き換える
-    列名が仮の値・空・論理名と同じ … 書かない（画面には listColumns の見出しか論理名が出る）
-"""
-
-from dataclasses import dataclass, field
-
-from .validation import is_placeholder
-
-
-@dataclass
-class LabelPlan:
-    fields: dict                                  # 書き出す view.fields（既存の設定も含む）
-    added: list = field(default_factory=list)     # 新しく表示名を入れた項目
-    replaced: list = field(default_factory=list)  # 表示名を置き換えた項目（overwrite のとき）
-    kept: list = field(default_factory=list)      # すでに表示名があり、残した項目
-    skipped: list = field(default_factory=list)   # 列名が使えず、書かなかった項目
-
-
-def plan_labels(columns, existing_fields, overwrite=False):
-    """columns：マージ後の schema.columns（論理名 → 列名）。existing_fields：今の view.local.json の fields。"""
-    result = {name: dict(option) for name, option in (existing_fields or {}).items() if isinstance(option, dict)}
-    plan = LabelPlan(fields=result)
-    for name, physical in columns.items():
-        label = physical.strip() if isinstance(physical, str) else ""
-        if not label or is_placeholder(label) or label == name:
-            plan.skipped.append(name)
-            continue
-        option = result.setdefault(name, {})
-        current = option.get("label")
-        if current and not overwrite:
-            plan.kept.append(name)
-            continue
-        if current == label:
-            plan.kept.append(name)
-            continue
-        (plan.replaced if current else plan.added).append(name)
-        option["label"] = label
-    # 項目の並びは schema の順（読みやすさのため）。schema にない項目は後ろに残す
-    order = {name: index for index, name in enumerate(columns)}
-    plan.fields = dict(sorted(result.items(), key=lambda item: order.get(item[0], len(order))))
-    return plan
-```
-
-`python/data_search/settings/local_writer.py`
-
-```python
-"""ローカルの上書きファイル（config/local/*.local.json）へ、必要な項目だけを書き込む。
-
-ほかの項目はそのまま残し、書き換える前の内容は <ファイル>.bak に残す。
-書き込みは一時ファイル → 置き換えの順で行い、途中で止まっても壊れたファイルを残さない。
-"""
-
-import json
-import os
-import shutil
-
-
-def local_file(local_dir, kind):
-    return os.path.join(local_dir, f"{kind}.local.json")
-
-
-def set_local_value(local_dir, kind, path, value):
-    """path（例：("dataSource", "sourcePath")）の値を書き込む。書き込んだファイルのパスを返す。"""
-    target = local_file(local_dir, kind)
-    data = {}
-    if os.path.isfile(target):
-        with open(target, encoding="utf-8-sig") as fp:
-            data = json.load(fp)
-        if not isinstance(data, dict):
-            raise ValueError("local file is not an object")
-        shutil.copyfile(target, target + ".bak")
-    node = data
-    for key in path[:-1]:
-        child = node.get(key)
-        if not isinstance(child, dict):
-            child = {}
-            node[key] = child
-        node = child
-    node[path[-1]] = value
-    os.makedirs(local_dir, exist_ok=True)
-    temp = target + ".writing"
-    with open(temp, "w", encoding="utf-8") as fp:
-        json.dump(data, fp, ensure_ascii=False, indent=2)
-        fp.write("\n")
-    os.replace(temp, target)
-    return target
-
-
-def restore_backup(local_dir, kind, existed):
-    """書き込みを取り消す（.bak に戻す。元のファイルがなかったときは消す）。"""
-    target = local_file(local_dir, kind)
-    if existed and os.path.isfile(target + ".bak"):
-        shutil.copyfile(target + ".bak", target)
-    elif not existed and os.path.isfile(target):
-        os.remove(target)
 ```
 

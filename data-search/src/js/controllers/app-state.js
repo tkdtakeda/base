@@ -10,14 +10,28 @@
   const PREFS_KEY = 'prefs';
   const HISTORY_MAX = 8;
 
-  function defaultVisibleColumns() {
-    return DS.domain.listFields().map((field) => field.id);
+  /** 列の表示の既定：設定（view の hiddenColumns）で隠すとした列だけ隠す */
+  function defaultColumns() {
+    return { hidden: DS.domain.defaultHiddenColumns(), widths: {}, density: 'compact' };
+  }
+
+  /** 保存した列の設定を読み直す。知らない列（DB から消えた列）は捨てる。新しく増えた列は表示する */
+  function restoreColumns(prefs) {
+    const base = defaultColumns();
+    if (!Array.isArray(prefs.hiddenColumns)) return base;
+    const known = (id) => DS.domain.fields.has(id);
+    const widths = {};
+    Object.entries(prefs.columnWidths || {}).forEach(([id, width]) => { if (known(id) && Number(width) > 0) widths[id] = Number(width); });
+    return {
+      hidden: prefs.hiddenColumns.filter(known),
+      widths,
+      density: prefs.density === 'comfortable' ? 'comfortable' : 'compact',
+    };
   }
 
   function createInitialState(mode) {
     const prefs = DS.core.storage.read(PREFS_KEY, {});
     const searchable = DS.domain.searchableFields().map((field) => field.id);
-    const knownColumns = (prefs.visibleColumns || []).filter((id) => DS.domain.fields.has(id));
     return {
       mode,
       appInfo: null,
@@ -32,9 +46,9 @@
       filters: {},
       tags: { items: DS.controllers.loadTags(), activeId: null },
       search: { status: 'idle', result: null, request: null, error: null },
-      selection: { key: null, item: null, status: 'idle', error: null, duplicated: false },
+      selection: { key: null, item: null, status: 'idle', error: null, duplicated: false, open: false },
       ui: { panel: null },
-      columns: { visible: knownColumns.length ? knownColumns : defaultVisibleColumns() },
+      columns: restoreColumns(prefs),
       history: prefs.history || {},
       samplesVersion: 0,
     };
@@ -48,7 +62,9 @@
       const result = DS.core.storage.write(PREFS_KEY, {
         searchType: state.query.searchType,
         matchMode: state.query.matchMode,
-        visibleColumns: state.columns.visible,
+        hiddenColumns: state.columns.hidden,
+        columnWidths: state.columns.widths,
+        density: state.columns.density,
         history: state.history,
       });
       if (!result.ok) bus.emit('prefs:failed', result.reason);
@@ -63,6 +79,6 @@
 
   DS.controllers.createInitialState = createInitialState;
   DS.controllers.attachPrefsPersistence = attachPrefsPersistence;
-  DS.controllers.defaultVisibleColumns = defaultVisibleColumns;
+  DS.controllers.defaultColumns = defaultColumns;
   DS.controllers.pushHistory = pushHistory;
 })();

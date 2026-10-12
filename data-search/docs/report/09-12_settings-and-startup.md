@@ -12,7 +12,9 @@
 ローカルのファイルがないことは誤りにしない（サンプルの値で検証まで進む）。
 検証で誤りが見つかれば SettingsError（すべての誤りを持つ）。注意（未知のキーなど）は warnings に入れて続ける。
 
-物理情報（パス・表名・列名）はここで読み込み、画面には渡さない（画面へは public_view() の論理情報だけ）。
+列の考え方：表示する列は DB のテーブルから自動で読み取る（column_catalog.py）。設定に書くのは
+役割のある列（1 件を決める・検索・絞り込み・並べ替え・日付）の論理名と DB の列名の対応だけ。
+パスとテーブル名は画面に渡さない。列名は表示名として画面に出す（DB の列名をそのまま表示するため）。
 相対パスはアプリのルート（data-search/）を基準に解決する。
 """
 
@@ -29,8 +31,16 @@ KINDS = ("config", "schema", "view")
 # 新しいキー（論理項目）を足してよい場所。ここ以外のサンプルにないキーは「未知のキー」
 OPEN_MAPS = {
     "config": (),
-    "schema": ("columns", "types"),
+    "schema": ("types",),
     "view": ("fields",),
+}
+# 以前の形の設定にあった、今は使わないキー（未知のキーとは別の文面で知らせる）
+OBSOLETE_KEYS = {
+    "view": {
+        "listColumns": "一覧の列は DB から自動で表示します。検索できる項目は searchFields、隠す列は hiddenColumns に書いてください。",
+        "detailFields": "詳細には全項目を出すため使いません。",
+        "detailGroups": "詳細には全項目を出すため使いません。",
+    },
 }
 
 
@@ -44,11 +54,12 @@ class SettingsError(AppError):
 
 @dataclass(frozen=True)
 class DataModel:
-    """論理項目の決まり（schema と view から作る。ソースコードには項目名を書かない）。"""
-    fields: tuple          # 論理項目（schema.columns の順）
-    searchable: tuple      # 番号で探せる項目（view.listColumns の searchable）
+    """役割のある列の決まり（schema と view から作る。ソースコードには項目名を書かない）。
+    表示するほかの列は、キャッシュのテーブルから column_catalog.py が読み取る。"""
+    fields: tuple          # 役割のある列の論理名（schema.columns の順）
+    searchable: tuple      # 番号で探せる項目（view.searchFields）
     filters: dict          # 絞り込みの項目 → "values" / "date"（view.filters）
-    date_fields: tuple     # 日付の項目（schema.types）
+    date_fields: tuple     # 日付の列（schema.types。論理名か、役割のない列なら DB の列名）
     record_key: tuple      # 1 件を特定する項目（schema.recordKey）
     default_sort: tuple    # (項目, "asc" / "desc")（view.defaultSort）
 
@@ -84,14 +95,13 @@ class AppConfig:
 
 
 def public_view_of(schema, view):
-    """画面へ渡す表示定義。schema からは論理名・鍵・型だけを取り、物理名（tableName・列名）は含めない。"""
+    """画面へ渡す表示定義（列の一覧 columns は get_view_config でキャッシュから足す）。テーブル名・パスは含めない。"""
     return {
-        "logicalFields": list(schema["columns"]),
+        "roleFields": list(schema["columns"]),
         "recordKey": list(schema["recordKey"]),
         "types": {name: kind for name, kind in schema["types"].items() if kind == "date"},
-        "listColumns": view["listColumns"],
-        "detailFields": view["detailFields"],
-        "detailGroups": view["detailGroups"],
+        "searchFields": list(view["searchFields"]),
+        "hiddenColumns": list(view["hiddenColumns"]),
         "fields": view["fields"],
         "filters": view["filters"],
         "defaultSort": view["defaultSort"],
@@ -131,11 +141,6 @@ def _read_json(path, label, issues):
     return data
 
 
-def read_settings_json(path, label, issues):
-    """設定ファイル用の JSON 読み込み（重複したキーも誤りにする）。ツールからも使う。"""
-    return _read_json(path, label, issues)
-
-
 def _load_pair(kind, sample_dir, local_dir, app_root, issues, warnings):
     """1 種類（config / schema / view）を読み込み、マージした結果と SettingSource を返す。"""
     sample_path = os.path.join(sample_dir, f"{kind}.sample.json")
@@ -162,7 +167,21 @@ def _load_pair(kind, sample_dir, local_dir, app_root, issues, warnings):
     for path, expected, actual in merged.type_errors:
         issues.append(Issue("error", local_label, path, f"{expected} であるべきところが {actual} になっています。",
                             f"{sample_label} と同じ型（{expected}）にしてください。"))
+    obsolete = OBSOLETE_KEYS.get(kind, {})
+    extra_columns = [path for path in merged.unknown if path.startswith("columns.")]
+    if kind == "schema" and extra_columns:
+        # 以前は全項目を columns に書いていた。今は役割のある列だけ（ほかは DB から自動で表示）
+        names = [path.split(".", 1)[1] for path in extra_columns]
+        shown = "、".join(names[:8]) + (f" ほか {len(names) - 8} 項目" if len(names) > 8 else "")
+        warnings.append(Issue("warning", local_label, "columns.<役割のない項目>",
+                              f"{len(names)} 項目は役割がないため使っていません（{shown}）。列は DB から自動で表示します。",
+                              f"消してかまいません。columns には {sample_label} にある論理名だけを書いてください。"))
     for path in merged.unknown:
+        if path in extra_columns:
+            continue
+        if path in obsolete:
+            warnings.append(Issue("warning", local_label, path, f"今は使わない項目です。{obsolete[path]}", "消してかまいません。"))
+            continue
         warnings.append(Issue("warning", local_label, path, f"{sample_label} に定義されていないキーのため、使っていません。",
                               "書き間違いがないか確認してください（例：tableName を table と書いていないか）。不要なら消してください。"))
     source = SettingSource(kind, sample_label, local_label, local_loaded, merged)
@@ -202,7 +221,7 @@ def load_settings(app_root, local_dir=None):
 
     model = DataModel(
         fields=tuple(schema["columns"]),
-        searchable=tuple(c["field"] for c in view["listColumns"] if c["searchable"]),
+        searchable=tuple(view["searchFields"]),
         filters={item["field"]: item["type"] for item in view["filters"]},
         date_fields=tuple(name for name, kind in schema["types"].items() if kind == "date"),
         record_key=tuple(schema["recordKey"]),
@@ -251,7 +270,6 @@ __all__ = ["AppConfig", "DataModel", "SettingsError", "load_settings", "public_v
     validation.py … マージ後の検証（役割ごと）
     loader.py     … 読み込みの順序と、実行時に使う設定の組み立て
     defaults.py   … sample に書かない運用項目の既定値
-    labels.py     … schema の列名から view の表示名の下書きを作る（tools/make_view_labels.py）
 """
 
 from .loader import AppConfig, DataModel, SettingsError, load_settings, public_view_of
@@ -373,14 +391,15 @@ BUILTIN_DEFAULTS = {
         "devServer": {"host": "127.0.0.1", "port": 8765, "openBrowser": True},
     },
     "schema": {
-        # 日付として比べる論理項目（例：{"factoryDeliveryDate": "date"}）。日付の絞り込みに必要
+        # 日付として比べる列（例：{"factoryDeliveryDate": "date"}）。キーは論理名か、役割のない列なら DB の列名
         "types": {},
     },
     "view": {
-        "detailGroups": [],
-        # 項目ごとの表示（表示名・等幅・コピー・入力例・値の札）。論理項目を足せる場所
+        # 列ごとの表示の補助（等幅・コピー・入力例・値の札）。表示名は DB の列名を使うため書かない
         "fields": {},
         "filters": [],
+        # 最初は隠しておく列（論理名か DB の列名）。各自が画面の「表示列」で変えられる
+        "hiddenColumns": [],
     },
 }
 ```
@@ -393,8 +412,9 @@ BUILTIN_DEFAULTS = {
 """マージ後の設定（config / schema / view）を役割ごとに確かめる。
 
   config … アプリと実行環境。DB 接続に必要なパス（sourcePath / cachePath）はここで確かめる
-  schema … テーブル名と物理列名。仮の値・空・重複をここで確かめる
-  view   … 表示の定義。参照する論理項目が schema.columns にあるかをここで確かめる
+  schema … テーブル名と、役割のある列の論理名 → DB の列名。仮の値・空・重複をここで確かめる
+  view   … 検索・絞り込み・並べ替え・隠す列。参照する論理名が schema.columns にあるかをここで確かめる
+（表示する列そのものは DB から自動で読み取るため、設定では確かめない）
 
 問題はすべて集めて返す（最初の 1 つで止めない）。1 件ごとに
 「対象ファイル・JSON 上の項目・理由・対応」を持たせ、利用者が直せるようにする。
@@ -417,7 +437,7 @@ BADGE_TONES = ("success", "info", "warning", "danger", "neutral")
 class Issue:
     level: str   # "error" / "warning"
     file: str    # 例：config/local/schema.local.json
-    path: str    # 例：columns.status / listColumns[2].field
+    path: str    # 例：columns.cfStatus / searchFields[2]
     reason: str
     action: str
 
@@ -559,10 +579,11 @@ def validate_schema(schema, src, config):
     if len(set(record_key)) != len(record_key):
         err("recordKey", "同じ論理項目が重複しています。", "重複を消してください。")
 
+    # types のキーは論理名か、役割のない列なら DB の列名（DB から読み取るため、ここでは有無を確かめない）
     for name, kind in schema["types"].items():
         path = f"types.{name}"
-        if name not in columns:
-            err(path, f"\"{name}\" は schema.columns に定義されていません。", "columns に論理項目を足すか、types から消してください。")
+        if _blank(name):
+            err(path, "列の名前が空です。", "論理名か DB の列名を書いてください。")
         if kind not in COLUMN_TYPES:
             err(path, f"\"{kind}\" は型として使えません。", "text か date にしてください。")
     return issues
@@ -585,66 +606,32 @@ def validate_view(view, src, schema):
             return False
         return True
 
-    seen = set()
-    for index, column in enumerate(view["listColumns"]):
-        base = f"listColumns[{index}]"
-        if not isinstance(column, dict):
-            err(base, "{ \"field\": ..., \"label\": ..., \"visible\": ..., \"searchable\": ... } の形ではありません。", "形を直してください。")
-            continue
-        field = column.get("field")
-        if check_field(f"{base}.field", field):
-            if field in seen:
-                err(f"{base}.field", f"\"{field}\" が listColumns の中で重複しています。", "どちらか一方を消してください。")
-            seen.add(field)
-        if _blank(column.get("label")):
-            err(f"{base}.label", "表示名がありません。", "\"label\": \"表示名\" を設定してください。")
-        for flag in ("visible", "searchable"):
-            if not isinstance(column.get(flag), bool):
-                err(f"{base}.{flag}", f"{flag} が真偽値ではありません。", "true か false にしてください。")
-        width = column.get("width")
-        if width is not None and (isinstance(width, bool) or not isinstance(width, int) or width < 1):
-            err(f"{base}.width", "幅が正の整数ではありません。", "1 以上の整数（px）にするか、消してください。")
-    if not any(isinstance(c, dict) and c.get("searchable") is True for c in view["listColumns"]):
-        err("listColumns", "番号で探せる項目（searchable: true）が 1 つもありません。", "少なくとも 1 つを searchable: true にしてください。")
+    def warn(path, reason, action):
+        issues.append(Issue("warning", src.origin(path), path, reason, action))
 
+    searchable = view["searchFields"]
+    if not searchable:
+        err("searchFields", "番号で探せる項目が 1 つもありません。", "少なくとも 1 つの論理名を書いてください（例：[\"lotNo\"]）。")
     seen = set()
-    for index, name in enumerate(view["detailFields"]):
-        path = f"detailFields[{index}]"
+    for index, name in enumerate(searchable):
+        path = f"searchFields[{index}]"
         if check_field(path, name):
             if name in seen:
-                err(path, f"\"{name}\" が detailFields の中で重複しています。", "どちらか一方を消してください。")
+                err(path, f"\"{name}\" が searchFields の中で重複しています。", "どちらか一方を消してください。")
             seen.add(name)
 
-    group_ids, grouped = [], {}
-    for index, group in enumerate(view["detailGroups"]):
-        path = f"detailGroups[{index}]"
-        if not isinstance(group, dict) or _blank(group.get("id")) or _blank(group.get("label")):
-            err(path, "id と label が必要です。", "{ \"id\": \"...\", \"label\": \"...\", \"fields\": [ ... ] } の形にしてください。")
-            continue
-        if group["id"] in group_ids:
-            err(f"{path}.id", f"\"{group['id']}\" が重複しています。", "別の id にしてください。")
-        group_ids.append(group["id"])
-        members = group.get("fields", [])
-        if not isinstance(members, list):
-            err(f"{path}.fields", "配列 [ ] ではありません。", "[\"論理名\", ...] の形にしてください。")
-            continue
-        for position, name in enumerate(members):
-            member_path = f"{path}.fields[{position}]"
-            if check_field(member_path, name):
-                if name in grouped:
-                    err(member_path, f"\"{name}\" は detailGroups[{grouped[name]}] にも入っています。", "1 つのまとまりにだけ入れてください。")
-                grouped.setdefault(name, index)
+    for index, name in enumerate(view["hiddenColumns"]):
+        if _blank(name):
+            err(f"hiddenColumns[{index}]", "列の名前が空か、文字列ではありません。", "論理名か DB の列名を書いてください。")
 
+    # fields のキーは論理名か、役割のない列なら DB の列名（DB から読み取るため、ここでは有無を確かめない）
+    unused = []
     for name, options in view["fields"].items():
         path = f"fields.{name}"
-        check_field(path, name)
         if not isinstance(options, dict):
-            err(path, "オブジェクト { } ではありません。", "{ \"group\": ..., \"mono\": ... } の形にしてください。")
+            err(path, "オブジェクト { } ではありません。", "{ \"mono\": true } の形にしてください。")
             continue
-        if "label" in options and _blank(options["label"]):
-            err(f"{path}.label", "表示名が空です。", "表示名を設定するか、label の行を消してください。")
-        if "group" in options and options["group"] not in group_ids:
-            err(f"{path}.group", f"\"{options['group']}\" は detailGroups に定義されていません。", "detailGroups に足すか、group を直してください。")
+        unused += [f"{path}.{key}" for key in ("label", "group") if key in options]
         for flag in ("mono", "copy"):
             if flag in options and not isinstance(options[flag], bool):
                 err(f"{path}.{flag}", f"{flag} が真偽値ではありません。", "true か false にしてください。")
@@ -678,16 +665,11 @@ def validate_view(view, src, schema):
             err(f"{base}.type", f"\"{field}\" は schema.types で date になっていません。",
                 f"schema の types に \"{field}\": \"date\" を足すか、type を values にしてください。")
 
-    # 表示名がどこにもない項目は、論理名（英字）がそのまま画面に出てしまう（まとめて 1 件の注意にする）
-    listed = {c.get("field"): c.get("label") for c in view["listColumns"] if isinstance(c, dict)}
-    used = list(view["detailFields"]) + [f.get("field") for f in view["filters"] if isinstance(f, dict)]
-    unlabeled = [name for name in dict.fromkeys(used)
-                 if name in columns and _blank(view["fields"].get(name, {}).get("label")) and _blank(listed.get(name))]
-    if unlabeled:
-        shown = "、".join(unlabeled[:8]) + (f" ほか {len(unlabeled) - 8} 項目" if len(unlabeled) > 8 else "")
-        issues.append(Issue("warning", src.origin("fields"), "fields.<項目>.label",
-                            f"{len(unlabeled)} 項目に表示名がないため、詳細などに論理名がそのまま表示されます（{shown}）。",
-                            "view の fields に { \"論理名\": { \"label\": \"表示名\" } } を足してください（一覧の列は listColumns の label が使われます）。"))
+    # 以前の形の表示名・まとまりは使わない（表示名は DB の列名。まとめて 1 件の注意にする）
+    if unused:
+        shown = "、".join(unused[:4]) + (f" ほか {len(unused) - 4} 件" if len(unused) > 4 else "")
+        warn("fields.<列>.label", f"表示名（label）とまとまり（group）は今は使いません（{shown}）。表示名は DB の列名をそのまま使います。",
+             "消してかまいません。")
 
     sort = view["defaultSort"]
     check_field("defaultSort.field", sort.get("field"))
@@ -1013,14 +995,14 @@ if errorlevel 1 pause
     const searchBar = DS.views.createSearchBar(document.getElementById('search-host'), { store, bus, search, openPanel, refresh });
     DS.views.createStatusChips(document.getElementById('status-host'), { store, bus, openPanel });
     DS.views.createTagBar(document.getElementById('tagbar'), { store, bus, tags, openPanel });
-    DS.views.createResultsView(document.getElementById('results'), { store, bus, search, openPanel, refresh });
+    DS.views.createResultsView(document.getElementById('results'), { store, bus, search, toast, openPanel, refresh });
     DS.views.createDetailView(document.getElementById('detail'), { store, bus, search, toast });
 
     // Esc：開いているものを手前から順に閉じる（入力中の Esc は入力欄が受け持つ）
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
       if (event.target && /^(INPUT|TEXTAREA)$/.test(event.target.tagName)) return;
-      if (store.get().selection.key) search.closeDetail();
+      if (store.get().selection.open) search.closeDetail();
       else if (store.get().ui.panel) openPanel(null);
     });
 
@@ -1079,11 +1061,11 @@ if errorlevel 1 pause
 | 新規 | `config/sample/schema.sample.json` |
 | 新規 | `config/sample/view.sample.json` |
 | 修正 | `docs/config-design.md` |
-| 新規 | `make-labels.bat` |
 | 修正 | `python/data_search/__init__.py` |
 | 修正 | `python/data_search/cache_copier.py` |
 | 修正 | `python/data_search/cache_service.py` |
 | 修正 | `python/data_search/cache_validator.py` |
+| 新規 | `python/data_search/column_catalog.py` |
 | 修正 | `python/data_search/commands.py` |
 | 削除 | `python/data_search/config_loader.py` |
 | 修正 | `python/data_search/errors.py` |
@@ -1093,7 +1075,6 @@ if errorlevel 1 pause
 | 修正 | `python/data_search/query.py` |
 | 新規 | `python/data_search/settings/__init__.py` |
 | 新規 | `python/data_search/settings/defaults.py` |
-| 新規 | `python/data_search/settings/labels.py` |
 | 新規 | `python/data_search/settings/loader.py` |
 | 新規 | `python/data_search/settings/local_writer.py` |
 | 新規 | `python/data_search/settings/merge.py` |
@@ -1103,24 +1084,28 @@ if errorlevel 1 pause
 | 修正 | `python/run_server.py` |
 | 修正 | `python/tests/test_backend.py` |
 | 修正 | `python/tools/make_dummy_db.py` |
-| 新規 | `python/tools/make_view_labels.py` |
+| 新規 | `python/tools/sample_columns.json` |
 | 新規 | `python/tools/sync_sample_view.py` |
 | 修正 | `src/css/components.css` |
 | 修正 | `src/css/layout.css` |
+| 修正 | `src/css/tokens.css` |
 | 修正 | `src/index.html` |
 | 修正 | `src/js/api/api-client.js` |
 | 修正 | `src/js/api/mock-adapter.js` |
 | 修正 | `src/js/app.js` |
 | 修正 | `src/js/controllers/app-state.js` |
+| 修正 | `src/js/controllers/data-controller.js` |
 | 修正 | `src/js/controllers/search-controller.js` |
 | 新規 | `src/js/controllers/source-controller.js` |
 | 修正 | `src/js/domain/fields.js` |
 | 修正 | `src/js/domain/status-tones.js` |
 | 修正 | `src/js/manual/manual-content.js` |
+| 新規 | `src/js/panels/columns-panel.js` |
 | 修正 | `src/js/panels/panels.js` |
 | 修正 | `src/js/sample/sample-data.js` |
 | 新規 | `src/js/sample/sample-view.js` |
 | 修正 | `src/js/views/detail-view.js` |
+| 新規 | `src/js/views/grid-tools.js` |
 | 修正 | `src/js/views/results-view.js` |
 | 修正 | `src/js/views/search-bar.js` |
 | 修正 | `src/js/views/side-panel.js` |

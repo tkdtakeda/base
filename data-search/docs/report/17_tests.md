@@ -27,21 +27,24 @@ from data_search.settings import SettingsError, deep_merge, load_settings  # noq
 from data_search.errors import AppError  # noqa: E402
 from data_search.http_server import AppContext, create_server  # noqa: E402
 from data_search.lot_service import LotService  # noqa: E402
-from data_search.settings.labels import plan_labels  # noqa: E402
 from data_search.source_service import SourceService  # noqa: E402
 from data_search import commands  # noqa: E402
+from data_search.column_catalog import build_catalog  # noqa: E402
 
 APP_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SAMPLE_DIR = os.path.join(APP_ROOT, "config", "sample")
 
 with open(os.path.join(SAMPLE_DIR, "schema.sample.json"), encoding="utf-8") as _fp:
-    LOGICAL_FIELDS = list(json.load(_fp)["columns"])
-# 物理列名：論理名と違う名前にする（1 列は日本語。引用符の処理の確認用）
-COLUMNS = {name: ("取引先_名称" if name == "customerName" else "C_" + name.upper()) for name in LOGICAL_FIELDS}
+    ROLE_FIELDS = list(json.load(_fp)["columns"])
+# 役割のある列の DB の列名：論理名と違う名前にする（1 列は日本語。引用符の処理の確認用）
+COLUMNS = {name: ("取引先_名称" if name == "customerName" else "C_" + name.upper()) for name in ROLE_FIELDS}
+# 役割のない列（設定には書かない。DB から自動で表示される）。DB の列の順は「予定設備」が先頭、ほかは後ろ
+EXTRA_FIRST, EXTRA_LAST = ["予定設備"], ["注文板厚", "UPDATED_AT"]
+TABLE_COLUMNS = EXTRA_FIRST + [COLUMNS[name] for name in ROLE_FIELDS] + EXTRA_LAST
 
-# テストで値を入れる項目（ほかの項目は空）
+# テストで値を入れる列（論理名、または役割のない列は DB の列名。ほかは空）
 ROW_FIELDS = ("lotNo", "boxNo", "inspectionNo", "castingNo", "orderNo", "manufacturingMaterial", "manufacturingTemper",
-              "orderThickness", "customerName", "factoryDeliveryDate", "plannedEquipmentName", "lastActualEquipmentName", "cfStatus")
+              "注文板厚", "customerName", "factoryDeliveryDate", "予定設備", "lastActualEquipmentName", "cfStatus")
 ROWS = [
     ("LOT-001", "01", "INS-001", "CST-001", "ORD-1", "A5052", "H14", "1.00", "サンプル工業", "2026-10-01", "検査", "QC-01", "検査済み"),
     ("LOT-002", "01", "INS-002", "CST-002", "ORD-1", "A6061", "T6", "2.00", "テスト金属", "2026-10-02", "切断", "SL-01", "仕掛中"),
@@ -50,15 +53,16 @@ ROWS = [
     ("LOT-DUP", "01", "INS-005", "CST-005", "ORD-4", "A3003", "H24", "1.00", "例示精工", "2026-10-05", "検査", "QC-02", "検査待ち"),
     ("LOT-DUP", "02", "INS-006", "CST-006", "ORD-4", "A3003", "H24", "1.00", "例示精工", "2026-10-05", "検査", "QC-02", "出荷済み"),
 ]
-LABEL_WARNING = "fields.<項目>.label"  # 公開サンプルの view には詳細だけの項目の表示名がないため、この注意は常に出る
 SILENT = logging.getLogger("test-silent")
 SILENT.addHandler(logging.NullHandler())
 SILENT.propagate = False
 
 
 def full_row(values):
+    """1 行を DB の列の順（TABLE_COLUMNS）に並べる。"""
     data = dict(zip(ROW_FIELDS, values))
-    return [data.get(name) for name in LOGICAL_FIELDS]
+    by_physical = {COLUMNS.get(name, name): value for name, value in data.items()}
+    return [by_physical.get(physical) for physical in TABLE_COLUMNS]
 
 
 def make_db(path, variant="normal", rows=ROWS):
@@ -69,8 +73,8 @@ def make_db(path, variant="normal", rows=ROWS):
         with open(path, "wb") as fp:
             fp.write(b"broken" * 200)
         return
-    keep = [i for i, name in enumerate(LOGICAL_FIELDS) if not (variant == "missing-column" and name == "cfStatus")]
-    columns = [COLUMNS[LOGICAL_FIELDS[i]] for i in keep]
+    keep = [i for i, name in enumerate(TABLE_COLUMNS) if not (variant == "missing-column" and name == COLUMNS["cfStatus"])]
+    columns = [TABLE_COLUMNS[i] for i in keep]
     table = "other" if variant == "missing-table" else "t_lot"
     conn = sqlite3.connect(path)
     conn.execute(f'CREATE TABLE "{table}" ({", ".join(chr(34) + c + chr(34) for c in columns)})')
@@ -83,8 +87,7 @@ def make_db(path, variant="normal", rows=ROWS):
 
 
 def other_warnings(config):
-    """公開サンプル由来の「表示名がない」注意以外の注意。"""
-    return [w for w in config.warnings if w.path != LABEL_WARNING]
+    return list(config.warnings)
 
 
 class BackendTestCase(unittest.TestCase):
@@ -160,25 +163,17 @@ class ConfigTest(BackendTestCase):
         self.assertEqual(base["list"], [1, 2, 3])  # サンプル側は変わらない
 
     def test_view_array_is_replaced_whole(self):
-        self.write_local("view", {"listColumns": [
-            {"field": "lotNo", "label": "ロット", "visible": True, "searchable": True},
-            {"field": "cfStatus", "label": "状態", "visible": True, "searchable": False},
-        ]})
+        self.write_local("view", {"searchFields": ["lotNo"]})
         config = load_settings(self.root)
-        self.assertEqual([c["field"] for c in config.view["listColumns"]], ["lotNo", "cfStatus"])
-        self.assertEqual(len(config.view["detailFields"]), len(LOGICAL_FIELDS))  # 上書きしていない配列はサンプルのまま
         self.assertEqual(config.model.searchable, ("lotNo",))
+        self.assertEqual(len(config.view["filters"]), 8)  # 上書きしていない配列はサンプルのまま
 
-    def test_schema_can_add_logical_field(self):
-        conn = sqlite3.connect(self.source)
-        conn.execute('ALTER TABLE "t_lot" ADD COLUMN "SAGYOBI" TEXT')
-        conn.commit()
-        conn.close()
-        self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS, workDate="SAGYOBI"), "types": {"workDate": "date"}})
-        self.write_local("view", {"filters": [{"field": "workDate", "type": "date"}], "fields": {"workDate": {"label": "作業日"}}})
+    def test_types_and_view_can_use_db_column_names(self):
+        # 役割のない列（DB の列名）も、日付の型・隠す列・表示の補助に書ける
+        self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS), "types": {"注文板厚": "text", "factoryDeliveryDate": "date"}})
+        self.write_local("view", {"hiddenColumns": ["UPDATED_AT"], "fields": {"予定設備": {"mono": True}}})
         config = load_settings(self.root)
-        self.assertIn("workDate", config.model.fields)
-        self.assertEqual(config.model.filters, {"workDate": "date"})
+        self.assertEqual(config.public_view()["hiddenColumns"], ["UPDATED_AT"])
         self.assertEqual(other_warnings(config), [])
 
     def test_unknown_keys_are_warned_with_file_and_path(self):
@@ -245,41 +240,29 @@ class ConfigTest(BackendTestCase):
 
     # ── 検証：view ──
     def test_view_field_must_exist_in_schema(self):
-        self.write_local("view", {"listColumns": [
-            {"field": "lotNo", "label": "ロット", "visible": True, "searchable": True},
-            {"field": "lotNo", "label": "ロット", "visible": True, "searchable": True},
-            {"field": "productNo", "label": "製品", "visible": "yes", "searchable": False},
-        ]})
-        self.assert_error("config/local/view.local.json", "listColumns[2].field", "schema.columns に定義されていません")
-        self.assert_error("config/local/view.local.json", "listColumns[1].field", "重複")
-        self.assert_error("config/local/view.local.json", "listColumns[2].visible", "真偽値")
+        self.write_local("view", {"searchFields": ["lotNo", "lotNo", "productNo"], "hiddenColumns": [""]})
+        self.assert_error("config/local/view.local.json", "searchFields[2]", "schema.columns に定義されていません")
+        self.assert_error("config/local/view.local.json", "searchFields[1]", "重複")
+        self.assert_error("config/local/view.local.json", "hiddenColumns[0]", "空")
+        self.write_local("view", {"searchFields": []})
+        self.assert_error("config/local/view.local.json", "searchFields", "1 つもありません")
 
     def test_date_filter_needs_date_type(self):
         self.write_local("view", {"filters": [{"field": "cfStatus", "type": "date"}]})
         self.assert_error("config/local/view.local.json", "filters[0].type", "date になっていません")
 
-    def test_detail_groups_rules(self):
-        self.write_local("view", {"detailGroups": [
-            {"id": "a", "label": "A", "fields": ["lotNo", "productNo"]},
-            {"id": "b", "label": "B", "fields": ["lotNo"]},
-        ]})
-        self.assert_error("config/local/view.local.json", "detailGroups[0].fields[1]", "schema.columns に定義されていません")
-        self.assert_error("config/local/view.local.json", "detailGroups[1].fields[0]", "detailGroups[0] にも入っています")
-
-    def test_labels_in_fields_survive_replacing_list_columns(self):
-        self.write_local("view", {"fields": {"inspectionNo": {"label": "検査No."}},
-                                  "listColumns": [{"field": "lotNo", "label": "ロットNo.", "visible": True, "searchable": True}]})
+    def test_old_style_settings_are_warned_not_errors(self):
+        # 以前の形（全項目の columns・listColumns・detailFields・表示名）は止めずに「使っていない」と知らせる
+        old_columns = dict(COLUMNS, plannedEquipmentName="PLANNED", orderThickness="THICK")
+        self.write_local("schema", {"tableName": "t_lot", "columns": old_columns})
+        self.write_local("view", {"listColumns": [{"field": "lotNo"}], "detailFields": ["lotNo"], "detailGroups": [],
+                                  "fields": {"lotNo": {"label": "ロット"}, "cfStatus": {"label": "状態", "group": "x"}}})
         config = load_settings(self.root)
-        self.assertEqual(config.view["fields"]["inspectionNo"]["label"], "検査No.")
-
-    def test_missing_labels_are_warned_once(self):
-        self.assertEqual([w.path for w in self.config.warnings], [LABEL_WARNING])
-        self.write_local("schema", {"tableName": "t_lot", "columns": dict(COLUMNS, workDate="SAGYOBI")})
-        self.write_local("view", {"detailFields": ["lotNo", "workDate"]})
-        config = load_settings(self.root)
-        warning = [w for w in config.warnings if w.path == LABEL_WARNING][0]
-        self.assertIn("1 項目", warning.reason)
-        self.assertIn("workDate", warning.reason)
+        paths = {w.path: w for w in config.warnings}
+        self.assertEqual(set(paths), {"columns.<役割のない項目>", "listColumns", "detailFields", "detailGroups", "fields.<列>.label"})
+        self.assertIn("2 項目", paths["columns.<役割のない項目>"].reason)
+        self.assertNotIn("PLANNED", paths["columns.<役割のない項目>"].reason)  # DB の列名は出さない（論理名だけ）
+        self.assertNotIn("plannedEquipmentName", config.field_mappings)
 
     def test_error_format(self):
         self.write_local("view", {"defaultSort": {"field": "productNo", "order": "asc"}})
@@ -290,10 +273,10 @@ class ConfigTest(BackendTestCase):
         self.assertIn("理由: ", text)
         self.assertIn("対応: ", text)
 
-    def test_public_view_has_no_physical_names(self):
+    def test_public_view_has_no_table_name_or_path(self):
         text = json.dumps(self.config.public_view(), ensure_ascii=False)
-        for physical in list(COLUMNS.values()) + ["t_lot"]:
-            self.assertNotIn(f'"{physical}"', text)
+        for secret in ["t_lot", "source.sqlite3"] + list(COLUMNS.values()):
+            self.assertNotIn(secret, text)
 
     def test_mock_view_matches_sample(self):
         # 画面だけで試すモード（file://）の表示定義が、公開サンプルと同じであること
@@ -301,7 +284,10 @@ class ConfigTest(BackendTestCase):
         with open(path, encoding="utf-8") as fp:
             text = fp.read()
         embedded = json.loads(text.split("/*VIEW_JSON_START*/", 1)[1].split("/*VIEW_JSON_END*/", 1)[0])
+        columns = embedded.pop("columns")
+        embedded.pop("columnsVersion")
         self.assertEqual(embedded, self.config.public_view())
+        self.assertEqual([c["id"] for c in columns][:len(ROLE_FIELDS)], ROLE_FIELDS)  # 役割のある列が先頭
 
 
 class CacheTest(BackendTestCase):
@@ -380,10 +366,43 @@ class SearchTest(BackendTestCase):
         self.assertEqual(self.search("LOT-00", match_mode="exact")["totalCount"], 0)
         self.assertEqual(self.search("lot-001", match_mode="exact")["totalCount"], 1)
 
-    def test_items_use_logical_names(self):
-        item = self.search("LOT-001")["items"][0]
-        self.assertEqual(set(item), set(COLUMNS))
-        self.assertEqual(item["customerName"], "サンプル工業")
+    def test_items_have_every_db_column(self):
+        # 役割のある列は論理名、ほかの列は DB の列名。並びは役割のある列が先、残りは DB の順
+        result = self.search("LOT-001")
+        item = result["items"][0]
+        self.assertEqual(list(item), ROLE_FIELDS + EXTRA_FIRST + EXTRA_LAST)
+        self.assertEqual((item["customerName"], item["予定設備"], item["注文板厚"]), ("サンプル工業", "検査", "1.00"))
+        self.assertEqual(self.service.detail({"lotNo": "LOT-001", "boxNo": "01"})["item"], item)
+
+    def test_view_config_lists_columns_with_db_names(self):
+        self.cache.refresh()
+        context = AppContext(self.config, self.cache, self.service, SILENT)
+        view = commands.dispatch("get_view_config", context, {})
+        self.assertEqual([c["label"] for c in view["columns"]], [COLUMNS[n] for n in ROLE_FIELDS] + EXTRA_FIRST + EXTRA_LAST)
+        self.assertEqual(view["columns"][0], {"id": "lotNo", "label": "C_LOTNO", "role": True})
+        self.assertEqual(view["columnsVersion"], self.cache.status()["columnsVersion"])
+        self.assertNotIn("t_lot", json.dumps(view, ensure_ascii=False))
+
+    def test_sort_by_column_without_role(self):
+        items = self.search("LOT", sortKey="注文板厚", sortOrder="desc")["items"]
+        self.assertEqual([i["注文板厚"] for i in items], ["2.00", "1.00", "1.00", "1.00", "1.00"])
+        with self.assertRaises(AppError):
+            self.search("LOT", sortKey="NO_SUCH")
+
+    def test_new_db_column_appears_after_refresh(self):
+        before = self.cache.status()["columnsVersion"]
+        conn = sqlite3.connect(self.source)
+        conn.execute('ALTER TABLE "t_lot" ADD COLUMN "作業日" TEXT')
+        conn.commit()
+        conn.close()
+        self.cache.refresh()
+        self.assertIn("作業日", self.search("LOT-001")["items"][0])
+        self.assertNotEqual(self.cache.status()["columnsVersion"], before)
+
+    def test_catalog_names_do_not_collide(self):
+        catalog = build_catalog(["lotNo", "X", "C_LOTNO"], {"lotNo": "C_LOTNO"})
+        self.assertEqual([(c.id, c.physical, c.role) for c in catalog],
+                         [("lotNo", "C_LOTNO", True), ("lotNo#2", "lotNo", False), ("X", "X", False)])
 
     def test_zero_results_is_success(self):
         result = self.search("NOTHING")
@@ -585,56 +604,6 @@ class HttpTest(BackendTestCase):
     def test_static_files_are_served_with_js_mime(self):
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/js/app.js") as response:
             self.assertIn("javascript", response.headers["Content-Type"])
-
-
-class LabelTest(BackendTestCase):
-    """schema の列名 → view.local.json の表示名（tools/make_view_labels.py）"""
-    TOOL = os.path.join(APP_ROOT, "python", "tools", "make_view_labels.py")
-
-    def run_tool(self, *args):
-        return subprocess.run([sys.executable, self.TOOL, "--local-dir", self.local_dir, *args],
-                              capture_output=True, text=True, encoding="utf-8", check=False)
-
-    def read_view(self):
-        with open(os.path.join(self.local_dir, "view.local.json"), encoding="utf-8") as fp:
-            return json.load(fp)
-
-    def test_plan_keeps_existing_and_skips_unusable_names(self):
-        columns = {"lotNo": "ロットNo", "boxNo": "<BOX_NO_COLUMN>", "orderNo": "orderNo", "shape": " 形状 ", "memo": ""}
-        plan = plan_labels(columns, {"lotNo": {"label": "手で直した名前", "mono": True}})
-        self.assertEqual(plan.fields["lotNo"], {"label": "手で直した名前", "mono": True})
-        self.assertEqual(plan.fields["shape"], {"label": "形状"})
-        self.assertEqual((plan.added, plan.kept, plan.skipped), (["shape"], ["lotNo"], ["boxNo", "orderNo", "memo"]))
-        plan = plan_labels(columns, {"lotNo": {"label": "手で直した名前", "mono": True}}, overwrite=True)
-        self.assertEqual(plan.fields["lotNo"], {"label": "ロットNo", "mono": True})
-        self.assertEqual(plan.replaced, ["lotNo"])
-
-    def test_tool_writes_labels_and_screen_uses_them(self):
-        self.write_local("view", {"defaultSort": {"field": "lotNo", "order": "asc"},
-                                  "fields": {"lotNo": {"label": "ロット（手で直した）"}}})
-        result = self.run_tool()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("C_ORDERMATERIAL", result.stdout)                  # 列名そのものは画面に出さない
-        view = self.read_view()
-        self.assertEqual(view["defaultSort"], {"field": "lotNo", "order": "asc"})  # ほかの設定は残る
-        self.assertEqual(view["fields"]["lotNo"]["label"], "ロット（手で直した）")    # 手で直した表示名は残る
-        self.assertEqual(view["fields"]["customerName"]["label"], "取引先_名称")
-        self.assertEqual(list(view["fields"])[:3], ["lotNo", "boxNo", "inspectionNo"])  # schema の順
-        self.assertTrue(os.path.isfile(os.path.join(self.local_dir, "view.local.json.bak")))
-        config = load_settings(self.root)
-        self.assertEqual(config.public_view()["fields"]["orderMaterial"]["label"], "C_ORDERMATERIAL")
-        self.assertFalse([w for w in config.warnings if w.path == LABEL_WARNING])  # 表示名なしの注意は消える
-        # もう一度実行しても変わらない（再利用できる）
-        again = self.run_tool()
-        self.assertIn("変更はありません", again.stdout)
-        self.assertEqual(self.read_view(), view)
-
-    def test_tool_dry_run_and_missing_schema(self):
-        result = self.run_tool("--dry-run")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(os.path.exists(os.path.join(self.local_dir, "view.local.json")))
-        self.remove_local("schema")
-        self.assertEqual(self.run_tool().returncode, 1)
 
 
 class SourceTest(BackendTestCase):

@@ -35,10 +35,10 @@ data-search/config/
 |---|---|---|
 | `config.sample.json` | アプリ基本情報、データソースの有効/無効・識別子・読み取り専用、共有 SQLite パスの**プレースホルダー**、キャッシュのパスと動作、検索の初期値、ログ、開発用サーバー | テーブル名、列名、論理と物理の対応、表示項目・表示順 |
 | `config.local.json` | 実際の共有 SQLite のパスなど、環境で変わる値だけ | テーブル名、列名（schema へ） |
-| `schema.sample.json` | データソース識別子、テーブル名の**プレースホルダー**、論理項目と物理列名（**プレースホルダー**）の対応、1 件を特定する項目（`recordKey`）、日付として扱う項目（`types`） | 表示名、表示順、表示/非表示 |
-| `schema.local.json` | 実際のテーブル名・物理列名（DB 構造が変わったときの主な修正先）。社内だけの論理項目の追加 | 表示順、表示/非表示 |
-| `view.sample.json` | 一覧の列（`listColumns`：論理名・表示名・表示/非表示・検索対象・幅。配列順＝表示順）、詳細の項目（`detailFields`）、詳細のまとまり（`detailGroups`）、項目ごとの表示（`fields`：表示名・等幅・コピー・入力例・値の札）、絞り込み（`filters`）、既定の並べ替え（`defaultSort`） | 物理列名 |
-| `view.local.json` | 社内環境だけの表示変更（なくてよい） | 物理列名 |
+| `schema.sample.json` | データソース識別子、テーブル名の**プレースホルダー**、**役割のある 14 列**の論理名と DB の列名（**プレースホルダー**）の対応、1 件を特定する項目（`recordKey`）、日付として扱う列（`types`） | 役割のない列（DB から自動で読み取る）、表示名（DB の列名を使う） |
+| `schema.local.json` | 実際のテーブル名と、役割のある列の実際の列名。日付の列（役割のない列は DB の列名で書ける） | 役割のない列の一覧（書くと「使っていない」と注意） |
+| `view.sample.json` | 番号で探せる列（`searchFields`）、最初は隠す列（`hiddenColumns`）、絞り込み（`filters`）、既定の並べ替え（`defaultSort`）。任意で列ごとの補助（`fields`：等幅・コピー・入力例・値の札） | 物理列名、表示名、表示順（DB の列名・DB の順を使う） |
+| `view.local.json` | 社内環境だけの変更（なくてよい）。隠す列を DB の列名で書くのはここ | — |
 
 `recordKey` と `types` は依頼書に明記がなかったため、**DB の論理構造**として schema に置いた（「1 件を特定する列」「日付として比べる列」はデータの性質であり、表示の都合ではないため）。
 
@@ -65,7 +65,7 @@ data-search/config/
 |---|---|
 | キーがない | サンプルの値のまま（誤りにしない。例：`devServer` を書かなくてよい） |
 | 両方がオブジェクト `{ }` | キーごとに再帰的に重ねる |
-| 配列 `[ ]` | 要素ごとに重ねず、**配列全体を置き換える**（例：`view.listColumns`） |
+| 配列 `[ ]` | 要素ごとに重ねず、**配列全体を置き換える**（例：`view.searchFields`） |
 | 型がサンプルと違う | 使わず、型の誤りとして止める（サンプルの値が `null` なら何でも受け入れる。整数は数値の代わりに使える） |
 | サンプルにないキー | **読み捨てない**。ファイル名と項目の道筋を示して「設定の注意」を出し、その値は使わない |
 | サンプルにないキー（論理項目を足せる場所） | `schema.columns`・`schema.types`・`view.fields` は新しいキーを受け入れて使う（社内だけの論理項目を足せるように） |
@@ -85,10 +85,10 @@ data-search/config/
 例（view）：
 
 ```jsonc
-// view.sample.json：listColumns 17 列・detailFields 83 項目
+// view.sample.json：searchFields 6 列・filters 8 列
 // view.local.json
-{ "listColumns": [ { "field": "lotNo", "label": "ロットNo.", "visible": true, "searchable": true } ] }
-// 結果：listColumns は 1 列だけ（配列は丸ごと置き換え）。detailFields・fields・filters はサンプルのまま
+{ "searchFields": ["lotNo"] }
+// 結果：searchFields は 1 列だけ（配列は丸ごと置き換え）。hiddenColumns・filters はサンプルのまま
 ```
 
 ## 6. 検証（`settings/validation.py`）
@@ -110,19 +110,17 @@ data-search/config/
 - `columns` がオブジェクトで、論理名・物理列名が空でも仮の値でもない
 - 同じキー（論理名）が重複していない（JSON の読み込み時に検出）
 - `dataSourceId` が config の `dataSource.id` と同じ（別のデータソースの設定を組み合わせないため）
-- `recordKey`・`types` の論理名が `columns` にある
-- 接続後（キャッシュ作成時）にテーブルと、使う物理列がすべてあること（`cache_validator.py`）
+- `recordKey` の論理名が `columns` にある。`types` は型が text / date（キーは役割のない列の DB の列名でもよいため、有無は確かめない）
+- 接続後（キャッシュ作成時）にテーブルと、役割のある列がすべてあること（`cache_validator.py`）。ほかの列はそのとき読み取る（`column_catalog.py`）
+- 以前の形で全列を書いた `columns` は、役割のない分を「使っていない」と 1 件の注意にまとめる（止めない）
 
 ### 6.3 view
 
-- `listColumns`・`detailFields`・`filters`・`fields`・`defaultSort` が参照する論理名が、**マージ後の `schema.columns`** にある
-- 同じ表示項目が重複していない（`listColumns`・`detailFields`・`filters`）
-- `visible`・`searchable` が真偽値。番号で探せる項目が少なくとも 1 つある
-- `filters` の `type` が values / date。date は schema の `types` で date の項目だけ
-- `detailGroups[]` は `id`・`label` が必須、`fields` は配列で、中の論理名が schema にある。同じ項目を 2 つのまとまりに入れない
-- `fields.<項目>.group` が `detailGroups` にある、`badge` のパターンと色が正しい
-- 表示名がどこにもない項目は注意（画面に論理名が出てしまうため）。項目ごとではなく「N 項目に表示名がない」と 1 件にまとめて出す
-- 表示順は配列の順、`visible: false` の列は一覧に出さない（画面側で守る）
+- `searchFields`・`filters`・`defaultSort` が参照する論理名が、**マージ後の `schema.columns`** にある。重複していない。番号で探せる列が少なくとも 1 つある
+- `filters` の `type` が values / date。date は schema の `types` で date の列だけ
+- `hiddenColumns` は空でない文字列（論理名か DB の列名。DB にない名前は無視）
+- `fields.<列>` の `mono`・`copy` が真偽値、`badge` のパターンと色が正しい。`label`・`group` は「今は使わない」と注意
+- 以前の形の `listColumns`・`detailFields`・`detailGroups` は「今は使わない項目」と注意（止めない）
 
 ### 6.4 誤りの表示
 
@@ -131,7 +129,7 @@ data-search/config/
 ```text
 [設定エラー]
 対象: config/sample/view.sample.json
-項目: listColumns[2].field
+項目: searchFields[2]
 理由: "productNo" はマージ後の schema.columns に定義されていません。
 対応: schema側へ論理項目を追加するか、view側のfieldを修正してください。
 ```
@@ -205,12 +203,14 @@ flowchart TD
 旧 `config.local.json` の `dataSource.tableName` や `fieldMappings` を新しい `config.local.json` にそのまま残すと、
 サンプルにないキーとして「設定の注意」が出る（使われない）。`schema.local.json` へ移すこと。
 
-## 9. 表示名と DB の列名
+## 9. 列と表示名（column_catalog.py）
 
-- `schema.columns` の値は DB の列名（物理名）。画面（`get_view_config`）には渡さない。
-- DB の列名が利用者向けの名前になっている場合は、`python/tools/make_view_labels.py`（処理は `settings/labels.py`）で
-  `view.local.json` の `fields.<項目>.label` に書き写す。既存の表示名は残し（`--overwrite` のときだけ置き換え）、仮の値・空・論理名と同じ列名は書かない。
-- 実行時の表示名は view だけで決まり、すべての画面で同じ（`fields.<項目>.label` → `listColumns[].label` → 論理名）。
+- 表示する列は、キャッシュのテーブルから読み取る（`PRAGMA table_info`）。設定には役割のある列だけを書く。
+- 表示名は DB の列名そのもの（詳細・一覧の見出し・検索の種類・絞り込みで共通）。表示名の設定はない。
+- 並び：役割のある列（`schema.columns` の順）→ ほかの列（DB の順）。列の id は役割のある列が論理名、ほかは DB の列名
+  （DB の列名が別の列の論理名と同じなら `名前#2` で区別）。
+- `get_view_config` は列の一覧（`columns`）と並びの印（`columnsVersion`）を返す。データの更新で印が変わると画面は読み込み直す。
+- テーブル名と読み込み先のパスは画面に渡さない。DB の列名は表示名として画面に渡す（ログには残さない）。
 
 ## 9.1 画面からの書き込み（読み込み先）
 

@@ -1,5 +1,5 @@
 /* =========================================================
-   脇のパネル（データ・表示列・サンプル）
+   脇のパネル（データ・サンプル）。表示列は columns-panel.js
    1 パネル＝1 つの register()。パネルを足すときはこのファイルか別ファイルで register() する。
    ========================================================= */
 (function () {
@@ -114,63 +114,6 @@
     },
   });
 
-  // ── 表示列 ─────────────────────────────────────────────
-  DS.panels.register({
-    id: 'columns',
-    order: 20,
-    icon: 'fa-table-columns',
-    label: '表示列',
-    title: '一覧に表示する列',
-    badge(state) {
-      const hidden = DS.domain.listFields().length - state.columns.visible.length;
-      return hidden > 0 ? { tone: 'info', text: String(hidden), title: `${hidden} 列を隠しています` } : null;
-    },
-    mount(container, ctx) {
-      const checks = new Map();
-      // 選べるのは view の listColumns で visible: true の列だけ（visible: false の列は一覧に出さない）
-      const groups = DS.domain.fieldGroups.list().map((group) => {
-        const items = DS.domain.listFields().filter((field) => field.group === group.id).map((field) => {
-          const box = el('input', { type: 'checkbox', value: field.id });
-          box.addEventListener('change', () => toggle(field.id, box.checked, box.parentElement));
-          checks.set(field.id, box);
-          return el('label', { className: 'check' }, [box, el('span', { text: field.label })]);
-        });
-        return items.length ? section(group.label, [el('div', { className: 'check-list' }, items)]) : null;
-      }).filter(Boolean);
-      const reset = el('button', { type: 'button', className: 'btn btn--ghost btn--block' }, [icon('fa-arrow-rotate-left', ''), el('span', { text: 'すべて表示する（既定に戻す）' })]);
-      reset.addEventListener('click', () => {
-        ctx.store.set({ columns: { visible: DS.controllers.defaultVisibleColumns() } });
-        DS.util.flash(container);
-      });
-      container.append(
-        el('p', { className: 'pane-note', text: 'チェックを外した列は一覧から隠れます。詳細にはすべて表示されます。設定は自動で保存されます。' }),
-        ...groups,
-        reset,
-      );
-
-      function toggle(id, checked, row) {
-        const order = DS.domain.listFields().map((field) => field.id);
-        const current = new Set(ctx.store.get().columns.visible);
-        if (checked) current.add(id);
-        else current.delete(id);
-        if (current.size === 0) {
-          checks.get(id).checked = true;
-          ctx.toast.show({ tone: 'warning', message: '少なくとも 1 列は表示してください' });
-          return;
-        }
-        ctx.store.set({ columns: { visible: order.filter((x) => current.has(x)) } });
-        DS.util.flash(row);
-      }
-
-      return {
-        update(state) {
-          checks.forEach((box, id) => { box.checked = state.columns.visible.includes(id); });
-        },
-      };
-    },
-  });
-
-  // ── サンプル ───────────────────────────────────────────
   DS.panels.register({
     id: 'samples',
     order: 30,

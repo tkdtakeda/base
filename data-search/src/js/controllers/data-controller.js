@@ -8,10 +8,22 @@
 
   // ── キャッシュ ─────────────────────────────────────────
   function createCacheController({ store, api, toast, search }) {
+    // データの更新で DB の列が増えた・減ったときは、表示定義から組み立て直すため画面を読み込み直す
+    // （選んだ列・幅・タグ・検索の種類はブラウザに保存してあるので残る）
+    let reloading = false;
+    function reloadIfColumnsChanged(status) {
+      const current = DS.domain.columnsVersion();
+      if (reloading || !status.columnsVersion || !current || status.columnsVersion === current) return;
+      reloading = true;
+      toast.show({ tone: 'info', message: 'データの列が変わったため、画面を読み込み直します', timeout: 2000 });
+      window.setTimeout(() => window.location.reload(), 1500);
+    }
+
     async function loadStatus() {
       try {
         const status = await api.call('get_cache_status');
         store.merge('cache', { status });
+        reloadIfColumnsChanged(status);
         return status;
       } catch (error) {
         store.merge('cache', { status: { available: false, message: error.userMessage, lastRefreshSucceeded: false } });
@@ -74,7 +86,7 @@
       if (!available) return;
       const { snapshot, removed } = samples.clear();
       store.set({ samplesVersion: Date.now() });
-      search.closeDetail();
+      search.clearSelection();
       store.set({ search: { status: 'idle', result: null, request: null, error: null } });
       await afterChange(null);
       toast.show({

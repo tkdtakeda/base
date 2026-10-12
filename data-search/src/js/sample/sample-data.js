@@ -4,7 +4,7 @@
    （日付の絞り込み「今日〜7 日後」などをいつ開いても試せるように）。
    パターンを増やすときは patterns.register() を足すだけでよい。
 
-   行の項目は、表示定義の論理項目（DS.sampleView.logicalFields）すべてを埋める。
+   行の項目は、表示定義の列（DS.sampleView.columns の id）すべてを埋める。
    主な項目は値の候補（VALUE_RULES）から、それ以外は項目名の形（〜Date・〜Width など）から作る。
    論理項目が増えても、項目名の形に当てはまればそのままサンプルが作られる。
    ========================================================= */
@@ -113,7 +113,7 @@
   }
 
   function logicalFields() {
-    return (DS.sampleView && DS.sampleView.logicalFields) || [];
+    return ((DS.sampleView && DS.sampleView.columns) || []).map((column) => column.id);
   }
 
   /**

@@ -141,7 +141,7 @@
 
       get_application_info: () => ({ id: 'data-search', name: 'Data Search', version: '0.1.0' }),
 
-      // 表示定義：config/sample/view.sample.json から自動生成した js/sample/sample-view.js
+      // 表示定義：config/sample の view・schema と python/tools/sample_columns.json から自動生成した js/sample/sample-view.js
       get_view_config: () => Object.assign({ success: true }, JSON.parse(JSON.stringify(DS.sampleView))),
 
       get_cache_status() {
@@ -164,6 +164,7 @@
           lastRefreshAt: saved.refreshedAt || saved.loadedAt,
           errorCode: failed ? 'SOURCE_UNAVAILABLE' : null,
           errorMessage: failed ? '共有データに接続できません。ネットワークと共有フォルダを確認してください。' : null,
+          columnsVersion: DS.sampleView.columnsVersion,
         };
       },
 
@@ -292,14 +293,28 @@
   const PREFS_KEY = 'prefs';
   const HISTORY_MAX = 8;
 
-  function defaultVisibleColumns() {
-    return DS.domain.listFields().map((field) => field.id);
+  /** 列の表示の既定：設定（view の hiddenColumns）で隠すとした列だけ隠す */
+  function defaultColumns() {
+    return { hidden: DS.domain.defaultHiddenColumns(), widths: {}, density: 'compact' };
+  }
+
+  /** 保存した列の設定を読み直す。知らない列（DB から消えた列）は捨てる。新しく増えた列は表示する */
+  function restoreColumns(prefs) {
+    const base = defaultColumns();
+    if (!Array.isArray(prefs.hiddenColumns)) return base;
+    const known = (id) => DS.domain.fields.has(id);
+    const widths = {};
+    Object.entries(prefs.columnWidths || {}).forEach(([id, width]) => { if (known(id) && Number(width) > 0) widths[id] = Number(width); });
+    return {
+      hidden: prefs.hiddenColumns.filter(known),
+      widths,
+      density: prefs.density === 'comfortable' ? 'comfortable' : 'compact',
+    };
   }
 
   function createInitialState(mode) {
     const prefs = DS.core.storage.read(PREFS_KEY, {});
     const searchable = DS.domain.searchableFields().map((field) => field.id);
-    const knownColumns = (prefs.visibleColumns || []).filter((id) => DS.domain.fields.has(id));
     return {
       mode,
       appInfo: null,
@@ -314,9 +329,9 @@
       filters: {},
       tags: { items: DS.controllers.loadTags(), activeId: null },
       search: { status: 'idle', result: null, request: null, error: null },
-      selection: { key: null, item: null, status: 'idle', error: null, duplicated: false },
+      selection: { key: null, item: null, status: 'idle', error: null, duplicated: false, open: false },
       ui: { panel: null },
-      columns: { visible: knownColumns.length ? knownColumns : defaultVisibleColumns() },
+      columns: restoreColumns(prefs),
       history: prefs.history || {},
       samplesVersion: 0,
     };
@@ -330,7 +345,9 @@
       const result = DS.core.storage.write(PREFS_KEY, {
         searchType: state.query.searchType,
         matchMode: state.query.matchMode,
-        visibleColumns: state.columns.visible,
+        hiddenColumns: state.columns.hidden,
+        columnWidths: state.columns.widths,
+        density: state.columns.density,
         history: state.history,
       });
       if (!result.ok) bus.emit('prefs:failed', result.reason);
@@ -345,8 +362,124 @@
 
   DS.controllers.createInitialState = createInitialState;
   DS.controllers.attachPrefsPersistence = attachPrefsPersistence;
-  DS.controllers.defaultVisibleColumns = defaultVisibleColumns;
+  DS.controllers.defaultColumns = defaultColumns;
   DS.controllers.pushHistory = pushHistory;
+})();
+```
+
+`src/js/controllers/data-controller.js`
+
+```javascript
+/* =========================================================
+   データ（キャッシュ）の状態と更新、サンプルデータの読み込み・削除
+   ========================================================= */
+(function () {
+  'use strict';
+
+  const DS = window.DS;
+
+  // ── キャッシュ ─────────────────────────────────────────
+  function createCacheController({ store, api, toast, search }) {
+    // データの更新で DB の列が増えた・減ったときは、表示定義から組み立て直すため画面を読み込み直す
+    // （選んだ列・幅・タグ・検索の種類はブラウザに保存してあるので残る）
+    let reloading = false;
+    function reloadIfColumnsChanged(status) {
+      const current = DS.domain.columnsVersion();
+      if (reloading || !status.columnsVersion || !current || status.columnsVersion === current) return;
+      reloading = true;
+      toast.show({ tone: 'info', message: 'データの列が変わったため、画面を読み込み直します', timeout: 2000 });
+      window.setTimeout(() => window.location.reload(), 1500);
+    }
+
+    async function loadStatus() {
+      try {
+        const status = await api.call('get_cache_status');
+        store.merge('cache', { status });
+        reloadIfColumnsChanged(status);
+        return status;
+      } catch (error) {
+        store.merge('cache', { status: { available: false, message: error.userMessage, lastRefreshSucceeded: false } });
+        return null;
+      }
+    }
+
+    async function refresh() {
+      if (store.get().cache.refreshing) return;
+      store.merge('cache', { refreshing: true, refreshStartedAt: Date.now() });
+      try {
+        const result = await api.call('refresh_cache');
+        toast.show({
+          tone: 'success',
+          message: `データを更新しました（${DS.util.formatNumber(result.rowCount)} 件）`,
+        });
+        await loadStatus();
+        search.rerun();
+      } catch (error) {
+        toast.show({ tone: 'warning', message: error.userMessage, detailId: error.detailId });
+        await loadStatus();
+      } finally {
+        store.merge('cache', { refreshing: false, refreshStartedAt: null });
+      }
+    }
+
+    return { loadStatus, refresh };
+  }
+
+  // ── サンプルデータ（画面だけで試すモード） ─────────────────
+  function createSampleController({ store, api, toast, search, cache }) {
+    const samples = api.adapter.samples;
+    const available = Boolean(samples);
+
+    async function afterChange(demoQuery) {
+      await cache.loadStatus();
+      if (demoQuery) search.setQuery(demoQuery);
+      await search.run({ page: 1 });
+    }
+
+    async function load(id) {
+      if (!available) return;
+      const pattern = DS.sample.patterns.get(id);
+      const result = samples.load(id);
+      if (!result.ok) {
+        toast.show({ tone: 'danger', message: result.reason });
+        return;
+      }
+      toast.show({
+        tone: 'success',
+        message: `「${pattern.title}」を読み込みました（全 ${DS.util.formatNumber(result.total)} 件）`,
+      });
+      if (result.warning) toast.show({ tone: 'warning', message: `次回は読み込み直しが必要です：${result.warning}` });
+      store.set({ samplesVersion: Date.now() });
+      await afterChange(pattern.demoQuery);
+    }
+
+    /** サンプルだけを消す。確認ダイアログではなく「元に戻す」を用意する */
+    async function clear() {
+      if (!available) return;
+      const { snapshot, removed } = samples.clear();
+      store.set({ samplesVersion: Date.now() });
+      search.clearSelection();
+      store.set({ search: { status: 'idle', result: null, request: null, error: null } });
+      await afterChange(null);
+      toast.show({
+        tone: 'info',
+        message: `サンプルデータ ${DS.util.formatNumber(removed)} 件を消しました`,
+        actionLabel: '元に戻す',
+        timeout: 10000,
+        onAction: async () => {
+          samples.restore(snapshot);
+          store.set({ samplesVersion: Date.now() });
+          await afterChange(null);
+          toast.show({ tone: 'success', message: 'サンプルデータを元に戻しました' });
+        },
+      });
+    }
+
+    return { available, load, clear, loadedIds: () => (available ? samples.loadedIds() : []), countOf: (id) => (available ? samples.countOf(id) : 0) };
+  }
+
+  DS.controllers.createCacheController = createCacheController;
+  DS.controllers.createSampleController = createSampleController;
 })();
 ```
 
@@ -422,9 +555,9 @@
         if (request.keyword) patch.history = DS.controllers.pushHistory(store.get().history, request.searchType, result.keyword || request.keyword);
         store.set(patch);
         bus.emit('search:done', result);
-        // 選んでいた行が結果に残っていなければ詳細を閉じる
+        // 選んでいた行が結果に残っていなければ、選択を外して詳細を閉じる
         const selectedKey = store.get().selection.key;
-        if (selectedKey && !result.items.some((item) => DS.domain.recordKey(item) === selectedKey)) closeDetail();
+        if (selectedKey && !result.items.some((item) => DS.domain.recordKey(item) === selectedKey)) clearSelection();
       } catch (error) {
         if (token !== searchToken) return;
         store.set({ search: { status: 'error', result: null, request, error } });
@@ -479,32 +612,49 @@
       return run({ page: 1 });
     }
 
-    // ── 詳細 ──
+    // ── 選択と詳細 ──
+    // 行を 1 回押す／↑↓ … 行を選ぶだけ（全項目が一覧に出ているため、表を狭くしない）
+    // ダブルクリック／Enter … 詳細を開く。開いている間は、選んだ行に合わせて詳細も切り替える
+    const EMPTY_SELECTION = { key: null, item: null, status: 'idle', error: null, duplicated: false, open: false };
+
+    function highlight(item) {
+      if (store.get().selection.open) return select(item);
+      detailToken += 1;
+      store.set({ selection: Object.assign({}, EMPTY_SELECTION, { key: DS.domain.recordKey(item), item }) });
+      return Promise.resolve();
+    }
+
     async function select(item) {
       const key = DS.domain.recordKey(item);
       const token = ++detailToken;
       // 一覧の値ですぐに表示し（0.4 秒以内の反応）、最新の詳細で置き換える
-      store.set({ selection: { key, item, status: 'loading', error: null, duplicated: false } });
+      store.set({ selection: { key, item, status: 'loading', error: null, duplicated: false, open: true } });
       const payload = {};
       DS.domain.keyFields().forEach((field) => { payload[field.id] = item[field.id] == null ? null : item[field.id]; });
       try {
         const result = await api.call('get_lot_detail', payload);
         if (token !== detailToken) return;
-        store.set({ selection: { key, item: result.item, status: 'done', error: null, duplicated: Boolean(result.duplicated) } });
+        store.set({ selection: { key, item: result.item, status: 'done', error: null, duplicated: Boolean(result.duplicated), open: true } });
       } catch (error) {
         if (token !== detailToken) return;
-        store.set({ selection: { key, item, status: 'error', error, duplicated: false } });
+        store.set({ selection: { key, item, status: 'error', error, duplicated: false, open: true } });
       }
     }
 
+    /** 詳細を閉じる（行の選択は残す） */
     function closeDetail() {
       detailToken += 1;
-      store.set({ selection: { key: null, item: null, status: 'idle', error: null, duplicated: false } });
+      store.set({ selection: Object.assign({}, store.get().selection, { open: false, status: 'idle' }) });
+    }
+
+    function clearSelection() {
+      detailToken += 1;
+      store.set({ selection: Object.assign({}, EMPTY_SELECTION) });
     }
 
     return {
       readiness, run, setQuery, clearKeyword, setFilter, setFilters, clearFilter,
-      toggleSort, goToPage, rerun, select, closeDetail,
+      toggleSort, goToPage, rerun, highlight, select, closeDetail, clearSelection,
     };
   }
 
@@ -606,13 +756,17 @@
 
 ```javascript
 /* =========================================================
-   論理項目の登録簿。中身はソースコードに書かず、表示定義（view）から組み立てる。
+   列の登録簿。中身はソースコードに書かず、表示定義（get_view_config）から組み立てる。
 
-     表示定義の出どころ
-       Python 版・デスクトップ版 … get_view_config 命令（config/sample/view.sample.json ＋ config/local/view.local.json）
-       画面だけで試すモード     … js/sample/sample-view.js（view.sample.json から自動生成）
+     columns      … 表示する列（DB のテーブルから読み取った全列）。label は DB の列名
+                    並び：役割のある列（schema.columns の順）→ ほかの列（DB の順）
+     roleFields   … 役割のある列の論理名（1 件を決める・検索・絞り込み・並べ替え）
+     searchFields … 番号で探せる列
+     hiddenColumns… 最初は隠しておく列（論理名か DB の列名）。各自が「表示列」で変えられる
 
-   項目・表示名・表示順・検索できる項目・絞り込み・既定の並べ替えを変えるときは、view の JSON を直す。
+   表示定義の出どころ
+     Python 版・デスクトップ版 … get_view_config 命令（config の schema / view ＋ キャッシュのテーブルの列）
+     画面だけで試すモード     … js/sample/sample-view.js（公開サンプルとダミーの列一覧から自動生成）
    ========================================================= */
 (function () {
   'use strict';
@@ -620,90 +774,75 @@
   const DS = window.DS;
   DS.domain = DS.domain || {};
 
-  const DEFAULT_GROUP_ICON = 'fa-layer-group';
-  const OTHER_GROUP = { id: '__other', label: 'その他', icon: 'fa-ellipsis' };
+  const SECTIONS = [
+    { id: 'role', label: '主な項目', icon: 'fa-key' },
+    { id: 'other', label: 'そのほかの項目', icon: 'fa-table-columns' },
+  ];
 
-  let lists = { list: [], detail: [], searchable: [], key: [], filter: [], sections: [] };
+  let lists = { list: [], searchable: [], key: [], filter: [], sections: [], hidden: [] };
+  let version = null;
 
   /** 表示定義を当てはめる。起動時に 1 回、画面の部品を作る前に呼ぶ */
   function applyView(view) {
-    const groups = DS.core.createRegistry('fieldGroups');
     const fields = DS.core.createRegistry('fields');
-    const detailGroups = view.detailGroups || [];
-    detailGroups.forEach((group, index) => groups.register({
-      id: group.id, label: group.label, icon: group.icon || DEFAULT_GROUP_ICON, order: (index + 1) * 10, members: group.fields || null,
-    }));
-    groups.register(Object.assign({ order: 99990, members: null }, OTHER_GROUP));
-
-    // まとまりへの所属：detailGroups[].fields を優先し、なければ fields.<項目>.group
-    const membership = new Map();
-    detailGroups.forEach((group) => (group.fields || []).forEach((id) => membership.set(id, group.id)));
-
-    const columns = new Map((view.listColumns || []).map((column, index) => [column.field, Object.assign({ index }, column)]));
     const filters = new Map((view.filters || []).map((filter) => [filter.field, filter.type]));
+    const searchFields = view.searchFields || [];
     const options = view.fields || {};
     const recordKey = view.recordKey || [];
+    const hiddenNames = new Set(view.hiddenColumns || []);
 
-    view.logicalFields.forEach((id, index) => {
-      const column = columns.get(id) || {};
-      const option = options[id] || {};
-      const groupId = membership.get(id) || (option.group && groups.has(option.group) ? option.group : OTHER_GROUP.id);
-      const searchable = column.searchable === true;
+    (view.columns || []).forEach((column, index) => {
+      // 表示の補助（等幅・コピー・入力例・値の札）は、論理名か DB の列名のどちらで書いてもよい
+      const option = options[column.id] || options[column.label] || {};
+      const searchable = searchFields.includes(column.id);
       fields.register({
-        id,
+        id: column.id,
         order: (index + 1) * 10,
-        // 表示名はすべての画面で同じ（詳細・一覧の見出し・検索の種類・絞り込み）。
-        // 優先順：fields.<項目>.label（DB の列名から作った表示名を含む）→ listColumns の label → 論理名
-        label: option.label || column.label || id,
-        listLabel: option.label || column.label || id,
-        short: option.short || null,
-        group: groupId,
-        // 番号で探せる項目は、指定がなければ等幅で表示し、コピーできるようにする（0 と O を見分けやすく、転記しやすく）
+        // 表示名は DB の列名。詳細・一覧の見出し・検索の種類・絞り込みのすべてで同じ
+        label: column.label,
+        listLabel: column.label,
+        role: Boolean(column.role),
+        // 番号で探せる列は、指定がなければ等幅で表示し、コピーできるようにする（0 と O を見分けやすく、転記しやすく）
         mono: option.mono === undefined ? searchable : Boolean(option.mono),
         copy: option.copy === undefined ? searchable : Boolean(option.copy),
         example: option.example || '',
-        width: column.width || 120,
         badge: (option.badge || []).map((rule) => ({ pattern: new RegExp(rule.match), tone: rule.tone })),
-        filter: filters.get(id) || null,
-        type: (view.types || {})[id] || 'text',
+        filter: filters.get(column.id) || null,
+        type: (view.types || {})[column.id] || (view.types || {})[column.label] || 'text',
         searchable,
-        key: recordKey.includes(id),
+        key: recordKey.includes(column.id),
       });
     });
 
+    const all = fields.list();
     const pick = (ids) => ids.map((id) => fields.get(id)).filter(Boolean);
-    const detail = pick(view.detailFields || []);
-    const detailSet = new Set(detail.map((field) => field.id));
-    // 詳細の区切り：まとまりの順に、まとまりの fields の順（なければ detailFields の順）で並べる
-    const sections = groups.list().map((group) => ({
-      group,
-      fields: group.members
-        ? pick(group.members).filter((field) => detailSet.has(field.id))
-        : detail.filter((field) => field.group === group.id),
-    })).filter((section) => section.fields.length);
-
     lists = {
-      // 一覧に出す列：listColumns の順。visible: false の列は一覧に出さない
-      list: pick((view.listColumns || []).filter((column) => column.visible).map((column) => column.field)),
-      detail,
-      searchable: pick((view.listColumns || []).filter((column) => column.searchable).map((column) => column.field)),
+      list: all,
+      searchable: pick(searchFields),
       key: pick(recordKey),
       filter: pick((view.filters || []).map((filter) => filter.field)),
-      sections,
+      // 詳細は全項目。役割のある列を先にまとめる
+      sections: SECTIONS.map((group) => ({ group, fields: all.filter((field) => (group.id === 'role') === field.role) }))
+        .filter((section) => section.fields.length),
+      hidden: all.filter((field) => hiddenNames.has(field.id) || hiddenNames.has(field.label)).map((field) => field.id),
     };
+    version = view.columnsVersion || null;
 
-    DS.domain.fieldGroups = groups;
     DS.domain.fields = fields;
     DS.domain.DEFAULT_SORT = { key: view.defaultSort.field, order: view.defaultSort.order };
   }
 
   DS.domain.applyView = applyView;
   DS.domain.listFields = () => lists.list;
-  DS.domain.detailFields = () => lists.detail;
+  DS.domain.detailFields = () => lists.list;
   DS.domain.detailSections = () => lists.sections;
   DS.domain.searchableFields = () => lists.searchable;
   DS.domain.keyFields = () => lists.key;
   DS.domain.filterFields = () => lists.filter;
+  /** 設定で「最初は隠す」とした列の id */
+  DS.domain.defaultHiddenColumns = () => lists.hidden.slice();
+  /** 列の並びの印（データの更新で列が変わったかを見分ける） */
+  DS.domain.columnsVersion = () => version;
 
   /** 1 件を特定する鍵（schema の recordKey。例：ロット番号＋BOX番号）を文字列にする */
   DS.domain.recordKey = (item) =>
@@ -782,7 +921,8 @@
         <ol class="manual-steps">
           <li>開くと<strong>ロットの一覧</strong>が決まった順（標準は工場納期の近い順）に出ます。入力は要りません。1 ロットに BOX が複数あれば BOX ごとに 1 行です。</li>
           <li>一覧の上の<strong>タグ</strong>を押すと、保存しておいた絞り込みに切り替わります。</li>
-          <li>ロットの行を押すと、右に<strong>詳細</strong>が出ます。<kbd>↑</kbd><kbd>↓</kbd> で行を移れます。</li>
+          <li>一覧には<strong>全列</strong>が DB の列名のまま出ます。左端のロット番号・BOX番号は横に動かしても残ります。</li>
+          <li>行を押すと選び、<strong>ダブルクリック</strong>か <kbd>Enter</kbd> で右に<strong>詳細</strong>が出ます。<kbd>↑</kbd><kbd>↓</kbd> で行を移れます。</li>
           <li>番号が分かっているときは、上部バーに入れて <kbd>Enter</kbd>。今の絞り込みの中から探します。</li>
         </ol>
         <p>右上の青いボタンは、いつも「次にすること」を指します。データがないときは「サンプルを読み込む」「データを更新する」に変わります。</p>`,
@@ -847,7 +987,8 @@
       id: 'detail', group: 'search', order: 30, title: '詳細を見る・番号をコピーする',
       body: `
         <ul>
-          <li>行を選ぶと右に詳細が出ます。設定したまとまりごとに並びます。見出しを押すと開閉でき、開き方は次回も保たれます。</li>
+          <li>行をダブルクリック（または選んで <kbd>Enter</kbd>）すると右に詳細が出ます。「主な項目」「そのほかの項目」に分けて全項目が並びます。見出しを押すと開閉でき、開き方は次回も保たれます。</li>
+          <li>詳細を開いたまま <kbd>↑</kbd><kbd>↓</kbd> で行を移ると、詳細も切り替わります。</li>
           <li>番号の横の <span class="manual-icon">⧉</span> でコピーできます。</li>
           <li>詳細は 1 件を特定する項目（標準は「ロット番号＋BOX番号」）で決めています。</li>
           <li><kbd>Esc</kbd> か右上の × で閉じます。</li>
@@ -876,7 +1017,13 @@
     },
     {
       id: 'columns', group: 'data', order: 20, title: '表示する列を選ぶ',
-      body: `<p>左の「表示列」で、一覧に出す列を選べます。設定は自動で保存され、次に開いたときも同じになります。詳細にはいつもすべての項目が出ます。</p>`,
+      body: `
+        <ul>
+          <li>左の「表示列」で、一覧に出す列を選べます。列名で探して絞り込み、「すべて表示」「すべて隠す」「既定に戻す」も使えます。</li>
+          <li>一覧の上の「列を探す」に列名の一部を入れて <kbd>Enter</kbd> で、その列まで移動して光ります。</li>
+          <li>見出しの右端をドラッグで幅を変えられます（ダブルクリックで元に戻す）。長い値はマウスを乗せると全文が出ます。</li>
+          <li>選んだ列・幅・行の高さは自動で保存され、次に開いたときも同じになります。詳細にはいつもすべての項目が出ます。</li>
+        </ul>`,
     },
     {
       id: 'samples', group: 'data', order: 30, title: 'サンプルデータで試す',
@@ -924,11 +1071,133 @@
 })();
 ```
 
+`src/js/panels/columns-panel.js`
+
+```javascript
+/* =========================================================
+   脇のパネル「表示列」：一覧に出す列を選ぶ
+
+   ・列は全部で数十列になるため、列名で探して絞り込める
+   ・「すべて表示」「すべて隠す」「既定に戻す」（既定＝設定の hiddenColumns だけ隠す）
+   ・1 件を決める列（左端に固定）は隠せない
+   ・選んだ内容はブラウザに自動保存
+   ========================================================= */
+(function () {
+  'use strict';
+
+  const DS = window.DS;
+  const { el, icon } = DS.util;
+
+  function section(titleText, children) {
+    return el('section', { className: 'pane-section' }, [el('h3', { className: 'pane-section__title', text: titleText })].concat(children));
+  }
+
+  function button(iconName, text) {
+    return el('button', { type: 'button', className: 'btn btn--secondary btn--sm' }, [icon(iconName, ''), el('span', { text })]);
+  }
+
+  DS.panels.register({
+    id: 'columns',
+    order: 20,
+    icon: 'fa-table-columns',
+    label: '表示列',
+    title: '一覧に表示する列',
+    badge(state) {
+      const hidden = state.columns.hidden.length;
+      return hidden > 0 ? { tone: 'info', text: String(hidden), title: `${hidden} 列を隠しています` } : null;
+    },
+    mount(container, ctx) {
+      const { store } = ctx;
+      const checks = new Map();
+      const finder = el('input', { type: 'search', className: 'input input--sm', placeholder: '列名で探す', 'aria-label': '列名で探す' });
+      const count = el('p', { className: 'pane-note columns-panel__count', 'aria-live': 'polite' });
+      const showAll = button('fa-eye', 'すべて表示');
+      const hideAll = button('fa-eye-slash', 'すべて隠す');
+      const reset = button('fa-arrow-rotate-left', '既定に戻す');
+      const noMatch = el('p', { className: 'pane-note', hidden: true, text: '当てはまる列はありません。' });
+
+      const sections = DS.domain.detailSections().map(({ group, fields }) => {
+        const items = fields.map((field) => {
+          const box = el('input', { type: 'checkbox', value: field.id, disabled: field.key });
+          box.addEventListener('change', () => toggle(field.id, box.checked, box.parentElement));
+          checks.set(field.id, box);
+          return el('label', { className: 'check', title: field.key ? '1 件を決める列のため、いつも表示します' : field.label, dataset: { name: DS.util.foldForCompare(field.label) } },
+            [box, el('span', { className: 'check__text', text: field.label }), field.key ? icon('fa-thumbtack', '固定') : null]);
+        });
+        return section(group.label, [el('div', { className: 'check-list' }, items)]);
+      });
+
+      DS.util.selectAllOnFocus(container);
+      container.append(
+        el('p', { className: 'pane-note', text: 'チェックを外した列は一覧から隠れます（詳細にはすべて出ます）。選んだ内容は自動で保存されます。' }),
+        finder,
+        el('div', { className: 'source__actions' }, [showAll, hideAll, reset]),
+        count,
+        noMatch,
+        ...sections,
+      );
+
+      const setHidden = (hidden) => store.merge('columns', { hidden });
+      const hideable = () => DS.domain.listFields().filter((field) => !field.key).map((field) => field.id);
+      // 絞り込み中は、見えている列だけを対象にする
+      const shownIds = () => hideable().filter((id) => !checks.get(id).parentElement.hidden);
+
+      function toggle(id, checked, row) {
+        const hidden = new Set(store.get().columns.hidden);
+        if (checked) hidden.delete(id);
+        else hidden.add(id);
+        setHidden(DS.domain.listFields().map((field) => field.id).filter((x) => hidden.has(x)));
+        DS.util.flash(row);
+      }
+
+      showAll.addEventListener('click', () => {
+        const targets = new Set(shownIds());
+        setHidden(store.get().columns.hidden.filter((id) => !targets.has(id)));
+        DS.util.flash(count);
+      });
+      hideAll.addEventListener('click', () => {
+        const hidden = new Set(store.get().columns.hidden.concat(shownIds()));
+        setHidden(DS.domain.listFields().map((field) => field.id).filter((id) => hidden.has(id)));
+        DS.util.flash(count);
+      });
+      reset.addEventListener('click', () => {
+        setHidden(DS.controllers.defaultColumns().hidden);
+        DS.util.flash(count);
+      });
+
+      finder.addEventListener('input', () => {
+        const needle = DS.util.foldForCompare(finder.value);
+        let shown = 0;
+        checks.forEach((box) => {
+          const row = box.parentElement;
+          row.hidden = Boolean(needle) && !row.dataset.name.includes(needle);
+          if (!row.hidden) shown += 1;
+        });
+        sections.forEach((node) => { node.hidden = Array.from(node.querySelectorAll('.check')).every((row) => row.hidden); });
+        noMatch.hidden = shown > 0;
+        const label = needle ? '（探している列）' : '';
+        showAll.lastChild.textContent = `すべて表示${label}`;
+        hideAll.lastChild.textContent = `すべて隠す${label}`;
+      });
+
+      return {
+        update(state) {
+          const hidden = new Set(state.columns.hidden);
+          checks.forEach((box, id) => { box.checked = !hidden.has(id); });
+          const total = DS.domain.listFields().length;
+          count.textContent = `表示 ${total - hidden.size} ／ ${total} 列`;
+        },
+      };
+    },
+  });
+})();
+```
+
 `src/js/panels/panels.js`
 
 ```javascript
 /* =========================================================
-   脇のパネル（データ・表示列・サンプル）
+   脇のパネル（データ・サンプル）。表示列は columns-panel.js
    1 パネル＝1 つの register()。パネルを足すときはこのファイルか別ファイルで register() する。
    ========================================================= */
 (function () {
@@ -1043,63 +1312,6 @@
     },
   });
 
-  // ── 表示列 ─────────────────────────────────────────────
-  DS.panels.register({
-    id: 'columns',
-    order: 20,
-    icon: 'fa-table-columns',
-    label: '表示列',
-    title: '一覧に表示する列',
-    badge(state) {
-      const hidden = DS.domain.listFields().length - state.columns.visible.length;
-      return hidden > 0 ? { tone: 'info', text: String(hidden), title: `${hidden} 列を隠しています` } : null;
-    },
-    mount(container, ctx) {
-      const checks = new Map();
-      // 選べるのは view の listColumns で visible: true の列だけ（visible: false の列は一覧に出さない）
-      const groups = DS.domain.fieldGroups.list().map((group) => {
-        const items = DS.domain.listFields().filter((field) => field.group === group.id).map((field) => {
-          const box = el('input', { type: 'checkbox', value: field.id });
-          box.addEventListener('change', () => toggle(field.id, box.checked, box.parentElement));
-          checks.set(field.id, box);
-          return el('label', { className: 'check' }, [box, el('span', { text: field.label })]);
-        });
-        return items.length ? section(group.label, [el('div', { className: 'check-list' }, items)]) : null;
-      }).filter(Boolean);
-      const reset = el('button', { type: 'button', className: 'btn btn--ghost btn--block' }, [icon('fa-arrow-rotate-left', ''), el('span', { text: 'すべて表示する（既定に戻す）' })]);
-      reset.addEventListener('click', () => {
-        ctx.store.set({ columns: { visible: DS.controllers.defaultVisibleColumns() } });
-        DS.util.flash(container);
-      });
-      container.append(
-        el('p', { className: 'pane-note', text: 'チェックを外した列は一覧から隠れます。詳細にはすべて表示されます。設定は自動で保存されます。' }),
-        ...groups,
-        reset,
-      );
-
-      function toggle(id, checked, row) {
-        const order = DS.domain.listFields().map((field) => field.id);
-        const current = new Set(ctx.store.get().columns.visible);
-        if (checked) current.add(id);
-        else current.delete(id);
-        if (current.size === 0) {
-          checks.get(id).checked = true;
-          ctx.toast.show({ tone: 'warning', message: '少なくとも 1 列は表示してください' });
-          return;
-        }
-        ctx.store.set({ columns: { visible: order.filter((x) => current.has(x)) } });
-        DS.util.flash(row);
-      }
-
-      return {
-        update(state) {
-          checks.forEach((box, id) => { box.checked = state.columns.visible.includes(id); });
-        },
-      };
-    },
-  });
-
-  // ── サンプル ───────────────────────────────────────────
   DS.panels.register({
     id: 'samples',
     order: 30,

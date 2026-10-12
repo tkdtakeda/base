@@ -40,7 +40,9 @@ data-search/
 │  │  │  ├─ loader.py        … 読み込み順・組み立て
 │  │  │  ├─ merge.py         … 再帰マージ・既定値の補完
 │  │  │  ├─ defaults.py      … sample に書かない運用項目の既定値
-│  │  │  └─ validation.py    … 検証
+│  │  │  ├─ validation.py    … 検証
+│  │  │  └─ local_writer.py  … 画面からの読み込み先の保存
+│  │  ├─ column_catalog.py   … 表示する列を DB から読み取る
 │  │  └─ （キャッシュ・検索・HTTP など）
 │  ├─ tools/
 │  │  ├─ make_dummy_db.py
@@ -104,89 +106,20 @@ data-search/
     "inspectionNo": "<INSPECTION_NO_COLUMN>",
     "castingNo": "<CASTING_NO_COLUMN>",
     "orderNo": "<ORDER_NO_COLUMN>",
-    "plannedEquipmentName": "<PLANNED_EQUIPMENT_NAME_COLUMN>",
-    "businessUnitCode": "<BUSINESS_UNIT_CODE_COLUMN>",
-    "demandFieldCode": "<DEMAND_FIELD_CODE_COLUMN>",
-    "applicationCode": "<APPLICATION_CODE_COLUMN>",
-    "applicationName": "<APPLICATION_NAME_COLUMN>",
-    "orderMaterial": "<ORDER_MATERIAL_COLUMN>",
-    "orderTemper": "<ORDER_TEMPER_COLUMN>",
-    "orderThickness": "<ORDER_THICKNESS_COLUMN>",
-    "orderWidth": "<ORDER_WIDTH_COLUMN>",
-    "orderLength": "<ORDER_LENGTH_COLUMN>",
+    "customerName": "<CUSTOMER_NAME_COLUMN>",
+    "factoryDeliveryDate": "<FACTORY_DELIVERY_DATE_COLUMN>",
+    "cfStatus": "<STATUS_COLUMN>",
     "manufacturingMaterial": "<MANUFACTURING_MATERIAL_COLUMN>",
     "manufacturingTemper": "<MANUFACTURING_TEMPER_COLUMN>",
-    "manufacturingThickness": "<MANUFACTURING_THICKNESS_COLUMN>",
-    "manufacturingWidth": "<MANUFACTURING_WIDTH_COLUMN>",
-    "manufacturingLength": "<MANUFACTURING_LENGTH_COLUMN>",
-    "productUnitWeight": "<PRODUCT_UNIT_WEIGHT_COLUMN>",
-    "specificGravity": "<SPECIFIC_GRAVITY_COLUMN>",
-    "shape": "<SHAPE_COLUMN>",
-    "surface": "<SURFACE_COLUMN>",
-    "processing": "<PROCESSING_COLUMN>",
-    "surfaceProcessing": "<SURFACE_PROCESSING_COLUMN>",
-    "cleaning": "<CLEANING_COLUMN>",
-    "deliverySpecificationNo": "<DELIVERY_SPECIFICATION_NO_COLUMN>",
-    "wipCategory": "<WIP_CATEGORY_COLUMN>",
-    "allocationCategory": "<ALLOCATION_CATEGORY_COLUMN>",
-    "holdCategory": "<HOLD_CATEGORY_COLUMN>",
-    "holdReleaseDate": "<HOLD_RELEASE_DATE_COLUMN>",
-    "temporaryPackingFlag": "<TEMPORARY_PACKING_FLAG_COLUMN>",
-    "urgentCategory": "<URGENT_CATEGORY_COLUMN>",
-    "cfStatus": "<STATUS_COLUMN>",
-    "allocationCode": "<ALLOCATION_CODE_COLUMN>",
-    "allocationMethod": "<ALLOCATION_METHOD_COLUMN>",
-    "allocationQuantity": "<ALLOCATION_QUANTITY_COLUMN>",
-    "allocationAdjustmentNo": "<ALLOCATION_ADJUSTMENT_NO_COLUMN>",
-    "salesDeliveryDate": "<SALES_DELIVERY_DATE_COLUMN>",
-    "factoryDeliveryDate": "<FACTORY_DELIVERY_DATE_COLUMN>",
-    "promisedDeliveryDate": "<PROMISED_DELIVERY_DATE_COLUMN>",
-    "shippingDate": "<SHIPPING_DATE_COLUMN>",
-    "wipRetentionTime": "<WIP_RETENTION_TIME_COLUMN>",
-    "deliveryDestinationCode": "<DELIVERY_DESTINATION_CODE_COLUMN>",
-    "customerCode": "<CUSTOMER_CODE_COLUMN>",
-    "shippingDestinationCode": "<SHIPPING_DESTINATION_CODE_COLUMN>",
-    "deliveryDestinationName": "<DELIVERY_DESTINATION_NAME_COLUMN>",
-    "customerName": "<CUSTOMER_NAME_COLUMN>",
-    "shippingDestinationName": "<SHIPPING_DESTINATION_NAME_COLUMN>",
-    "districtCode": "<DISTRICT_CODE_COLUMN>",
-    "salespersonCode": "<SALESPERSON_CODE_COLUMN>",
-    "plannedEquipmentCourse": "<PLANNED_EQUIPMENT_COURSE_COLUMN>",
-    "actualEquipmentCourse": "<ACTUAL_EQUIPMENT_COURSE_COLUMN>",
     "remainingEquipmentCourse": "<REMAINING_EQUIPMENT_COURSE_COLUMN>",
-    "totalProcessCount": "<TOTAL_PROCESS_COUNT_COLUMN>",
-    "pitPlannedDate": "<PIT_PLANNED_DATE_COLUMN>",
-    "pitActualDate": "<PIT_ACTUAL_DATE_COLUMN>",
-    "specialSpecification": "<SPECIAL_SPECIFICATION_COLUMN>",
-    "masterNo": "<MASTER_NO_COLUMN>",
-    "specificationNo": "<SPECIFICATION_NO_COLUMN>",
-    "qualityNo": "<QUALITY_NO_COLUMN>",
-    "manufacturingNo": "<MANUFACTURING_NO_COLUMN>",
-    "testNo": "<TEST_NO_COLUMN>",
-    "personInCharge": "<PERSON_IN_CHARGE_COLUMN>",
-    "boxPlannedThickness": "<BOX_PLANNED_THICKNESS_COLUMN>",
-    "boxPlannedWidth": "<BOX_PLANNED_WIDTH_COLUMN>",
-    "boxPlannedLength": "<BOX_PLANNED_LENGTH_COLUMN>",
-    "boxPlannedWorkPattern": "<BOX_PLANNED_WORK_PATTERN_COLUMN>",
-    "boxPlannedWeight": "<BOX_PLANNED_WEIGHT_COLUMN>",
-    "boxPlannedCount": "<BOX_PLANNED_COUNT_COLUMN>",
-    "qualityCode": "<QUALITY_CODE_COLUMN>",
-    "annealingScheduleCategory": "<ANNEALING_SCHEDULE_CATEGORY_COLUMN>",
-    "annealingFurnaceNo": "<ANNEALING_FURNACE_NO_COLUMN>",
-    "lastActualProcessBoxNo": "<LAST_ACTUAL_PROCESS_BOX_NO_COLUMN>",
     "lastActualEquipmentName": "<LAST_ACTUAL_EQUIPMENT_NAME_COLUMN>",
-    "lastActualThickness": "<LAST_ACTUAL_THICKNESS_COLUMN>",
-    "lastActualWidth": "<LAST_ACTUAL_WIDTH_COLUMN>",
-    "lastActualLength": "<LAST_ACTUAL_LENGTH_COLUMN>",
-    "lastActualGoodWeight": "<LAST_ACTUAL_GOOD_WEIGHT_COLUMN>",
-    "lastActualCount": "<LAST_ACTUAL_COUNT_COLUMN>",
-    "workStartDate": "<WORK_START_DATE_COLUMN>",
-    "workEndDate": "<WORK_END_DATE_COLUMN>"
+    "wipCategory": "<WIP_CATEGORY_COLUMN>",
+    "holdCategory": "<HOLD_CATEGORY_COLUMN>"
   }
 }
 ```
 
-依頼者から提供されたファイルをそのまま採用。1 件を特定する項目は `recordKey`（ロット番号＋BOX番号）。`types` は書かれていないため既定値 `{}`（日付の項目なし）で補う。
+依頼者提供のファイルから、役割のある 14 列だけに絞った（ほかの列は DB から自動で読み取る）。1 件を特定する項目は `recordKey`（ロット番号＋BOX番号）。`types` は既定値 `{}`（日付の項目なし）で補う。
 
 ## 4. `config/sample/view.sample.json` の全文
 
@@ -194,328 +127,15 @@ data-search/
 
 ```json
 {
-  "listColumns": [
-    {
-      "field": "lotNo",
-      "label": "ロット番号",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "boxNo",
-      "label": "BOX番号",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "inspectionNo",
-      "label": "検査番号",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "castingNo",
-      "label": "鋳造番号",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "orderNo",
-      "label": "オーダー番号",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "manufacturingMaterial",
-      "label": "製造材質",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "manufacturingTemper",
-      "label": "製造調質",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "manufacturingThickness",
-      "label": "製造板厚",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "manufacturingWidth",
-      "label": "製造板幅",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "manufacturingLength",
-      "label": "製造板丈",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "customerName",
-      "label": "取引先名",
-      "visible": true,
-      "searchable": true
-    },
-    {
-      "field": "factoryDeliveryDate",
-      "label": "工場納期",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "remainingEquipmentCourse",
-      "label": "残仕掛設備コース",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "lastActualEquipmentName",
-      "label": "最終実績設備",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "wipCategory",
-      "label": "仕掛区分",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "holdCategory",
-      "label": "保留区分",
-      "visible": true,
-      "searchable": false
-    },
-    {
-      "field": "cfStatus",
-      "label": "状態",
-      "visible": true,
-      "searchable": false
-    }
-  ],
-  "detailGroups": [
-    {
-      "id": "identity",
-      "label": "識別情報",
-      "fields": [
-        "lotNo",
-        "boxNo",
-        "inspectionNo",
-        "castingNo",
-        "orderNo"
-      ]
-    },
-    {
-      "id": "product",
-      "label": "製品・製造仕様",
-      "fields": [
-        "orderMaterial",
-        "orderTemper",
-        "orderThickness",
-        "orderWidth",
-        "orderLength",
-        "manufacturingMaterial",
-        "manufacturingTemper",
-        "manufacturingThickness",
-        "manufacturingWidth",
-        "manufacturingLength",
-        "shape",
-        "surface",
-        "processing",
-        "surfaceProcessing",
-        "cleaning",
-        "productUnitWeight",
-        "specificGravity"
-      ]
-    },
-    {
-      "id": "trade",
-      "label": "取引・納期",
-      "fields": [
-        "deliveryDestinationCode",
-        "deliveryDestinationName",
-        "customerCode",
-        "customerName",
-        "shippingDestinationCode",
-        "shippingDestinationName",
-        "salesDeliveryDate",
-        "factoryDeliveryDate",
-        "promisedDeliveryDate",
-        "shippingDate",
-        "districtCode",
-        "salespersonCode"
-      ]
-    },
-    {
-      "id": "process",
-      "label": "工程・設備",
-      "fields": [
-        "plannedEquipmentName",
-        "plannedEquipmentCourse",
-        "actualEquipmentCourse",
-        "remainingEquipmentCourse",
-        "totalProcessCount",
-        "lastActualProcessBoxNo",
-        "lastActualEquipmentName",
-        "workStartDate",
-        "workEndDate"
-      ]
-    },
-    {
-      "id": "wip",
-      "label": "仕掛・引当",
-      "fields": [
-        "wipCategory",
-        "allocationCategory",
-        "allocationCode",
-        "allocationMethod",
-        "allocationQuantity",
-        "allocationAdjustmentNo",
-        "wipRetentionTime",
-        "holdCategory",
-        "holdReleaseDate",
-        "temporaryPackingFlag",
-        "urgentCategory",
-        "cfStatus"
-      ]
-    },
-    {
-      "id": "box",
-      "label": "BOX情報",
-      "fields": [
-        "boxPlannedThickness",
-        "boxPlannedWidth",
-        "boxPlannedLength",
-        "boxPlannedWorkPattern",
-        "boxPlannedWeight",
-        "boxPlannedCount",
-        "lastActualThickness",
-        "lastActualWidth",
-        "lastActualLength",
-        "lastActualGoodWeight",
-        "lastActualCount"
-      ]
-    },
-    {
-      "id": "quality",
-      "label": "品質・仕様",
-      "fields": [
-        "qualityCode",
-        "deliverySpecificationNo",
-        "specialSpecification",
-        "masterNo",
-        "specificationNo",
-        "qualityNo",
-        "manufacturingNo",
-        "testNo",
-        "personInCharge"
-      ]
-    },
-    {
-      "id": "other",
-      "label": "用途・管理情報",
-      "fields": [
-        "businessUnitCode",
-        "demandFieldCode",
-        "applicationCode",
-        "applicationName",
-        "pitPlannedDate",
-        "pitActualDate",
-        "annealingScheduleCategory",
-        "annealingFurnaceNo"
-      ]
-    }
-  ],
-  "detailFields": [
+  "searchFields": [
     "lotNo",
     "boxNo",
     "inspectionNo",
     "castingNo",
     "orderNo",
-    "plannedEquipmentName",
-    "businessUnitCode",
-    "demandFieldCode",
-    "applicationCode",
-    "applicationName",
-    "orderMaterial",
-    "orderTemper",
-    "orderThickness",
-    "orderWidth",
-    "orderLength",
-    "manufacturingMaterial",
-    "manufacturingTemper",
-    "manufacturingThickness",
-    "manufacturingWidth",
-    "manufacturingLength",
-    "productUnitWeight",
-    "specificGravity",
-    "shape",
-    "surface",
-    "processing",
-    "surfaceProcessing",
-    "cleaning",
-    "deliverySpecificationNo",
-    "wipCategory",
-    "allocationCategory",
-    "holdCategory",
-    "holdReleaseDate",
-    "temporaryPackingFlag",
-    "urgentCategory",
-    "cfStatus",
-    "allocationCode",
-    "allocationMethod",
-    "allocationQuantity",
-    "allocationAdjustmentNo",
-    "salesDeliveryDate",
-    "factoryDeliveryDate",
-    "promisedDeliveryDate",
-    "shippingDate",
-    "wipRetentionTime",
-    "deliveryDestinationCode",
-    "customerCode",
-    "shippingDestinationCode",
-    "deliveryDestinationName",
-    "customerName",
-    "shippingDestinationName",
-    "districtCode",
-    "salespersonCode",
-    "plannedEquipmentCourse",
-    "actualEquipmentCourse",
-    "remainingEquipmentCourse",
-    "totalProcessCount",
-    "pitPlannedDate",
-    "pitActualDate",
-    "specialSpecification",
-    "masterNo",
-    "specificationNo",
-    "qualityNo",
-    "manufacturingNo",
-    "testNo",
-    "personInCharge",
-    "boxPlannedThickness",
-    "boxPlannedWidth",
-    "boxPlannedLength",
-    "boxPlannedWorkPattern",
-    "boxPlannedWeight",
-    "boxPlannedCount",
-    "qualityCode",
-    "annealingScheduleCategory",
-    "annealingFurnaceNo",
-    "lastActualProcessBoxNo",
-    "lastActualEquipmentName",
-    "lastActualThickness",
-    "lastActualWidth",
-    "lastActualLength",
-    "lastActualGoodWeight",
-    "lastActualCount",
-    "workStartDate",
-    "workEndDate"
+    "customerName"
   ],
+  "hiddenColumns": [],
   "filters": [
     {
       "field": "manufacturingMaterial",
@@ -557,7 +177,7 @@ data-search/
 }
 ```
 
-依頼者から提供されたファイルをそのまま採用。`detailGroups[].fields` で詳細のまとまりと並び順を決める。`fields`（項目ごとの表示名・値の札など）は書かれていないため既定値 `{}` で補い、表示名は listColumns の見出し、なければ論理名を使う。
+表示名・表示順・詳細の項目は DB の列名・DB の順を使うため、依頼者提供のファイルから `listColumns`・`detailFields`・`detailGroups` を外し、`searchFields`（番号で探せる列）・`hiddenColumns`（最初は隠す列）・`filters`・`defaultSort` だけにした。
 
 ## 5. `config/local/config.local.json` の安全な記入例
 

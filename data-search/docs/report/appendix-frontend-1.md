@@ -980,6 +980,179 @@
 .type-select__chevron { position: absolute; color: var(--color-primary); pointer-events: none; }
 .type-select__icon { left: var(--sp-3); }
 .type-select__chevron { right: var(--sp-3); font-size: var(--fs-sm); }
+
+/* ── 全列の一覧：道具・左端の固定・列幅・行の高さ ── */
+.grid-tools { display: flex; align-items: center; gap: var(--sp-2); margin-left: auto; }
+.grid-tools__find { display: inline-flex; align-items: center; gap: var(--sp-1); color: var(--color-text-muted); }
+.grid-tools__finder { width: 14em; }
+.grid th, .grid tbody td { max-width: 320px; }
+.grid tbody td { overflow: hidden; text-overflow: ellipsis; }
+.th-btn__text { overflow: hidden; text-overflow: ellipsis; }
+.grid th.is-pinned, .grid td.is-pinned { position: sticky; left: 0; z-index: 1; }
+.grid thead th.is-pinned { z-index: calc(var(--z-sticky) + 1); }
+.grid tbody td.is-pinned { background: var(--color-surface); }
+.grid tbody tr:hover td.is-pinned { background: var(--color-row-hover); }
+.grid tbody tr.is-selected td.is-pinned { background: var(--color-row-selected); }
+.grid .is-pinned-last { box-shadow: inset calc(-1 * var(--bw)) 0 0 var(--color-border-strong), var(--shadow-pinned); }
+.col-resize { position: absolute; top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; }
+.col-resize:hover, body.is-resizing .col-resize:hover { background: var(--color-primary-soft); }
+body.is-resizing { cursor: col-resize; user-select: none; }
+.grid--comfortable tbody td { height: calc(var(--h-row) + 12px); }
+.columns-panel__count { font-weight: var(--fw-bold); }
+.check[hidden], .pane-section[hidden] { display: none; }
+```
+
+`src/css/tokens.css`
+
+```css
+/* =========================================================
+   デザイントークン
+   生の値（色・寸法・時間）はこのファイルだけに書く。
+   1 段目：基本の値（--c-*, --sp-* …）
+   2 段目：意味づけ（--color-* …）  ← 部品はこちらだけを参照する
+   ========================================================= */
+:root {
+  /* ── 基本の色：落ち着いた青（主）と、わずかに青みのあるグレー ── */
+  --c-blue-50: #eef4fa;
+  --c-blue-100: #dbe7f4;
+  --c-blue-200: #b8cfe8;
+  --c-blue-300: #8eb1d8;
+  --c-blue-500: #3d6fa8;
+  --c-blue-600: #2f5d92;
+  --c-blue-700: #264c78;
+  --c-blue-800: #1d3a5c;
+
+  /* 類似色（補助）：青緑 */
+  --c-teal-50: #e7f4f3;
+  --c-teal-600: #23807c;
+
+  /* 分裂補色（注意・強調）：琥珀 */
+  --c-amber-50: #fdf6e7;
+  --c-amber-100: #fbe6b8;
+  --c-amber-200: #f4d081;
+  --c-amber-600: #a66a10;
+  --c-amber-700: #84540b;
+
+  --c-green-50: #e9f5ee;
+  --c-green-600: #2b7a4b;
+  --c-red-50: #fcecec;
+  --c-red-600: #b3392f;
+
+  --c-gray-0: #ffffff;
+  --c-gray-25: #fafbfd;
+  --c-gray-50: #f3f5f8;
+  --c-gray-100: #eaeef3;
+  --c-gray-200: #dce2e9;
+  --c-gray-300: #c4ccd6;
+  --c-gray-400: #98a3b2;
+  --c-gray-500: #6a7688;
+  --c-gray-600: #4f5a6b;
+  --c-gray-700: #384251;
+  --c-gray-900: #1b2230;
+
+  /* ── 意味づけ ── */
+  --color-bg: var(--c-gray-50);
+  --color-surface: var(--c-gray-0);
+  --color-surface-alt: var(--c-gray-25);
+  --color-surface-sunken: var(--c-gray-100);
+  --color-border: var(--c-gray-200);
+  --color-border-strong: var(--c-gray-300);
+  --color-text: var(--c-gray-900);
+  --color-text-muted: var(--c-gray-600);
+  --color-text-subtle: var(--c-gray-500);
+  --color-text-inverse: var(--c-gray-0);
+
+  --color-primary: var(--c-blue-600);
+  --color-primary-hover: var(--c-blue-700);
+  --color-primary-active: var(--c-blue-800);
+  --color-primary-soft: var(--c-blue-50);
+  --color-primary-soft-strong: var(--c-blue-100);
+  --color-primary-border: var(--c-blue-200);
+  --color-focus: var(--c-blue-500);
+
+  --color-row-hover: var(--c-blue-50);
+  --color-row-selected: var(--c-blue-100);
+  --color-row-selected-bar: var(--c-blue-600);
+
+  --color-highlight-bg: var(--c-amber-100);
+  --color-highlight-text: var(--c-gray-900);
+  --color-flash: var(--c-amber-200);
+
+  --color-success: var(--c-green-600);
+  --color-success-bg: var(--c-green-50);
+  --color-warning: var(--c-amber-700);
+  --color-warning-bg: var(--c-amber-50);
+  --color-warning-border: var(--c-amber-200);
+  --color-danger: var(--c-red-600);
+  --color-danger-bg: var(--c-red-50);
+  --color-info: var(--c-blue-600);
+  --color-info-bg: var(--c-blue-50);
+  --color-neutral: var(--c-gray-600);
+  --color-neutral-bg: var(--c-gray-100);
+  --color-mode-mock: var(--c-teal-600);
+  --color-mode-mock-bg: var(--c-teal-50);
+
+  --color-overlay-shadow: rgba(27, 34, 48, 0.16);
+  --shadow-pinned: 4px 0 6px -4px rgba(29, 58, 92, 0.25); /* 左端に固定した列の影 */
+
+  /* ── 文字 ── */
+  --font-sans: "BIZ UDPGothic", "Yu Gothic UI", "Meiryo UI", "Meiryo", system-ui, sans-serif;
+  --font-mono: "BIZ UDGothic", "Cascadia Mono", "Consolas", monospace;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 26px;
+  --fw-normal: 400;
+  --fw-bold: 700;
+  --lh-tight: 1.3;
+  --lh-base: 1.6;
+
+  /* ── 余白・角丸・寸法 ── */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 10px;
+  --r-pill: 999px;
+  --bw: 1px;
+  --bw-strong: 2px;
+  --bw-bar: 3px;
+
+  --h-control-sm: 28px;
+  --h-control: 34px;
+  --h-control-lg: 40px;
+  --h-row: 34px;
+  --w-rail: 64px;
+  --w-sidepanel: 300px;
+  --w-detail: 360px;
+  --w-input-search: 300px;
+  --w-manual: 720px;
+  --h-manual: 520px;
+  --w-toast: 420px;
+  --w-col-min: 72px;
+  --icon-rail: 18px;
+
+  /* ── 影・重なり ── */
+  --shadow-1: 0 1px 2px var(--color-overlay-shadow);
+  --shadow-2: 0 6px 24px var(--color-overlay-shadow);
+  --z-sticky: 2;
+  --z-panel: 10;
+  --z-manual: 900;
+  --z-toast: 1000;
+
+  /* ── 動き（反映の合図は 0.4 秒以内に返す） ── */
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-flash: 700ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+}
 ```
 
 `src/index.html`
@@ -1052,8 +1225,10 @@
   <script src="js/views/source-editor.js"></script>
   <script src="js/panels/filter-panel.js"></script>
   <script src="js/panels/panels.js"></script>
+  <script src="js/panels/columns-panel.js"></script>
   <script src="js/views/search-bar.js"></script>
   <script src="js/views/tag-bar.js"></script>
+  <script src="js/views/grid-tools.js"></script>
   <script src="js/views/results-view.js"></script>
   <script src="js/views/detail-view.js"></script>
   <script src="js/manual/manual-content.js"></script>

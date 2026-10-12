@@ -147,7 +147,7 @@ def _check_table(state, table_name, field_mappings):
         names = "、".join(missing[:8]) + (f" ほか {len(missing) - 8} 項目" if len(missing) > 8 else "")
         raise StepFailed(f"使う列が {len(missing)} 個ありません（{names}）。",
                          "読み込み先が正しいか、schema.local.json の columns を確認してください。")
-    return f"テーブルと、使う列 {len(field_mappings)} 個がそろっています。"
+    return f"テーブルと、役割のある列 {len(field_mappings)} 個がそろっています（列は全部で {len(columns)} 個）。"
 
 
 def _check_rows(state, table_name):

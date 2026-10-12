@@ -86,6 +86,7 @@
   --color-mode-mock-bg: var(--c-teal-50);
 
   --color-overlay-shadow: rgba(27, 34, 48, 0.16);
+  --shadow-pinned: 4px 0 6px -4px rgba(29, 58, 92, 0.25); /* 左端に固定した列の影 */
 
   /* ── 文字 ── */
   --font-sans: "BIZ UDPGothic", "Yu Gothic UI", "Meiryo UI", "Meiryo", system-ui, sans-serif;

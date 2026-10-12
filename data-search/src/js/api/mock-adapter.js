@@ -136,7 +136,7 @@
 
       get_application_info: () => ({ id: 'data-search', name: 'Data Search', version: '0.1.0' }),
 
-      // 表示定義：config/sample/view.sample.json から自動生成した js/sample/sample-view.js
+      // 表示定義：config/sample の view・schema と python/tools/sample_columns.json から自動生成した js/sample/sample-view.js
       get_view_config: () => Object.assign({ success: true }, JSON.parse(JSON.stringify(DS.sampleView))),
 
       get_cache_status() {
@@ -159,6 +159,7 @@
           lastRefreshAt: saved.refreshedAt || saved.loadedAt,
           errorCode: failed ? 'SOURCE_UNAVAILABLE' : null,
           errorMessage: failed ? '共有データに接続できません。ネットワークと共有フォルダを確認してください。' : null,
+          columnsVersion: DS.sampleView.columnsVersion,
         };
       },
 

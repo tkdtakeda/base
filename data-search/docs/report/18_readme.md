@@ -6,7 +6,7 @@
 # 対象データ検索（data-search）
 
 共有 SQLite のロットを一覧で表示し、絞り込み（タグで保存・再利用）とクリックで詳細を参照するツールです。
-番号（ロット・BOX・検査・鋳造・受注など、view で searchable にした項目）が分かっているときは、入力して探すこともできます。
+一覧には DB の全列を、DB の列名のまま表示します。番号（ロット・BOX・検査・鋳造・受注など、view の searchFields）が分かっているときは、入力して探すこともできます。
 共有データは直接検索せず、**手元へコピー → 検証 → 問題がなければ入れ替え** たローカルキャッシュを検索します。
 
 最終形は Tauri + Rust のデスクトップアプリですが、ビルド前に使用感を確かめられるよう、
@@ -26,7 +26,7 @@
 1. `src/index.html` を Edge で開く（サーバーやビルドは不要）。
 2. 右上の青いボタン「サンプルを読み込む」→ 左のパネルで「標準のデータ」を **読み込む**。ロットの一覧が view の `defaultSort`（標準は工場納期の近い順）で出る。1 ロットに BOX が複数あれば BOX ごとに 1 行。
 3. 一覧の上の「絞り込み」で条件を選ぶ（例：状態＝仕掛中、取引先名＝架空商事）→「今の条件をタグにする」で名前を付けて保存。次回からはタグを押すだけ。
-4. ロットの行を押すと右に詳細。`↑` `↓` で行を移動、`Esc` で閉じる。`F1` で取扱説明書。
+4. 一覧には全列が出る（左端のロット番号・BOX番号は横に動かしても残る）。行を押すと選ぶだけ、ダブルクリックか `Enter` で右に詳細。`↑` `↓` で行を移動、`Esc` で閉じる。`F1` で取扱説明書。
 5. 番号が分かっているときは上部バーに入れて `Enter`（今の絞り込みの中から探す）。
 
 ## 実データで使う（Python 版）
@@ -37,8 +37,6 @@
 2. `config/local/config.local.json` に、共有 SQLite のパスだけを書く。
 3. `config/local/schema.local.json` に、実際のテーブル名と列名を書く。
 4. 表示を変えたいときだけ `config/local/view.local.json` を書く（なくてよい）。
-   - DB の列名がそのまま利用者向けの名前になっているときは、`make-labels.bat`（または `python python/tools/make_view_labels.py`）で
-     列名を `view.local.json` の表示名（`fields.<項目>.label`）に書き写せます。詳しくは「表示名を DB の列名から作る」。
 5. `start.bat` をダブルクリック。黒いウィンドウが開き、Edge で画面が開きます。
    - 初回はキャッシュを自動で作成します。以後は画面左の「データ」→「データを更新する」で更新します。
    - 設定に誤りがあると、**対象ファイル・項目・理由・対応**をすべて表示して止まります（ウィンドウは開いたまま）。
@@ -105,29 +103,26 @@ config/
 }
 ```
 
-`config/local/schema.local.json`（論理名は schema.sample.json の columns と同じ。値だけ実際の列名に）
+`config/local/schema.local.json`（**役割のある 14 列だけ**。論理名は schema.sample.json の columns と同じ。値を実際の列名に）
 ```json
 {
   "tableName": "<実際のテーブル名を設定>",
   "columns": {
     "lotNo": "<実際のロット番号列>",
     "boxNo": "<実際のBOX番号列>",
-    "inspectionNo": "<実際の検査番号列>",
-    "…": "（schema.sample.json の columns にある論理名すべて）"
+    "…": "（schema.sample.json の columns にある 14 の論理名）"
   },
   "types": {
     "factoryDeliveryDate": "date"
   }
 }
 ```
+ほかの列は書かなくても、DB のテーブルから自動で読み取って表示します（DB に列が増えれば自動で増える）。
 
 `config/local/view.local.json`（必要なときだけ。配列は丸ごと置き換わる）
 ```json
 {
-  "listColumns": [
-    { "field": "lotNo", "label": "ロット番号", "visible": true, "searchable": true },
-    { "field": "boxNo", "label": "BOX番号", "visible": true, "searchable": true }
-  ]
+  "hiddenColumns": ["<最初は隠しておく DB の列名>"]
 }
 ```
 
@@ -149,37 +144,34 @@ config/
 入力欄は選ぶと全選択、`Enter` で検索（日本語の変換中は除く）、`Esc` で消去して一覧に戻る。前に探した番号が候補に出ます。
 日付の指定は 年 4 桁・月 2 桁・日 2 桁 を入れると次の欄へ自動で移り、`Enter` で次へ／`Shift+Enter` で前へ移ります。
 
-### 表示の決まり（すべて view の JSON で決める）
+### 列と表示の決まり
 
-| 決めること | view の項目 |
+- **列は DB のテーブルから自動で読み取り、DB の列名をそのまま見出し・詳細・絞り込みの名前にします**（設定に表示名は書かない）。
+- 並び順：役割のある列（schema.columns の順）を先頭に、残りは DB の列の順。
+- 設定に書くのは「役割」だけです。
+
+| 決めること | 書く場所 |
 |---|---|
-| 一覧の列・見出し・順番・幅・表示/非表示 | `listColumns`（配列の順が表示順。`visible: false` の列は一覧に出さない） |
-| 番号で探せる項目（上部バーの種類） | `listColumns[].searchable`（4 種類までは横並びのボタン、5 種類以上は選択欄。どちらも `Alt+数字` で切り替え） |
-| 詳細に出す項目と順番 | `detailFields` |
-| 詳細のまとまり（見出し・中身・アイコン） | `detailGroups[]`（`id`・`label`・`fields`。`icon` は任意）。どのまとまりにもない項目は「その他」。最初の 2 つを開いた状態で表示し、開閉はブラウザに記憶 |
-| 詳細・絞り込みで使う表示名、等幅・コピー・入力例 | `fields.<項目>`（`label` / `mono` / `copy` / `example` / `short`）。`label` がなければ listColumns の見出し、それもなければ論理名。`mono`・`copy` は指定がなければ検索できる項目だけ有効 |
-| 値の札（例：状態の色分け） | `fields.<項目>.badge`（上から順に当てはめる。`tone` は success / info / warning / danger / neutral） |
-| 絞り込める項目と種類 | `filters`（`values`＝値から選ぶ / `date`＝日付の範囲。`date` は schema の `types` で date の項目だけ） |
-| 起動時の並び順 | `defaultSort` |
+| 役割のある列の 論理名 → DB の列名（1 件を決める・検索・絞り込み・並べ替え） | `schema.columns`（14 列） |
+| 1 件を特定する列（標準はロット番号＋BOX番号。一覧の左端に固定） | `schema.recordKey` |
+| 日付として扱う列（日付の絞り込み・並べ替え） | `schema.types`（論理名か、役割のない列なら DB の列名） |
+| 番号で探せる列（上部バーの種類） | `view.searchFields`（4 種類までは横並びのボタン、5 種類以上は選択欄。どちらも `Alt+数字` で切り替え） |
+| 絞り込める列と種類 | `view.filters`（`values`＝値から選ぶ / `date`＝日付の範囲。`date` は `types` で date の列だけ） |
+| 起動時の並び順 | `view.defaultSort` |
+| 最初は隠しておく列 | `view.hiddenColumns`（論理名か DB の列名）。各自が画面の「表示列」で出し入れでき、選んだ内容はブラウザに保存 |
+| 等幅・コピー・入力例・値の札（任意） | `view.fields.<論理名 or DB の列名>`（`mono` / `copy` / `example` / `badge`） |
 
-1 件を特定する項目（標準はロット番号＋BOX番号）と、日付として扱う項目は `schema` の `recordKey` / `types` で決めます。
+以前の形の設定（全列の `columns`・`listColumns`・`detailFields`・`detailGroups`・`fields.*.label`）が残っていても止まりません。
+「今は使わない項目です」という注意を出すので、消してかまいません。
 
-### 表示名を DB の列名から作る
+### 一覧の使い方（全列表示）
 
-画面には DB の列名を渡さない決まりのため、表示名は view に書きます。列名が利用者向けの名前になっている場合は、ツールで書き写せます。
-
-```bash
-python python/tools/make_view_labels.py              # config/local/schema.local.json → config/local/view.local.json
-python python/tools/make_view_labels.py --dry-run    # 書き込まずに件数だけ見る
-python python/tools/make_view_labels.py --overwrite  # すでにある表示名も列名で置き換える
-```
-
-- 書き出し先は `view.local.json` の `fields.<項目>.label`。ほかの設定はそのまま残り、書き換え前は `view.local.json.bak` に残ります。
-- **すでに表示名がある項目は残します**。書き写した表示名は手で直してよく、直した表示名は次に実行しても消えません。
-- schema に項目が増えたら、もう一度実行すると足りない分だけ入ります。
-- 列名が仮の値（`<...>`）・空・論理名と同じ項目は書きません。
-- 画面での表示名は、詳細・一覧の見出し・検索の種類・絞り込みのすべてで同じです。優先順：`fields.<項目>.label`（このツールで書き写したものを含む）→ `listColumns[].label` → 論理名。
-- コンソールには列名そのものは出さず、件数と項目名だけを表示します。
+- 左端の 1 件を決める列（ロット番号・BOX番号）は、横に動かしても残ります。見出しは縦に動かしても残ります。
+- 長い値は「…」で省き、マウスを乗せると全文が出ます。見出しの右端をドラッグで幅を変更（ダブルクリックで元に戻す）。幅はブラウザに保存。
+- 一覧の上の「列を探す」に列名の一部を入れて `Enter`：その列まで横に移動して光ります（隠している列なら「表示する」を案内）。
+- 右の ⤢ ボタンで行の高さを「詰める／ゆったり」に切り替え。
+- 行を 1 回押す（または `↑` `↓`）と選ぶだけ。ダブルクリックか `Enter` で右に詳細（全項目。主な項目／そのほかの項目）。詳細を開いている間は、選んだ行に合わせて詳細も切り替わります。
+- データの更新で DB の列が増減したときは、自動で画面を読み込み直します（選んだ列・幅・タグは残る）。
 
 ### 読み込み先の確認と変更
 
@@ -225,7 +217,6 @@ data-search/
 │  ├─ config-design.md            … 設定ファイルの設計（責務・マージ・検証・起動フロー）
 │  └─ report/                     … 設定・フォルダ構成の見直しの成果物一覧（コード全文つき）
 ├─ start.bat / start-dummy.bat    … Python 版の起動（Windows）
-├─ make-labels.bat                … DB の列名から表示名を作る（Windows）
 ├─ config/
 │  ├─ sample/                     … 外部提供できる初期値（Git 管理対象）
 │  ├─ local/                      … 社内固有の上書き（自分で作る・Git 管理対象外）
@@ -250,7 +241,7 @@ data-search/
 │  │  ├─ settings/                … 設定の読み込み（loader）・再帰マージ（merge）・検証（validation）・既定値（defaults）
 │  │  └─ …                        … キャッシュ・検索・HTTP など
 │  ├─ tools/make_dummy_db.py      … ダミーの共有 SQLite と config/dummy を作る
-│  ├─ tools/make_view_labels.py   … schema の列名を view.local.json の表示名に書き写す
+│  ├─ tools/sample_columns.json   … ダミーと画面だけのモードが使う列の一覧（実データとは無関係）
 │  ├─ tools/sync_sample_view.py   … サンプルの表示定義を画面用（src/js/sample/sample-view.js）に書き写す
 │  └─ tests/test_backend.py
 ├─ tests/ui-check.js              … 画面の動作確認（コンソールに貼って使う）
@@ -262,12 +253,13 @@ data-search/
 
 | 増やすもの | 足す場所 |
 |---|---|
-| 論理項目（例：作業日） | `schema` の `columns` に論理名と列名、日付なら `types` に `"date"`。表示は `view` の `listColumns` / `detailFields` / `fields` |
+| 表示する列 | 何もしない（DB に列を足せば、データの更新で自動で表示される） |
+| 役割のある列（例：作業日で絞り込む） | `schema.columns` に論理名と列名（sample と local の両方）、日付なら `types` に `"date"`、`view.filters` に足す |
 | 日付の絞り込み | 上の項目を `view` の `filters` に `{ "field": "...", "type": "date" }` で足す |
 | 値の絞り込み | `view` の `filters` に `{ "field": "...", "type": "values" }` |
 | 値の札の色分け | `view` の `fields.<項目>.badge` |
 | 絞り込みの種類（例：数値の範囲） | `js/domain/filters.js` の `filterTypes.register()` と `panels/filter-panel.js` の `editors.register()`、Python の `query.py` と `settings/validation.py` |
-| 別のツールへ渡すボタン | `DS.handoffs.register({ id, label, icon, send(item) })` で詳細の下にボタンが出る（item は論理名の全項目） |
+| 別のツールへ渡すボタン | `DS.handoffs.register({ id, label, icon, send(item) })` で詳細の下にボタンが出る（item は全列。役割のある列は論理名、ほかは DB の列名がキー） |
 | 脇のパネル | `DS.panels.register()` |
 | サンプルのパターン | `js/sample/sample-data.js` の `patterns.register()` |
 | 取扱説明書の章 | `js/manual/manual-content.js` の `register()` |
@@ -304,7 +296,7 @@ Tauri 版の画面側は `js/api/remote-adapters.js` の `tauri` アダプター
 
 | 命令 | 変更点 | 理由 |
 |---|---|---|
-| `get_view_config`（新規） | 戻り値は表示定義（`listColumns`・`detailFields`・`detailGroups`・`fields`・`filters`・`defaultSort`）と、schema の論理情報（`logicalFields`・`recordKey`・`types`）。**物理名は含めない** | 表示項目と表示順をソースコードに固定しないため |
+| `get_view_config`（新規） | 戻り値は表示定義（`searchFields`・`hiddenColumns`・`fields`・`filters`・`defaultSort`）、schema の論理情報（`roleFields`・`recordKey`・`types`）、表示する列 `columns: [{ id, label（DB の列名）, role }]` と `columnsVersion`。**テーブル名・パスは含めない** | 列をソースコードにも設定にも固定せず、DB の列名で表示するため |
 | `list_lots`（新規） | 入力は `search_lots` と同じで、番号（`keyword` など）は省略可。`filters` を追加。戻り値も同じ形 | 起動時に入力なしで一覧を出し、絞り込むため |
 | `get_filter_values`（新規） | 入力 `{ field, filters, (番号の検索) }`、戻り値 `{ success, field, values: [{ value, count }], truncated }` | 絞り込みの値を件数つきで見て選ぶため |
 | `search_lots` | 入力に `sortKey`（論理名・既定は view の defaultSort）・`sortOrder`（asc/desc）・`filters` を追加（省略可） | 見出しでの並べ替えをページをまたいで正しく行うため |
@@ -313,7 +305,7 @@ Tauri 版の画面側は `js/api/remote-adapters.js` の `tauri` アダプター
 | `get_data_source`（新規） | 戻り値 `{ success, sourcePath, editable, localFile }` | 画面で今の読み込み先を示すため |
 | `test_data_source`（新規） | 入力 `{ sourcePath? }`（省くと今の読み込み先）。戻り値 `{ success, ok, steps: [{ id, label, status: ok/ng/skip, message, action }], rowCount, modifiedAt, normalizedPath }` | 段階ごとに接続を確かめるため |
 | `update_data_source`（新規） | 入力 `{ sourcePath }`。接続テストがすべて ○ のときだけ保存してデータを更新。戻り値は test の結果＋`{ saved, refreshed, message, localFile }` | 読み込み先を画面から直すため |
-| `get_cache_status` | `rowCount`・`sourceReachable`・`sourceHasUpdate`・`lastRefreshAt`・`errorCode`・`errorMessage`・`settingsWarnings` を追加 | 「データ」パネルで状態の根拠と設定の注意を示すため |
+| `get_cache_status` | `columnsVersion`（列が変わったかの印）・`rowCount`・`sourceReachable`・`sourceHasUpdate`・`lastRefreshAt`・`errorCode`・`errorMessage`・`settingsWarnings` を追加 | 「データ」パネルで状態の根拠と設定の注意を示すため |
 | `refresh_cache` | 戻り値に `rowCount` を追加 | 更新の結果を件数で示すため |
 | 設定 | `devServer`（host / port / openBrowser）・`cache`（temporaryExtension / keepPreviousOnFailure）は sample に書かなくてもアプリ内の既定値を使う。変えたいときだけ sample か local に書く | sample を簡潔に保つため。`devServer` は Python 版のみ |
 

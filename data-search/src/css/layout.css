@@ -443,3 +443,23 @@
 .type-select__chevron { position: absolute; color: var(--color-primary); pointer-events: none; }
 .type-select__icon { left: var(--sp-3); }
 .type-select__chevron { right: var(--sp-3); font-size: var(--fs-sm); }
+
+/* ── 全列の一覧：道具・左端の固定・列幅・行の高さ ── */
+.grid-tools { display: flex; align-items: center; gap: var(--sp-2); margin-left: auto; }
+.grid-tools__find { display: inline-flex; align-items: center; gap: var(--sp-1); color: var(--color-text-muted); }
+.grid-tools__finder { width: 14em; }
+.grid th, .grid tbody td { max-width: 320px; }
+.grid tbody td { overflow: hidden; text-overflow: ellipsis; }
+.th-btn__text { overflow: hidden; text-overflow: ellipsis; }
+.grid th.is-pinned, .grid td.is-pinned { position: sticky; left: 0; z-index: 1; }
+.grid thead th.is-pinned { z-index: calc(var(--z-sticky) + 1); }
+.grid tbody td.is-pinned { background: var(--color-surface); }
+.grid tbody tr:hover td.is-pinned { background: var(--color-row-hover); }
+.grid tbody tr.is-selected td.is-pinned { background: var(--color-row-selected); }
+.grid .is-pinned-last { box-shadow: inset calc(-1 * var(--bw)) 0 0 var(--color-border-strong), var(--shadow-pinned); }
+.col-resize { position: absolute; top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; }
+.col-resize:hover, body.is-resizing .col-resize:hover { background: var(--color-primary-soft); }
+body.is-resizing { cursor: col-resize; user-select: none; }
+.grid--comfortable tbody td { height: calc(var(--h-row) + 12px); }
+.columns-panel__count { font-weight: var(--fw-bold); }
+.check[hidden], .pane-section[hidden] { display: none; }

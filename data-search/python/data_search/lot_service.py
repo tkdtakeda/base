@@ -15,6 +15,7 @@ from .fields import (
     SORT_ORDERS,
     VALUE_LIST_LIMIT,
 )
+from .column_catalog import catalog_version
 from .query import QueryBuilder
 
 
@@ -33,8 +34,8 @@ def _to_text(value):
     return str(value)
 
 
-def _row_to_item(row, model):
-    return {name: _to_text(row[index]) for index, name in enumerate(model.fields)}
+def _row_to_item(row, ids):
+    return {name: _to_text(row[index]) for index, name in enumerate(ids)}
 
 
 def _invalid(detail, user_message=None):
@@ -144,8 +145,18 @@ class LotService:
         self.cache = cache_service
         self.logger = logger
         self.model = config.model
-        self.query = QueryBuilder(config.table_name, config.field_mappings, config.model)
+        self._query, self._query_key = None, None
         self._today = today  # テストで日付を固定するため
+
+    @property
+    def query(self):
+        """列の一覧（キャッシュのテーブル）か設定が変わったら、SQL の組み立て役を作り直す。"""
+        catalog = self.cache.catalog()
+        key = (catalog_version(catalog), self.config.table_name)
+        if key != self._query_key:
+            self._query = QueryBuilder(self.config.table_name, catalog, self.model)
+            self._query_key = key
+        return self._query
 
     def today(self):
         return self._today() if self._today else date.today()
@@ -171,8 +182,9 @@ class LotService:
         today = self.today()
         search = parse_search(payload, keyword_required, self.model)
         filters = parse_filters(payload, today, self.model)
+        query = self.query
         sort_key = payload.get("sortKey") or self.model.default_sort[0]
-        if sort_key not in self.model.fields:
+        if sort_key not in query.columns:
             raise _invalid("unknown sortKey")
         sort_order = payload.get("sortOrder") or (self.model.default_sort[1] if sort_key == self.model.default_sort[0] else "asc")
         if sort_order not in SORT_ORDERS:
@@ -181,8 +193,8 @@ class LotService:
         page_size = _require_int(payload, "pageSize", self.config.page_size, 1, self.config.max_page_size)
 
         started = time.perf_counter()
-        count_sql, count_params = self.query.count(search, filters)
-        rows_sql, rows_params = self.query.rows(search, filters, sort_key, sort_order, page_size, (page - 1) * page_size)
+        count_sql, count_params = query.count(search, filters)
+        rows_sql, rows_params = query.rows(search, filters, sort_key, sort_order, page_size, (page - 1) * page_size)
         total = self._execute(count_sql, count_params, "one")[0]
         rows = self._execute(rows_sql, rows_params, "all")
         elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
@@ -194,7 +206,7 @@ class LotService:
             ",".join(name for name, _, _ in filters) or "-",
             total, elapsed_ms,
         )
-        items = [_row_to_item(row, self.model) for row in rows]
+        items = [_row_to_item(row, query.ids) for row in rows]
         return {
             "success": True,
             "count": len(items),
@@ -235,10 +247,11 @@ class LotService:
         if not key_values[self.model.record_key[0]]:
             raise _invalid(f"{self.model.record_key[0]} is required")
 
-        sql, params = self.query.detail(key_values)
+        query = self.query
+        sql, params = query.detail(key_values)
         rows = self._execute(sql, params, "all")
         if not rows:
             raise AppError("NOT_FOUND", "record not found")
         if len(rows) > 1:
             self.logger.warning("detail key is not unique")
-        return {"success": True, "item": _row_to_item(rows[0], self.model), "duplicated": len(rows) > 1}
+        return {"success": True, "item": _row_to_item(rows[0], query.ids), "duplicated": len(rows) > 1}

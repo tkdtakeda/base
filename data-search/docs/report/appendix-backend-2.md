@@ -1,5 +1,59 @@
 ## 付録：バックエンド・ツール・設定の修正ファイルの全文（2/2）
 
+`python/data_search/settings/local_writer.py`
+
+```python
+"""ローカルの上書きファイル（config/local/*.local.json）へ、必要な項目だけを書き込む。
+
+ほかの項目はそのまま残し、書き換える前の内容は <ファイル>.bak に残す。
+書き込みは一時ファイル → 置き換えの順で行い、途中で止まっても壊れたファイルを残さない。
+"""
+
+import json
+import os
+import shutil
+
+
+def local_file(local_dir, kind):
+    return os.path.join(local_dir, f"{kind}.local.json")
+
+
+def set_local_value(local_dir, kind, path, value):
+    """path（例：("dataSource", "sourcePath")）の値を書き込む。書き込んだファイルのパスを返す。"""
+    target = local_file(local_dir, kind)
+    data = {}
+    if os.path.isfile(target):
+        with open(target, encoding="utf-8-sig") as fp:
+            data = json.load(fp)
+        if not isinstance(data, dict):
+            raise ValueError("local file is not an object")
+        shutil.copyfile(target, target + ".bak")
+    node = data
+    for key in path[:-1]:
+        child = node.get(key)
+        if not isinstance(child, dict):
+            child = {}
+            node[key] = child
+        node = child
+    node[path[-1]] = value
+    os.makedirs(local_dir, exist_ok=True)
+    temp = target + ".writing"
+    with open(temp, "w", encoding="utf-8") as fp:
+        json.dump(data, fp, ensure_ascii=False, indent=2)
+        fp.write("\n")
+    os.replace(temp, target)
+    return target
+
+
+def restore_backup(local_dir, kind, existed):
+    """書き込みを取り消す（.bak に戻す。元のファイルがなかったときは消す）。"""
+    target = local_file(local_dir, kind)
+    if existed and os.path.isfile(target + ".bak"):
+        shutil.copyfile(target + ".bak", target)
+    elif not existed and os.path.isfile(target):
+        os.remove(target)
+```
+
 `python/data_search/source_check.py`
 
 ```python
@@ -152,7 +206,7 @@ def _check_table(state, table_name, field_mappings):
         names = "、".join(missing[:8]) + (f" ほか {len(missing) - 8} 項目" if len(missing) > 8 else "")
         raise StepFailed(f"使う列が {len(missing)} 個ありません（{names}）。",
                          "読み込み先が正しいか、schema.local.json の columns を確認してください。")
-    return f"テーブルと、使う列 {len(field_mappings)} 個がそろっています。"
+    return f"テーブルと、役割のある列 {len(field_mappings)} 個がそろっています（列は全部で {len(columns)} 個）。"
 
 
 def _check_rows(state, table_name):
@@ -270,12 +324,12 @@ class SourceService:
 """動作確認用のダミー共有 SQLite と、それを指す上書き設定（config/dummy/）を作る。
 
   config/dummy/config.local.json … 共有 SQLite のパスだけ
-  config/dummy/schema.local.json … テーブル名と列名だけ
-  （view は上書きしない。config/sample/view.sample.json をそのまま使う）
+  config/dummy/schema.local.json … テーブル名と、役割のある列の DB の列名だけ
+  config/dummy/view.local.json   … 隠す列（UPDATED_AT）だけ
 
-実データは使わない。列は config/sample/schema.sample.json の論理項目すべてについて作り、
-物理名はわざと論理名と違う名前（大文字のスネークケース。1 列は日本語）にして、
-schema の columns（論理名 → 物理列名）が効いていることを確かめられるようにしている。
+実データは使わない。列は python/tools/sample_columns.json（画面だけで試すモードと共通）の順に作る。
+役割のある列は日本語の列名、ほかの列は英字の列名にしてあり、DB の列名がそのまま表示されることと、
+schema の columns（論理名 → DB の列名）が効いていることを確かめられる。
 
 使い方:
     python python/tools/make_dummy_db.py                    … 正常なダミー（ロット 2,500 件・BOX 約 5,000 件）
@@ -296,15 +350,14 @@ from datetime import date, timedelta
 
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SCHEMA_SAMPLE = os.path.join(APP_ROOT, "config", "sample", "schema.sample.json")
+SAMPLE_COLUMNS = os.path.join(APP_ROOT, "python", "tools", "sample_columns.json")
 SHARED_PATH = os.path.join(APP_ROOT, "data", "dummy", "shared", "dummy_shared.sqlite3")
 DUMMY_DIR = os.path.join(APP_ROOT, "config", "dummy")
 CONFIG_PATH = os.path.join(DUMMY_DIR, "config.local.json")
 SCHEMA_PATH = os.path.join(DUMMY_DIR, "schema.local.json")
-TABLE = "t_dummy_lot_box"
+VIEW_PATH = os.path.join(DUMMY_DIR, "view.local.json")
 SEED = 20261011
 
-# 物理名を日本語にする列（引用符で囲む処理の確認用）
-JAPANESE_COLUMNS = {"customerName": "取引先_名称"}
 # missing-column の確認で消す論理項目
 DROP_FOR_MISSING = "cfStatus"
 
@@ -318,10 +371,11 @@ STATUSES = ["仕掛中", "検査待ち", "検査済み", "出荷済み", "保留
 SPECIAL_LOTS = ["試作-α-001", "LOT_100%-A", "LOT#5/特急", "LOT(再)-12", "LOT'Q\"-1"]
 
 
-def physical_name(logical):
-    if logical in JAPANESE_COLUMNS:
-        return JAPANESE_COLUMNS[logical]
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", logical).upper()
+def load_columns():
+    """[(値を作るときの名前＝論理名か列名, DB の列名, 論理名 or None)] を DB の順に返す。"""
+    with open(SAMPLE_COLUMNS, encoding="utf-8") as fp:
+        data = json.load(fp)
+    return data["table"], [(c.get("role", c["name"]), c["name"], c.get("role")) for c in data["columns"]]
 
 
 def value_of(field, ctx, rng, today):
@@ -392,7 +446,8 @@ def build_rows(lot_count, logical_fields, rng):
     return rows
 
 
-def write_database(path, rows, logical_fields, variant):
+def write_database(path, rows, table, columns, variant):
+    """columns：load_columns() の並び。行は「値を作るときの名前」で引く。"""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     for suffix in ("", "-wal", "-shm", "-journal"):
         if os.path.exists(path + suffix):
@@ -402,31 +457,36 @@ def write_database(path, rows, logical_fields, variant):
             fp.write(b"this is not a sqlite database" * 100)
         return
 
-    fields = [f for f in logical_fields if not (variant == "missing-column" and f == DROP_FOR_MISSING)]
-    table = "t_other" if variant == "missing-table" else TABLE
-    columns = [physical_name(f) for f in fields] + ["UPDATED_AT"]
+    kept = [c for c in columns if not (variant == "missing-column" and c[2] == DROP_FOR_MISSING)]
+    table_name = "t_other" if variant == "missing-table" else table
+    names = [physical for _, physical, _ in kept] + ["UPDATED_AT"]
+    lot_column = next(physical for _, physical, role in columns if role == "lotNo")
     conn = sqlite3.connect(path)
     try:
-        conn.execute(f'CREATE TABLE "{table}" ({", ".join(f"""\"{c}\" TEXT""" for c in columns)})')
+        conn.execute(f'CREATE TABLE "{table_name}" ({", ".join(f"""\"{c}\" TEXT""" for c in names)})')
         conn.executemany(
-            f'INSERT INTO "{table}" VALUES ({", ".join("?" for _ in columns)})',
-            ([row[f] for f in fields] + ["2026-10-11T08:00:00"] for row in rows),
+            f'INSERT INTO "{table_name}" VALUES ({", ".join("?" for _ in names)})',
+            ([row[key] for key, _, _ in kept] + ["2026-10-11T08:00:00"] for row in rows),
         )
-        conn.execute(f'CREATE INDEX "idx_lot" ON "{table}" ("{physical_name("lotNo")}")')
+        conn.execute(f'CREATE INDEX "idx_lot" ON "{table_name}" ("{lot_column}")')
         conn.commit()
     finally:
         conn.close()
 
 
-def write_config(logical_fields):
+def write_config(table, columns):
     # config/local と同じく、サンプルから変えたい項目だけを書く
     os.makedirs(DUMMY_DIR, exist_ok=True)
     config = {
         "application": {"name": "Data Search (Dummy)"},
         "dataSource": {"sourcePath": "./data/dummy/shared/dummy_shared.sqlite3", "cachePath": "./data/cache/dummy_cache.sqlite3"},
     }
-    schema = {"tableName": TABLE, "columns": {f: physical_name(f) for f in logical_fields}}
-    for path, data in ((CONFIG_PATH, config), (SCHEMA_PATH, schema)):
+    with open(SCHEMA_SAMPLE, encoding="utf-8") as fp:
+        roles = list(json.load(fp)["columns"])
+    physical = {role: name for _, name, role in columns if role}
+    schema = {"tableName": table, "columns": {role: physical[role] for role in roles}}
+    view = {"hiddenColumns": ["UPDATED_AT"]}  # 隠す列の例（画面の「表示列」で出せる）
+    for path, data in ((CONFIG_PATH, config), (SCHEMA_PATH, schema), (VIEW_PATH, view)):
         with open(path, "w", encoding="utf-8") as fp:
             json.dump(data, fp, ensure_ascii=False, indent=2)
 
@@ -438,129 +498,293 @@ def main():
     parser.add_argument("--if-missing", action="store_true")
     args = parser.parse_args()
 
-    if args.if_missing and all(os.path.isfile(p) for p in (SHARED_PATH, CONFIG_PATH, SCHEMA_PATH)):
+    if args.if_missing and all(os.path.isfile(p) for p in (SHARED_PATH, CONFIG_PATH, SCHEMA_PATH, VIEW_PATH)):
         print("ダミーデータはすでにあります。")
         return
-    with open(SCHEMA_SAMPLE, encoding="utf-8") as fp:
-        logical_fields = list(json.load(fp)["columns"])
-    rows = build_rows(args.lots, logical_fields, random.Random(SEED))
-    write_database(SHARED_PATH, rows, logical_fields, args.variant)
-    write_config(logical_fields)
-    print(f"ダミーの共有データを作成しました（{args.variant}・ロット {args.lots:,} 件・BOX {len(rows):,} 件）: {SHARED_PATH}")
-    print(f"上書き設定: {DUMMY_DIR}（config.local.json / schema.local.json）")
+    table, columns = load_columns()
+    rows = build_rows(args.lots, [key for key, _, _ in columns], random.Random(SEED))
+    write_database(SHARED_PATH, rows, table, columns, args.variant)
+    write_config(table, columns)
+    print(f"ダミーの共有データを作成しました（{args.variant}・ロット {args.lots:,} 件・BOX {len(rows):,} 件・列 {len(columns) + 1} 個）: {SHARED_PATH}")
+    print(f"上書き設定: {DUMMY_DIR}（config.local.json / schema.local.json / view.local.json）")
 
 
 if __name__ == "__main__":
     main()
 ```
 
-`python/tools/make_view_labels.py`
+`python/tools/sample_columns.json`
 
-```python
-"""schema の列名から、詳細・一覧・検索・絞り込みで使う表示名の下書きを作る。
-
-  読む   : config/sample/schema.sample.json ＋ <上書きフォルダ>/schema.local.json（columns の列名）
-  書き出す: <上書きフォルダ>/view.local.json の fields.<項目>.label（ほかの設定はそのまま残す）
-
-  ・すでに表示名がある項目は残す（手で直した表示名は消えない）。schema に項目が増えたら、もう一度実行すれば足りない分だけ入る
-  ・--overwrite で、すでにある表示名も列名で置き換える
-  ・書き換える前の view.local.json は view.local.json.bak に残す
-  ・画面での優先順：view の表示名（このツールで入れたものを含む）→ 論理名
-
-使い方:
-    python python/tools/make_view_labels.py                         … config/local に書く
-    python python/tools/make_view_labels.py --local-dir config/dummy
-    python python/tools/make_view_labels.py --dry-run               … 書き込まずに件数だけ見る
-    python python/tools/make_view_labels.py --overwrite
-"""
-
-import argparse
-import json
-import os
-import shutil
-import sys
-
-APP_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(APP_ROOT, "python"))
-
-from data_search.settings.labels import plan_labels  # noqa: E402
-from data_search.settings.loader import read_settings_json  # noqa: E402
-
-SAMPLE_DIR = os.path.join(APP_ROOT, "config", "sample")
-
-
-def shown(path):
-    relative = os.path.relpath(path, APP_ROOT)
-    return path if relative.startswith("..") else relative
-
-
-def read_or_stop(path, required):
-    if not os.path.isfile(path):
-        if required:
-            print(f"[止めました] {shown(path)} がありません。")
-            sys.exit(1)
-        return {}
-    issues = []
-    data = read_settings_json(path, shown(path), issues)
-    if issues:
-        print("[止めました] 設定ファイルを読めません。")
-        for issue in issues:
-            print()
-            print(issue.format())
-        sys.exit(1)
-    return data
-
-
-def preview(names, limit=8):
-    shown = "、".join(names[:limit])
-    return f"{shown} ほか {len(names) - limit} 項目" if len(names) > limit else shown
-
-
-def main():
-    parser = argparse.ArgumentParser(description="schema の列名から表示名の下書きを作る")
-    parser.add_argument("--local-dir", default=os.path.join(APP_ROOT, "config", "local"), help="上書きフォルダ（既定：config/local）")
-    parser.add_argument("--overwrite", action="store_true", help="すでにある表示名も列名で置き換える")
-    parser.add_argument("--dry-run", action="store_true", help="書き込まずに件数だけ表示する")
-    args = parser.parse_args()
-
-    local_dir = os.path.abspath(args.local_dir)
-    sample_schema = read_or_stop(os.path.join(SAMPLE_DIR, "schema.sample.json"), required=True)
-    local_schema = read_or_stop(os.path.join(local_dir, "schema.local.json"), required=True)
-    view_path = os.path.join(local_dir, "view.local.json")
-    view = read_or_stop(view_path, required=False)
-
-    # 項目の並びはサンプルの schema、列名はローカルの schema を優先（社内だけで足した項目も含める）
-    columns = dict(sample_schema.get("columns") or {})
-    columns.update(local_schema.get("columns") or {})
-    plan = plan_labels(columns, view.get("fields"), overwrite=args.overwrite)
-
-    # 列名そのものは表示しない（画面に出すのは書き込み後の表示名だけ）。項目名と件数だけ
-    print(f"新しく入れる: {len(plan.added)} 項目")
-    if args.overwrite:
-        print(f"置き換える  : {len(plan.replaced)} 項目")
-    print(f"そのまま残す: {len(plan.kept)} 項目（すでに表示名あり）")
-    if plan.skipped:
-        print(f"書かない    : {len(plan.skipped)} 項目（列名が仮の値・空・論理名と同じ）: {preview(plan.skipped)}")
-    if args.dry_run:
-        print("（--dry-run のため書き込んでいません）")
-        return 0
-    if not plan.added and not plan.replaced:
-        print("変更はありません。")
-        return 0
-
-    if os.path.isfile(view_path):
-        shutil.copyfile(view_path, view_path + ".bak")
-    view["fields"] = plan.fields
-    os.makedirs(local_dir, exist_ok=True)
-    with open(view_path, "w", encoding="utf-8") as fp:
-        json.dump(view, fp, ensure_ascii=False, indent=2)
-        fp.write("\n")
-    print(f"書き込みました: {shown(view_path)}（表示名は手で直せます。直した表示名は次回も残ります）")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+```json
+{
+  "_comment": "ダミーの共有 SQLite（make_dummy_db.py）と、画面だけで試すモードのサンプル（sync_sample_view.py）が使う列の一覧。実データとは無関係。name は DB の列名（この順が DB の列の順）、role は schema.sample.json の論理名（役割のある列だけ）。",
+  "table": "t_dummy_lot_box",
+  "columns": [
+    {
+      "name": "ロット番号",
+      "role": "lotNo"
+    },
+    {
+      "name": "BOX番号",
+      "role": "boxNo"
+    },
+    {
+      "name": "検査番号",
+      "role": "inspectionNo"
+    },
+    {
+      "name": "鋳造番号",
+      "role": "castingNo"
+    },
+    {
+      "name": "オーダー番号",
+      "role": "orderNo"
+    },
+    {
+      "name": "plannedEquipmentName"
+    },
+    {
+      "name": "businessUnitCode"
+    },
+    {
+      "name": "demandFieldCode"
+    },
+    {
+      "name": "applicationCode"
+    },
+    {
+      "name": "applicationName"
+    },
+    {
+      "name": "orderMaterial"
+    },
+    {
+      "name": "orderTemper"
+    },
+    {
+      "name": "orderThickness"
+    },
+    {
+      "name": "orderWidth"
+    },
+    {
+      "name": "orderLength"
+    },
+    {
+      "name": "製造材質",
+      "role": "manufacturingMaterial"
+    },
+    {
+      "name": "製造調質",
+      "role": "manufacturingTemper"
+    },
+    {
+      "name": "manufacturingThickness"
+    },
+    {
+      "name": "manufacturingWidth"
+    },
+    {
+      "name": "manufacturingLength"
+    },
+    {
+      "name": "productUnitWeight"
+    },
+    {
+      "name": "specificGravity"
+    },
+    {
+      "name": "shape"
+    },
+    {
+      "name": "surface"
+    },
+    {
+      "name": "processing"
+    },
+    {
+      "name": "surfaceProcessing"
+    },
+    {
+      "name": "cleaning"
+    },
+    {
+      "name": "deliverySpecificationNo"
+    },
+    {
+      "name": "仕掛区分",
+      "role": "wipCategory"
+    },
+    {
+      "name": "allocationCategory"
+    },
+    {
+      "name": "保留区分",
+      "role": "holdCategory"
+    },
+    {
+      "name": "holdReleaseDate"
+    },
+    {
+      "name": "temporaryPackingFlag"
+    },
+    {
+      "name": "urgentCategory"
+    },
+    {
+      "name": "状態",
+      "role": "cfStatus"
+    },
+    {
+      "name": "allocationCode"
+    },
+    {
+      "name": "allocationMethod"
+    },
+    {
+      "name": "allocationQuantity"
+    },
+    {
+      "name": "allocationAdjustmentNo"
+    },
+    {
+      "name": "salesDeliveryDate"
+    },
+    {
+      "name": "工場納期",
+      "role": "factoryDeliveryDate"
+    },
+    {
+      "name": "promisedDeliveryDate"
+    },
+    {
+      "name": "shippingDate"
+    },
+    {
+      "name": "wipRetentionTime"
+    },
+    {
+      "name": "deliveryDestinationCode"
+    },
+    {
+      "name": "customerCode"
+    },
+    {
+      "name": "shippingDestinationCode"
+    },
+    {
+      "name": "deliveryDestinationName"
+    },
+    {
+      "name": "取引先名",
+      "role": "customerName"
+    },
+    {
+      "name": "shippingDestinationName"
+    },
+    {
+      "name": "districtCode"
+    },
+    {
+      "name": "salespersonCode"
+    },
+    {
+      "name": "plannedEquipmentCourse"
+    },
+    {
+      "name": "actualEquipmentCourse"
+    },
+    {
+      "name": "残仕掛設備コース",
+      "role": "remainingEquipmentCourse"
+    },
+    {
+      "name": "totalProcessCount"
+    },
+    {
+      "name": "pitPlannedDate"
+    },
+    {
+      "name": "pitActualDate"
+    },
+    {
+      "name": "specialSpecification"
+    },
+    {
+      "name": "masterNo"
+    },
+    {
+      "name": "specificationNo"
+    },
+    {
+      "name": "qualityNo"
+    },
+    {
+      "name": "manufacturingNo"
+    },
+    {
+      "name": "testNo"
+    },
+    {
+      "name": "personInCharge"
+    },
+    {
+      "name": "boxPlannedThickness"
+    },
+    {
+      "name": "boxPlannedWidth"
+    },
+    {
+      "name": "boxPlannedLength"
+    },
+    {
+      "name": "boxPlannedWorkPattern"
+    },
+    {
+      "name": "boxPlannedWeight"
+    },
+    {
+      "name": "boxPlannedCount"
+    },
+    {
+      "name": "qualityCode"
+    },
+    {
+      "name": "annealingScheduleCategory"
+    },
+    {
+      "name": "annealingFurnaceNo"
+    },
+    {
+      "name": "lastActualProcessBoxNo"
+    },
+    {
+      "name": "最終実績設備",
+      "role": "lastActualEquipmentName"
+    },
+    {
+      "name": "lastActualThickness"
+    },
+    {
+      "name": "lastActualWidth"
+    },
+    {
+      "name": "lastActualLength"
+    },
+    {
+      "name": "lastActualGoodWeight"
+    },
+    {
+      "name": "lastActualCount"
+    },
+    {
+      "name": "workStartDate"
+    },
+    {
+      "name": "workEndDate"
+    }
+  ]
+}
 ```
 
 `python/tools/sync_sample_view.py`
@@ -570,6 +794,7 @@ if __name__ == "__main__":
 
 file:// で開いた画面は JSON ファイルを読めないため、config/sample/schema.sample.json と
 view.sample.json の論理情報を src/js/sample/sample-view.js に書き写して使う。
+表示する列（columns）は、ダミーと共通の列の一覧 python/tools/sample_columns.json から作る（実データとは無関係）。
 サンプルの view / schema を変えたら、このスクリプトを実行する（テストで一致を確かめている）。
 
 使い方: python python/tools/sync_sample_view.py
@@ -582,16 +807,18 @@ import sys
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(APP_ROOT, "python"))
 
+from data_search.column_catalog import build_catalog, catalog_version  # noqa: E402
 from data_search.settings import public_view_of  # noqa: E402
 from data_search.settings.defaults import BUILTIN_DEFAULTS  # noqa: E402
 from data_search.settings.merge import fill_defaults  # noqa: E402
 
 SAMPLE_DIR = os.path.join(APP_ROOT, "config", "sample")
+SAMPLE_COLUMNS = os.path.join(APP_ROOT, "python", "tools", "sample_columns.json")
 OUTPUT = os.path.join(APP_ROOT, "src", "js", "sample", "sample-view.js")
 
 TEMPLATE = """/* =========================================================
    画面だけで試すモード用の表示定義（自動生成。手で直さない）
-   元: config/sample/view.sample.json と schema.sample.json の論理情報
+   元: config/sample/view.sample.json と schema.sample.json の論理情報、python/tools/sample_columns.json（列）
    作り直し: python python/tools/sync_sample_view.py
    ========================================================= */
 (function () {{
@@ -611,7 +838,12 @@ def main():
     # サンプルから省かれた任意の項目は、起動時と同じく内部の既定値で補う
     schema = fill_defaults(schema, BUILTIN_DEFAULTS["schema"])
     view = fill_defaults(view, BUILTIN_DEFAULTS["view"])
-    text = json.dumps(public_view_of(schema, view), ensure_ascii=False, indent=2)
+    with open(SAMPLE_COLUMNS, encoding="utf-8") as fp:
+        sample_columns = json.load(fp)["columns"]
+    mappings = {c["role"]: c["name"] for c in sample_columns if "role" in c}
+    catalog = build_catalog([c["name"] for c in sample_columns], {name: mappings[name] for name in schema["columns"]})
+    data = dict(public_view_of(schema, view), columns=[c.public() for c in catalog], columnsVersion=catalog_version(catalog))
+    text = json.dumps(data, ensure_ascii=False, indent=2)
     with open(OUTPUT, "w", encoding="utf-8", newline="\n") as fp:
         fp.write(TEMPLATE.format(json=text))
     print(f"書き出しました: {OUTPUT}")
@@ -709,11 +941,23 @@ if __name__ == "__main__":
     tags.remove(saved.tag.id);
     check('タグを消せる', !store.get().tags.items.some((tag) => tag.id === saved.tag.id));
 
-    // ── 詳細 ──
+    // ── 全列の一覧と詳細 ──
     await search.setFilters({});
+    const columnCount = window.DS.domain.listFields().length;
+    check('一覧に全列が出る（隠した列を除く）', document.querySelectorAll('.grid thead th').length === columnCount - store.get().columns.hidden.length, `${columnCount} 列`);
+    check('見出しは DB の列名', document.querySelector('.grid thead th').textContent.trim() === window.DS.domain.listFields()[0].label);
+    check('1 件を決める列は左端に固定', document.querySelectorAll('.grid thead th.is-pinned').length === window.DS.domain.keyFields().length);
+    await search.highlight(result().items[0]);
+    check('行を 1 回押すと選ぶだけ（詳細は開かない）', store.get().selection.key && document.getElementById('detail').hidden === true);
     await search.select(result().items[0]);
-    check('行を選ぶと詳細が出る', document.getElementById('detail').hidden === false);
+    check('ダブルクリック／Enter で詳細が出る', document.getElementById('detail').hidden === false);
     search.closeDetail();
+    check('詳細を閉じても行の選択は残る', Boolean(store.get().selection.key) && document.getElementById('detail').hidden === true);
+    const beforeColumns = store.get().columns;
+    const hideId = window.DS.domain.listFields().find((field) => !field.key).id;
+    store.merge('columns', { hidden: beforeColumns.hidden.concat([hideId]) });
+    check('表示列で隠すと一覧から消える', !document.querySelector(`.grid thead th[data-field="${hideId}"]`));
+    store.set({ columns: beforeColumns });
 
     // ── 1 ロットに BOX が複数 ──
     await samples.load('multi-box');

@@ -1,8 +1,9 @@
 """マージ後の設定（config / schema / view）を役割ごとに確かめる。
 
   config … アプリと実行環境。DB 接続に必要なパス（sourcePath / cachePath）はここで確かめる
-  schema … テーブル名と物理列名。仮の値・空・重複をここで確かめる
-  view   … 表示の定義。参照する論理項目が schema.columns にあるかをここで確かめる
+  schema … テーブル名と、役割のある列の論理名 → DB の列名。仮の値・空・重複をここで確かめる
+  view   … 検索・絞り込み・並べ替え・隠す列。参照する論理名が schema.columns にあるかをここで確かめる
+（表示する列そのものは DB から自動で読み取るため、設定では確かめない）
 
 問題はすべて集めて返す（最初の 1 つで止めない）。1 件ごとに
 「対象ファイル・JSON 上の項目・理由・対応」を持たせ、利用者が直せるようにする。
@@ -25,7 +26,7 @@ BADGE_TONES = ("success", "info", "warning", "danger", "neutral")
 class Issue:
     level: str   # "error" / "warning"
     file: str    # 例：config/local/schema.local.json
-    path: str    # 例：columns.status / listColumns[2].field
+    path: str    # 例：columns.cfStatus / searchFields[2]
     reason: str
     action: str
 
@@ -167,10 +168,11 @@ def validate_schema(schema, src, config):
     if len(set(record_key)) != len(record_key):
         err("recordKey", "同じ論理項目が重複しています。", "重複を消してください。")
 
+    # types のキーは論理名か、役割のない列なら DB の列名（DB から読み取るため、ここでは有無を確かめない）
     for name, kind in schema["types"].items():
         path = f"types.{name}"
-        if name not in columns:
-            err(path, f"\"{name}\" は schema.columns に定義されていません。", "columns に論理項目を足すか、types から消してください。")
+        if _blank(name):
+            err(path, "列の名前が空です。", "論理名か DB の列名を書いてください。")
         if kind not in COLUMN_TYPES:
             err(path, f"\"{kind}\" は型として使えません。", "text か date にしてください。")
     return issues
@@ -193,66 +195,32 @@ def validate_view(view, src, schema):
             return False
         return True
 
-    seen = set()
-    for index, column in enumerate(view["listColumns"]):
-        base = f"listColumns[{index}]"
-        if not isinstance(column, dict):
-            err(base, "{ \"field\": ..., \"label\": ..., \"visible\": ..., \"searchable\": ... } の形ではありません。", "形を直してください。")
-            continue
-        field = column.get("field")
-        if check_field(f"{base}.field", field):
-            if field in seen:
-                err(f"{base}.field", f"\"{field}\" が listColumns の中で重複しています。", "どちらか一方を消してください。")
-            seen.add(field)
-        if _blank(column.get("label")):
-            err(f"{base}.label", "表示名がありません。", "\"label\": \"表示名\" を設定してください。")
-        for flag in ("visible", "searchable"):
-            if not isinstance(column.get(flag), bool):
-                err(f"{base}.{flag}", f"{flag} が真偽値ではありません。", "true か false にしてください。")
-        width = column.get("width")
-        if width is not None and (isinstance(width, bool) or not isinstance(width, int) or width < 1):
-            err(f"{base}.width", "幅が正の整数ではありません。", "1 以上の整数（px）にするか、消してください。")
-    if not any(isinstance(c, dict) and c.get("searchable") is True for c in view["listColumns"]):
-        err("listColumns", "番号で探せる項目（searchable: true）が 1 つもありません。", "少なくとも 1 つを searchable: true にしてください。")
+    def warn(path, reason, action):
+        issues.append(Issue("warning", src.origin(path), path, reason, action))
 
+    searchable = view["searchFields"]
+    if not searchable:
+        err("searchFields", "番号で探せる項目が 1 つもありません。", "少なくとも 1 つの論理名を書いてください（例：[\"lotNo\"]）。")
     seen = set()
-    for index, name in enumerate(view["detailFields"]):
-        path = f"detailFields[{index}]"
+    for index, name in enumerate(searchable):
+        path = f"searchFields[{index}]"
         if check_field(path, name):
             if name in seen:
-                err(path, f"\"{name}\" が detailFields の中で重複しています。", "どちらか一方を消してください。")
+                err(path, f"\"{name}\" が searchFields の中で重複しています。", "どちらか一方を消してください。")
             seen.add(name)
 
-    group_ids, grouped = [], {}
-    for index, group in enumerate(view["detailGroups"]):
-        path = f"detailGroups[{index}]"
-        if not isinstance(group, dict) or _blank(group.get("id")) or _blank(group.get("label")):
-            err(path, "id と label が必要です。", "{ \"id\": \"...\", \"label\": \"...\", \"fields\": [ ... ] } の形にしてください。")
-            continue
-        if group["id"] in group_ids:
-            err(f"{path}.id", f"\"{group['id']}\" が重複しています。", "別の id にしてください。")
-        group_ids.append(group["id"])
-        members = group.get("fields", [])
-        if not isinstance(members, list):
-            err(f"{path}.fields", "配列 [ ] ではありません。", "[\"論理名\", ...] の形にしてください。")
-            continue
-        for position, name in enumerate(members):
-            member_path = f"{path}.fields[{position}]"
-            if check_field(member_path, name):
-                if name in grouped:
-                    err(member_path, f"\"{name}\" は detailGroups[{grouped[name]}] にも入っています。", "1 つのまとまりにだけ入れてください。")
-                grouped.setdefault(name, index)
+    for index, name in enumerate(view["hiddenColumns"]):
+        if _blank(name):
+            err(f"hiddenColumns[{index}]", "列の名前が空か、文字列ではありません。", "論理名か DB の列名を書いてください。")
 
+    # fields のキーは論理名か、役割のない列なら DB の列名（DB から読み取るため、ここでは有無を確かめない）
+    unused = []
     for name, options in view["fields"].items():
         path = f"fields.{name}"
-        check_field(path, name)
         if not isinstance(options, dict):
-            err(path, "オブジェクト { } ではありません。", "{ \"group\": ..., \"mono\": ... } の形にしてください。")
+            err(path, "オブジェクト { } ではありません。", "{ \"mono\": true } の形にしてください。")
             continue
-        if "label" in options and _blank(options["label"]):
-            err(f"{path}.label", "表示名が空です。", "表示名を設定するか、label の行を消してください。")
-        if "group" in options and options["group"] not in group_ids:
-            err(f"{path}.group", f"\"{options['group']}\" は detailGroups に定義されていません。", "detailGroups に足すか、group を直してください。")
+        unused += [f"{path}.{key}" for key in ("label", "group") if key in options]
         for flag in ("mono", "copy"):
             if flag in options and not isinstance(options[flag], bool):
                 err(f"{path}.{flag}", f"{flag} が真偽値ではありません。", "true か false にしてください。")
@@ -286,16 +254,11 @@ def validate_view(view, src, schema):
             err(f"{base}.type", f"\"{field}\" は schema.types で date になっていません。",
                 f"schema の types に \"{field}\": \"date\" を足すか、type を values にしてください。")
 
-    # 表示名がどこにもない項目は、論理名（英字）がそのまま画面に出てしまう（まとめて 1 件の注意にする）
-    listed = {c.get("field"): c.get("label") for c in view["listColumns"] if isinstance(c, dict)}
-    used = list(view["detailFields"]) + [f.get("field") for f in view["filters"] if isinstance(f, dict)]
-    unlabeled = [name for name in dict.fromkeys(used)
-                 if name in columns and _blank(view["fields"].get(name, {}).get("label")) and _blank(listed.get(name))]
-    if unlabeled:
-        shown = "、".join(unlabeled[:8]) + (f" ほか {len(unlabeled) - 8} 項目" if len(unlabeled) > 8 else "")
-        issues.append(Issue("warning", src.origin("fields"), "fields.<項目>.label",
-                            f"{len(unlabeled)} 項目に表示名がないため、詳細などに論理名がそのまま表示されます（{shown}）。",
-                            "view の fields に { \"論理名\": { \"label\": \"表示名\" } } を足してください（一覧の列は listColumns の label が使われます）。"))
+    # 以前の形の表示名・まとまりは使わない（表示名は DB の列名。まとめて 1 件の注意にする）
+    if unused:
+        shown = "、".join(unused[:4]) + (f" ほか {len(unused) - 4} 件" if len(unused) > 4 else "")
+        warn("fields.<列>.label", f"表示名（label）とまとまり（group）は今は使いません（{shown}）。表示名は DB の列名をそのまま使います。",
+             "消してかまいません。")
 
     sort = view["defaultSort"]
     check_field("defaultSort.field", sort.get("field"))

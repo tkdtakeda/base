@@ -1,12 +1,12 @@
 """動作確認用のダミー共有 SQLite と、それを指す上書き設定（config/dummy/）を作る。
 
   config/dummy/config.local.json … 共有 SQLite のパスだけ
-  config/dummy/schema.local.json … テーブル名と列名だけ
-  （view は上書きしない。config/sample/view.sample.json をそのまま使う）
+  config/dummy/schema.local.json … テーブル名と、役割のある列の DB の列名だけ
+  config/dummy/view.local.json   … 隠す列（UPDATED_AT）だけ
 
-実データは使わない。列は config/sample/schema.sample.json の論理項目すべてについて作り、
-物理名はわざと論理名と違う名前（大文字のスネークケース。1 列は日本語）にして、
-schema の columns（論理名 → 物理列名）が効いていることを確かめられるようにしている。
+実データは使わない。列は python/tools/sample_columns.json（画面だけで試すモードと共通）の順に作る。
+役割のある列は日本語の列名、ほかの列は英字の列名にしてあり、DB の列名がそのまま表示されることと、
+schema の columns（論理名 → DB の列名）が効いていることを確かめられる。
 
 使い方:
     python python/tools/make_dummy_db.py                    … 正常なダミー（ロット 2,500 件・BOX 約 5,000 件）
@@ -27,15 +27,14 @@ from datetime import date, timedelta
 
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SCHEMA_SAMPLE = os.path.join(APP_ROOT, "config", "sample", "schema.sample.json")
+SAMPLE_COLUMNS = os.path.join(APP_ROOT, "python", "tools", "sample_columns.json")
 SHARED_PATH = os.path.join(APP_ROOT, "data", "dummy", "shared", "dummy_shared.sqlite3")
 DUMMY_DIR = os.path.join(APP_ROOT, "config", "dummy")
 CONFIG_PATH = os.path.join(DUMMY_DIR, "config.local.json")
 SCHEMA_PATH = os.path.join(DUMMY_DIR, "schema.local.json")
-TABLE = "t_dummy_lot_box"
+VIEW_PATH = os.path.join(DUMMY_DIR, "view.local.json")
 SEED = 20261011
 
-# 物理名を日本語にする列（引用符で囲む処理の確認用）
-JAPANESE_COLUMNS = {"customerName": "取引先_名称"}
 # missing-column の確認で消す論理項目
 DROP_FOR_MISSING = "cfStatus"
 
@@ -49,10 +48,11 @@ STATUSES = ["仕掛中", "検査待ち", "検査済み", "出荷済み", "保留
 SPECIAL_LOTS = ["試作-α-001", "LOT_100%-A", "LOT#5/特急", "LOT(再)-12", "LOT'Q\"-1"]
 
 
-def physical_name(logical):
-    if logical in JAPANESE_COLUMNS:
-        return JAPANESE_COLUMNS[logical]
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", logical).upper()
+def load_columns():
+    """[(値を作るときの名前＝論理名か列名, DB の列名, 論理名 or None)] を DB の順に返す。"""
+    with open(SAMPLE_COLUMNS, encoding="utf-8") as fp:
+        data = json.load(fp)
+    return data["table"], [(c.get("role", c["name"]), c["name"], c.get("role")) for c in data["columns"]]
 
 
 def value_of(field, ctx, rng, today):
@@ -123,7 +123,8 @@ def build_rows(lot_count, logical_fields, rng):
     return rows
 
 
-def write_database(path, rows, logical_fields, variant):
+def write_database(path, rows, table, columns, variant):
+    """columns：load_columns() の並び。行は「値を作るときの名前」で引く。"""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     for suffix in ("", "-wal", "-shm", "-journal"):
         if os.path.exists(path + suffix):
@@ -133,31 +134,36 @@ def write_database(path, rows, logical_fields, variant):
             fp.write(b"this is not a sqlite database" * 100)
         return
 
-    fields = [f for f in logical_fields if not (variant == "missing-column" and f == DROP_FOR_MISSING)]
-    table = "t_other" if variant == "missing-table" else TABLE
-    columns = [physical_name(f) for f in fields] + ["UPDATED_AT"]
+    kept = [c for c in columns if not (variant == "missing-column" and c[2] == DROP_FOR_MISSING)]
+    table_name = "t_other" if variant == "missing-table" else table
+    names = [physical for _, physical, _ in kept] + ["UPDATED_AT"]
+    lot_column = next(physical for _, physical, role in columns if role == "lotNo")
     conn = sqlite3.connect(path)
     try:
-        conn.execute(f'CREATE TABLE "{table}" ({", ".join(f"""\"{c}\" TEXT""" for c in columns)})')
+        conn.execute(f'CREATE TABLE "{table_name}" ({", ".join(f"""\"{c}\" TEXT""" for c in names)})')
         conn.executemany(
-            f'INSERT INTO "{table}" VALUES ({", ".join("?" for _ in columns)})',
-            ([row[f] for f in fields] + ["2026-10-11T08:00:00"] for row in rows),
+            f'INSERT INTO "{table_name}" VALUES ({", ".join("?" for _ in names)})',
+            ([row[key] for key, _, _ in kept] + ["2026-10-11T08:00:00"] for row in rows),
         )
-        conn.execute(f'CREATE INDEX "idx_lot" ON "{table}" ("{physical_name("lotNo")}")')
+        conn.execute(f'CREATE INDEX "idx_lot" ON "{table_name}" ("{lot_column}")')
         conn.commit()
     finally:
         conn.close()
 
 
-def write_config(logical_fields):
+def write_config(table, columns):
     # config/local と同じく、サンプルから変えたい項目だけを書く
     os.makedirs(DUMMY_DIR, exist_ok=True)
     config = {
         "application": {"name": "Data Search (Dummy)"},
         "dataSource": {"sourcePath": "./data/dummy/shared/dummy_shared.sqlite3", "cachePath": "./data/cache/dummy_cache.sqlite3"},
     }
-    schema = {"tableName": TABLE, "columns": {f: physical_name(f) for f in logical_fields}}
-    for path, data in ((CONFIG_PATH, config), (SCHEMA_PATH, schema)):
+    with open(SCHEMA_SAMPLE, encoding="utf-8") as fp:
+        roles = list(json.load(fp)["columns"])
+    physical = {role: name for _, name, role in columns if role}
+    schema = {"tableName": table, "columns": {role: physical[role] for role in roles}}
+    view = {"hiddenColumns": ["UPDATED_AT"]}  # 隠す列の例（画面の「表示列」で出せる）
+    for path, data in ((CONFIG_PATH, config), (SCHEMA_PATH, schema), (VIEW_PATH, view)):
         with open(path, "w", encoding="utf-8") as fp:
             json.dump(data, fp, ensure_ascii=False, indent=2)
 
@@ -169,16 +175,15 @@ def main():
     parser.add_argument("--if-missing", action="store_true")
     args = parser.parse_args()
 
-    if args.if_missing and all(os.path.isfile(p) for p in (SHARED_PATH, CONFIG_PATH, SCHEMA_PATH)):
+    if args.if_missing and all(os.path.isfile(p) for p in (SHARED_PATH, CONFIG_PATH, SCHEMA_PATH, VIEW_PATH)):
         print("ダミーデータはすでにあります。")
         return
-    with open(SCHEMA_SAMPLE, encoding="utf-8") as fp:
-        logical_fields = list(json.load(fp)["columns"])
-    rows = build_rows(args.lots, logical_fields, random.Random(SEED))
-    write_database(SHARED_PATH, rows, logical_fields, args.variant)
-    write_config(logical_fields)
-    print(f"ダミーの共有データを作成しました（{args.variant}・ロット {args.lots:,} 件・BOX {len(rows):,} 件）: {SHARED_PATH}")
-    print(f"上書き設定: {DUMMY_DIR}（config.local.json / schema.local.json）")
+    table, columns = load_columns()
+    rows = build_rows(args.lots, [key for key, _, _ in columns], random.Random(SEED))
+    write_database(SHARED_PATH, rows, table, columns, args.variant)
+    write_config(table, columns)
+    print(f"ダミーの共有データを作成しました（{args.variant}・ロット {args.lots:,} 件・BOX {len(rows):,} 件・列 {len(columns) + 1} 個）: {SHARED_PATH}")
+    print(f"上書き設定: {DUMMY_DIR}（config.local.json / schema.local.json / view.local.json）")
 
 
 if __name__ == "__main__":

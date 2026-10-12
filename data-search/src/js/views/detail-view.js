@@ -60,8 +60,8 @@
 
     function render(state) {
       const selection = state.selection;
-      root.hidden = !selection.key;
-      if (!selection.key) return;
+      root.hidden = !selection.open;
+      if (!selection.open) return;
       const item = selection.item;
 
       // 見出し：1 件を特定する鍵（例：ロット番号＋BOX番号）と、札を持つ項目（例：状態）

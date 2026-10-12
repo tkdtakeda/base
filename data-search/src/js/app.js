@@ -71,14 +71,14 @@
     const searchBar = DS.views.createSearchBar(document.getElementById('search-host'), { store, bus, search, openPanel, refresh });
     DS.views.createStatusChips(document.getElementById('status-host'), { store, bus, openPanel });
     DS.views.createTagBar(document.getElementById('tagbar'), { store, bus, tags, openPanel });
-    DS.views.createResultsView(document.getElementById('results'), { store, bus, search, openPanel, refresh });
+    DS.views.createResultsView(document.getElementById('results'), { store, bus, search, toast, openPanel, refresh });
     DS.views.createDetailView(document.getElementById('detail'), { store, bus, search, toast });
 
     // Esc：開いているものを手前から順に閉じる（入力中の Esc は入力欄が受け持つ）
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
       if (event.target && /^(INPUT|TEXTAREA)$/.test(event.target.tagName)) return;
-      if (store.get().selection.key) search.closeDetail();
+      if (store.get().selection.open) search.closeDetail();
       else if (store.get().ui.panel) openPanel(null);
     });
 

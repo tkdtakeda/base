@@ -1,18 +1,21 @@
 /* =========================================================
    検索結果（メイン領域）：要約・ページ送り・一覧・空のときの案内・出どころ
+   一覧には全列を出す（隠すのは「表示列」で選んだ列だけ）。
+   行を 1 回押す／↑↓ で選ぶ。ダブルクリック／Enter で詳細を開く。
    ========================================================= */
 (function () {
   'use strict';
 
   const DS = window.DS;
 
-  function createResultsView(root, { store, bus, search, openPanel, refresh }) {
+  function createResultsView(root, { store, bus, search, toast, openPanel, refresh }) {
     const { el, icon, escapeHtml, highlight, formatNumber } = DS.util;
 
     const summary = el('div', { className: 'results__summary', 'aria-live': 'polite' });
     const pager = el('div', { className: 'pager' });
-    const head = el('div', { className: 'results__head' }, [summary, pager]);
-    const tableWrap = el('div', { className: 'table-wrap', tabindex: '0', 'aria-label': '検索結果の一覧（↑↓ で行を移動）' });
+    const tools = DS.views.createGridTools({ store, toast, openPanel });
+    const head = el('div', { className: 'results__head' }, [summary, tools.element, pager]);
+    const tableWrap = el('div', { className: 'table-wrap', tabindex: '0', 'aria-label': '検索結果の一覧（↑↓ で行を選ぶ・Enter で詳細）' });
     const empty = el('div', { className: 'empty' });
     const foot = el('div', { className: 'results__foot' });
     root.append(head, el('div', { className: 'results__body' }, [tableWrap, empty]), foot);
@@ -20,8 +23,10 @@
     let currentItems = [];
 
     // ── 一覧 ──
+    /** 一覧に出す列。1 件を決める列（左端に固定）は隠せない */
     function visibleFields(state) {
-      return DS.domain.listFields().filter((field) => state.columns.visible.includes(field.id));
+      const hidden = new Set(state.columns.hidden);
+      return DS.domain.listFields().filter((field) => field.key || !hidden.has(field.id));
     }
 
     function headerCell(field, state) {
@@ -29,17 +34,23 @@
       const sortIcon = !active ? 'fa-sort' : state.sort.order === 'asc' ? 'fa-sort-up' : 'fa-sort-down';
       const ariaSort = !active ? 'none' : state.sort.order === 'asc' ? 'ascending' : 'descending';
       const searched = state.search.request && state.search.request.searchType === field.id;
-      return `<th scope="col" aria-sort="${ariaSort}" style="min-width:${field.width}px" class="${searched ? 'is-searched' : ''}">` +
-        `<button type="button" class="th-btn" data-sort="${field.id}" title="${escapeHtml(field.listLabel)}で並べ替え">` +
-        `<span>${escapeHtml(field.listLabel)}</span><i class="fa-solid ${sortIcon} th-btn__icon${active ? ' is-active' : ''}" aria-hidden="true"></i></button></th>`;
+      const classes = [searched ? 'is-searched' : '', field.key ? 'is-pinned' : ''].filter(Boolean).join(' ');
+      return `<th scope="col" aria-sort="${ariaSort}" class="${classes}" data-field="${escapeHtml(field.id)}">` +
+        `<button type="button" class="th-btn" data-sort="${escapeHtml(field.id)}" title="${escapeHtml(field.listLabel)}で並べ替え">` +
+        `<span class="th-btn__text">${escapeHtml(field.listLabel)}</span><i class="fa-solid ${sortIcon} th-btn__icon${active ? ' is-active' : ''}" aria-hidden="true"></i></button>` +
+        `<span class="col-resize" title="ドラッグで幅を変える（ダブルクリックで元に戻す）" aria-hidden="true"></span></th>`;
     }
 
     function cell(field, item, request) {
       const value = item[field.id];
-      if (DS.domain.hasBadge(field)) return `<td>${DS.domain.badge(field, value).outerHTML}</td>`;
-      const text = value === null || value === undefined || value === '' ? '<span class="muted">—</span>'
+      const pinned = field.key ? ' is-pinned' : '';
+      if (DS.domain.hasBadge(field)) return `<td class="${pinned}">${DS.domain.badge(field, value).outerHTML}</td>`;
+      const blank = value === null || value === undefined || value === '';
+      const text = blank ? '<span class="muted">—</span>'
         : request && request.searchType === field.id ? highlight(value, request.keyword) : escapeHtml(value);
-      return `<td class="${field.mono ? 'mono' : ''}${request && request.searchType === field.id ? ' is-searched' : ''}">${text}</td>`;
+      // 長い値は「…」で省くため、マウスを乗せると全文が出るようにする
+      const title = blank ? '' : ` title="${escapeHtml(value)}"`;
+      return `<td class="${field.mono ? 'mono' : ''}${request && request.searchType === field.id ? ' is-searched' : ''}${pinned}"${title}>${text}</td>`;
     }
 
     function renderTable(state) {
@@ -53,7 +64,12 @@
         return `<tr data-index="${index}" class="${selected ? 'is-selected' : ''}" aria-selected="${selected}">` +
           fields.map((field) => cell(field, item, request)).join('') + '</tr>';
       }).join('');
-      tableWrap.innerHTML = `<table class="grid"><thead><tr>${fields.map((field) => headerCell(field, state)).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+      const density = state.columns.density === 'comfortable' ? ' grid--comfortable' : '';
+      const scrollLeft = tableWrap.scrollLeft;
+      tableWrap.innerHTML = '<style class="grid-widths"></style>' +
+        `<table class="grid${density}"><thead><tr>${fields.map((field) => headerCell(field, state)).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+      tableWrap.scrollLeft = scrollLeft; // 並べ替えなどで横の位置を失わない
+      tools.afterRender(state, tableWrap);
     }
 
     function renderSelection(state) {
@@ -72,16 +88,27 @@
         return;
       }
       const row = event.target.closest('tbody tr');
+      if (row) search.highlight(currentItems[Number(row.dataset.index)]);
+    });
+
+    tableWrap.addEventListener('dblclick', (event) => {
+      const row = event.target.closest('tbody tr');
       if (row) search.select(currentItems[Number(row.dataset.index)]);
     });
 
     tableWrap.addEventListener('keydown', (event) => {
-      if (!['ArrowDown', 'ArrowUp'].includes(event.key) || currentItems.length === 0) return;
-      event.preventDefault();
+      if (currentItems.length === 0) return;
       const selectedKey = store.get().selection.key;
       const index = currentItems.findIndex((item) => DS.domain.recordKey(item) === selectedKey);
+      if (event.key === 'Enter' && event.target === tableWrap) {
+        event.preventDefault();
+        search.select(currentItems[index === -1 ? 0 : index]);
+        return;
+      }
+      if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+      event.preventDefault();
       const next = index === -1 ? 0 : Math.min(currentItems.length - 1, Math.max(0, index + (event.key === 'ArrowDown' ? 1 : -1)));
-      search.select(currentItems[next]);
+      search.highlight(currentItems[next]);
       const row = tableWrap.querySelector(`tbody tr[data-index="${next}"]`);
       if (row) row.scrollIntoView({ block: 'nearest' });
     });
@@ -228,7 +255,9 @@
       foot.replaceChildren(...parts.flatMap((part, index) => (index ? [el('span', { className: 'results__sep', text: '·' }), part] : [part])));
     }
 
+    let lastHidden = store.get().columns.hidden;
     bus.on('state', ({ state, changed }) => {
+      if (changed.some((key) => ['search', 'columns'].includes(key))) tools.update(state);
       const tableKeys = ['search', 'columns', 'sort'];
       if (changed.some((key) => tableKeys.includes(key))) {
         renderTable(state);
@@ -238,7 +267,9 @@
       }
       if (changed.some((key) => ['search', 'cache', 'mode'].includes(key))) renderEmpty(state);
       if (changed.some((key) => ['search', 'cache', 'query'].includes(key))) renderFoot(state);
-      if (changed.includes('columns')) DS.util.flash(tableWrap.querySelector('thead'));
+      // 列を出し入れしたときだけ光らせる（幅や行の高さの変更では光らせない）
+      if (changed.includes('columns') && state.columns.hidden !== lastHidden) DS.util.flash(tableWrap.querySelector('thead'));
+      lastHidden = state.columns.hidden;
     });
 
     bus.on('search:done', () => {
@@ -246,6 +277,7 @@
     });
 
     const initial = store.get();
+    tools.update(initial);
     renderTable(initial);
     renderHead(initial);
     renderEmpty(initial);

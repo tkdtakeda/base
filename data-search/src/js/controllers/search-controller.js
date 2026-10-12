@@ -67,9 +67,9 @@
         if (request.keyword) patch.history = DS.controllers.pushHistory(store.get().history, request.searchType, result.keyword || request.keyword);
         store.set(patch);
         bus.emit('search:done', result);
-        // 選んでいた行が結果に残っていなければ詳細を閉じる
+        // 選んでいた行が結果に残っていなければ、選択を外して詳細を閉じる
         const selectedKey = store.get().selection.key;
-        if (selectedKey && !result.items.some((item) => DS.domain.recordKey(item) === selectedKey)) closeDetail();
+        if (selectedKey && !result.items.some((item) => DS.domain.recordKey(item) === selectedKey)) clearSelection();
       } catch (error) {
         if (token !== searchToken) return;
         store.set({ search: { status: 'error', result: null, request, error } });
@@ -124,32 +124,49 @@
       return run({ page: 1 });
     }
 
-    // ── 詳細 ──
+    // ── 選択と詳細 ──
+    // 行を 1 回押す／↑↓ … 行を選ぶだけ（全項目が一覧に出ているため、表を狭くしない）
+    // ダブルクリック／Enter … 詳細を開く。開いている間は、選んだ行に合わせて詳細も切り替える
+    const EMPTY_SELECTION = { key: null, item: null, status: 'idle', error: null, duplicated: false, open: false };
+
+    function highlight(item) {
+      if (store.get().selection.open) return select(item);
+      detailToken += 1;
+      store.set({ selection: Object.assign({}, EMPTY_SELECTION, { key: DS.domain.recordKey(item), item }) });
+      return Promise.resolve();
+    }
+
     async function select(item) {
       const key = DS.domain.recordKey(item);
       const token = ++detailToken;
       // 一覧の値ですぐに表示し（0.4 秒以内の反応）、最新の詳細で置き換える
-      store.set({ selection: { key, item, status: 'loading', error: null, duplicated: false } });
+      store.set({ selection: { key, item, status: 'loading', error: null, duplicated: false, open: true } });
       const payload = {};
       DS.domain.keyFields().forEach((field) => { payload[field.id] = item[field.id] == null ? null : item[field.id]; });
       try {
         const result = await api.call('get_lot_detail', payload);
         if (token !== detailToken) return;
-        store.set({ selection: { key, item: result.item, status: 'done', error: null, duplicated: Boolean(result.duplicated) } });
+        store.set({ selection: { key, item: result.item, status: 'done', error: null, duplicated: Boolean(result.duplicated), open: true } });
       } catch (error) {
         if (token !== detailToken) return;
-        store.set({ selection: { key, item, status: 'error', error, duplicated: false } });
+        store.set({ selection: { key, item, status: 'error', error, duplicated: false, open: true } });
       }
     }
 
+    /** 詳細を閉じる（行の選択は残す） */
     function closeDetail() {
       detailToken += 1;
-      store.set({ selection: { key: null, item: null, status: 'idle', error: null, duplicated: false } });
+      store.set({ selection: Object.assign({}, store.get().selection, { open: false, status: 'idle' }) });
+    }
+
+    function clearSelection() {
+      detailToken += 1;
+      store.set({ selection: Object.assign({}, EMPTY_SELECTION) });
     }
 
     return {
       readiness, run, setQuery, clearKeyword, setFilter, setFilters, clearFilter,
-      toggleSort, goToPage, rerun, select, closeDetail,
+      toggleSort, goToPage, rerun, highlight, select, closeDetail, clearSelection,
     };
   }
 

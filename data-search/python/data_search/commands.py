@@ -3,6 +3,7 @@
 命令を増やすときは @command("名前") を付けた関数を足すだけでよい（既存の処理は変えない）。
 """
 
+from .column_catalog import catalog_version
 from .errors import AppError
 
 _REGISTRY = {}
@@ -76,8 +77,10 @@ def update_data_source(ctx, payload):
 
 @command("get_view_config")
 def get_view_config(ctx, payload):
-    """画面の表示定義（view と、schema の論理情報）。物理名は含めない。"""
-    return dict(ctx.config.public_view(), success=True)
+    """画面の表示定義（view と schema の論理情報）と、表示する列（DB の列名が表示名）。テーブル名・パスは含めない。"""
+    columns = ctx.cache_service.catalog()
+    return dict(ctx.config.public_view(), success=True,
+                columns=[column.public() for column in columns], columnsVersion=catalog_version(columns))
 
 
 @command("get_application_info")

@@ -83,11 +83,23 @@
     tags.remove(saved.tag.id);
     check('タグを消せる', !store.get().tags.items.some((tag) => tag.id === saved.tag.id));
 
-    // ── 詳細 ──
+    // ── 全列の一覧と詳細 ──
     await search.setFilters({});
+    const columnCount = window.DS.domain.listFields().length;
+    check('一覧に全列が出る（隠した列を除く）', document.querySelectorAll('.grid thead th').length === columnCount - store.get().columns.hidden.length, `${columnCount} 列`);
+    check('見出しは DB の列名', document.querySelector('.grid thead th').textContent.trim() === window.DS.domain.listFields()[0].label);
+    check('1 件を決める列は左端に固定', document.querySelectorAll('.grid thead th.is-pinned').length === window.DS.domain.keyFields().length);
+    await search.highlight(result().items[0]);
+    check('行を 1 回押すと選ぶだけ（詳細は開かない）', store.get().selection.key && document.getElementById('detail').hidden === true);
     await search.select(result().items[0]);
-    check('行を選ぶと詳細が出る', document.getElementById('detail').hidden === false);
+    check('ダブルクリック／Enter で詳細が出る', document.getElementById('detail').hidden === false);
     search.closeDetail();
+    check('詳細を閉じても行の選択は残る', Boolean(store.get().selection.key) && document.getElementById('detail').hidden === true);
+    const beforeColumns = store.get().columns;
+    const hideId = window.DS.domain.listFields().find((field) => !field.key).id;
+    store.merge('columns', { hidden: beforeColumns.hidden.concat([hideId]) });
+    check('表示列で隠すと一覧から消える', !document.querySelector(`.grid thead th[data-field="${hideId}"]`));
+    store.set({ columns: beforeColumns });
 
     // ── 1 ロットに BOX が複数 ──
     await samples.load('multi-box');
